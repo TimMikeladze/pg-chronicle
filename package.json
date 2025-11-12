@@ -1,0 +1,70 @@
+{
+	"name": "pg-history",
+	"description": "Audit, history and change tracking for PostgreSQL tables using triggers.",
+	"version": "1.2.0",
+	"author": {
+		"name": "Tim Mikeladze",
+		"email": "tim.mikeladze@gmail.com"
+	},
+	"type": "module",
+	"files": [
+		"dist"
+	],
+	"module": "./dist/index.js",
+	"main": "./dist/index.cjs",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"import": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			},
+			"require": {
+				"types": "./dist/index.d.cts",
+				"default": "./dist/index.cjs"
+			}
+		}
+	},
+	"scripts": {
+		"build": "bunup",
+		"dev": "bunup --watch",
+		"lint": "bun biome check . && bun biome format .",
+		"lint:fix": "bun biome check --unsafe --write . && bun biome format --write .",
+		"tsc": "tsc --noEmit",
+		"test": "bun test",
+		"test:watch": "bun test --watch",
+		"test:coverage": "bun test --coverage",
+		"release": "bun run build && bumpp --commit --push --tag && bunx changelogithub && bun publish --access public --no-git-checks",
+		"prepare": "bun simple-git-hooks",
+		"check": "if [ \"$CI\" = \"true\" ]; then bun run lint && bun run tsc && bun run test; else bun run lint:fix && bun run tsc && bun run test; fi"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.2.4",
+		"@types/bun": "^1.2.22",
+		"bumpp": "^10.2.3",
+		"bunup": "^0.11.26",
+		"simple-git-hooks": "^2.13.1",
+		"typescript": "^5.9.2"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/TimMikeladze/ygoapi.git"
+	},
+	"peerDependencies": {
+		"typescript": ">=4.5.0"
+	},
+	"peerDependenciesMeta": {
+		"typescript": {
+			"optional": true
+		}
+	},
+	"simple-git-hooks": {
+		"pre-commit": "bun run check && git add ."
+	},
+	"homepage": "https://github.com/TimMikeladze/ygoapi#readme",
+	"bugs": {
+		"url": "https://github.com/TimMikeladze/ygoapi/issues"
+	},
+	"license": "MIT",
+	"keywords": []
+}

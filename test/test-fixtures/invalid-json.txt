@@ -1,0 +1,14 @@
+{
+  "database": {
+    "url": "postgres://localhost/test"
+  },
+  "s3": {
+    "bucket": "test-bucket"
+  },
+  "retention": {
+    "default": 90
+  },
+  "gracePeriod": 7,
+  "batchSize": 10000,
+  this is invalid JSON - missing quotes and comma
+}

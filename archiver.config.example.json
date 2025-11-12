@@ -1,0 +1,22 @@
+{
+	"database": {
+		"url": "postgres://user:password@localhost:5432/your_database"
+	},
+	"s3": {
+		"bucket": "your-audit-archives",
+		"endpoint": "https://s3.amazonaws.com",
+		"region": "us-west-2",
+		"accessKeyId": "your-access-key",
+		"secretAccessKey": "your-secret-key"
+	},
+	"retention": {
+		"default": 90,
+		"tables": {
+			"sensitive_table": 30,
+			"high_volume_table": 7
+		}
+	},
+	"gracePeriod": 7,
+	"batchSize": 10000,
+	"healthPort": 3001
+}
