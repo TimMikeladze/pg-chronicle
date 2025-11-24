@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import type { SQL } from 'bun'
+import type { Pool } from 'pg'
 import { PgHistoryArchiver } from '../../src/PgHistoryArchiver'
 import { setupArchiverSchema } from '../../src/schema'
 import { cleanupTestData, getTestConnection, setupTestData } from './helpers/db'
 import { ensureTestBucket, isS3Configured } from './helpers/s3'
 
 describe('PgHistoryArchiver - Hard Delete', () => {
-	let sql: SQL
+	let pool: Pool
 	let archiver: PgHistoryArchiver
 
 	beforeEach(async () => {
-		sql = await getTestConnection()
-		await setupTestData(sql)
-		await setupArchiverSchema(sql)
+		pool = await getTestConnection()
+		await setupTestData(pool)
+		await setupArchiverSchema(pool)
 
 		// Ensure test bucket exists if S3 is configured
 		if (isS3Configured()) {
@@ -20,7 +20,7 @@ describe('PgHistoryArchiver - Hard Delete', () => {
 		}
 
 		archiver = new PgHistoryArchiver({
-			sql,
+			pool,
 			s3: {
 				bucket: 'test-bucket',
 				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
@@ -35,44 +35,44 @@ describe('PgHistoryArchiver - Hard Delete', () => {
 	})
 
 	afterEach(async () => {
-		await cleanupTestData(sql)
-		await sql.close()
+		await cleanupTestData(pool)
+		await pool.end()
 	})
 
 	test('should permanently delete soft-deleted records past grace period', async () => {
 		// Create soft-deleted records past grace period
-		await sql`
+		await pool.query(`
       UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '20 days',
           soft_deleted_at = NOW() - INTERVAL '10 days'
       WHERE table_name = 'users' AND id LIKE 'old-%'
-    `
+    `)
 
-		const initialCount = await sql`
+		const initialCount = await pool.query(`
       SELECT COUNT(*) as count FROM audit_log WHERE table_name = 'users'
-    `
+    `)
 
 		const deleted = await archiver.hardDeletePurged('users')
 
 		expect(deleted).toBeGreaterThan(0)
 
-		const finalCount = await sql`
+		const finalCount = await pool.query(`
       SELECT COUNT(*) as count FROM audit_log WHERE table_name = 'users'
-    `
+    `)
 
-		expect(Number(finalCount[0].count)).toBe(
-			Number(initialCount[0].count) - deleted,
+		expect(Number(finalCount.rows[0].count)).toBe(
+			Number(initialCount.rows[0].count) - deleted,
 		)
 	})
 
 	test('should not delete recently soft-deleted records', async () => {
 		// Create soft-deleted records within grace period
-		await sql`
+		await pool.query(`
       UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '15 days',
           soft_deleted_at = NOW() - INTERVAL '3 days'
       WHERE table_name = 'users' AND id LIKE 'old-%'
-    `
+    `)
 
 		const deleted = await archiver.hardDeletePurged('users')
 
@@ -80,20 +80,22 @@ describe('PgHistoryArchiver - Hard Delete', () => {
 	})
 
 	test('should not delete records without soft_deleted_at', async () => {
-		const initialCount = await sql`
+		const initialCount = await pool.query(`
       SELECT COUNT(*) as count FROM audit_log
       WHERE table_name = 'users' AND soft_deleted_at IS NULL
-    `
+    `)
 
 		const deleted = await archiver.hardDeletePurged('users')
 
-		const finalCount = await sql`
+		const finalCount = await pool.query(`
       SELECT COUNT(*) as count FROM audit_log
       WHERE table_name = 'users' AND soft_deleted_at IS NULL
-    `
+    `)
 
 		// No records should be deleted, so count should be 0
 		expect(deleted).toBe(0)
-		expect(Number(finalCount[0].count)).toBe(Number(initialCount[0].count))
+		expect(Number(finalCount.rows[0].count)).toBe(
+			Number(initialCount.rows[0].count),
+		)
 	})
 })

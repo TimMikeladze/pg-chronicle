@@ -6,8 +6,8 @@ setupTestDatabase()
 
 describe('PgHistory validation', () => {
 	test('should throw if no tables configured', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: [] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: [] })
 
 		await expect(async () => {
 			await audit.setup()
@@ -15,8 +15,8 @@ describe('PgHistory validation', () => {
 	})
 
 	test('should throw if querying unconfigured table', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await expect(async () => {
@@ -25,8 +25,8 @@ describe('PgHistory validation', () => {
 	})
 
 	test('should throw if searching unconfigured table', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await expect(async () => {

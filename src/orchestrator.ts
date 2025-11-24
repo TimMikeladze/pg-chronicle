@@ -1,4 +1,4 @@
-import type { SQL } from 'bun'
+import type { Pool } from 'pg'
 import type {
 	ConfigFile,
 	OrchestratorStats,
@@ -9,14 +9,14 @@ import type {
 export class Orchestrator {
 	constructor(private config: ConfigFile) {}
 
-	async discoverTables(sql: SQL): Promise<string[]> {
-		const result = await sql`
+	async discoverTables(pool: Pool): Promise<string[]> {
+		const result = await pool.query(`
       SELECT DISTINCT table_name
       FROM audit_log
       ORDER BY table_name
-    `
+    `)
 
-		return result.map((row: { table_name: string }) => row.table_name)
+		return result.rows.map((row: { table_name: string }) => row.table_name)
 	}
 
 	getRetentionCutoff(tableName: string): Date {
@@ -27,7 +27,7 @@ export class Orchestrator {
 		return cutoff
 	}
 
-	async run(sql: SQL, options: RunOptions = {}): Promise<OrchestratorStats> {
+	async run(pool: Pool, options: RunOptions = {}): Promise<OrchestratorStats> {
 		const startTime = Date.now()
 		const stats: OrchestratorStats = {
 			tables: [],
@@ -41,14 +41,14 @@ export class Orchestrator {
 		// Discover tables (or use single target)
 		const tables = options.targetTable
 			? [options.targetTable]
-			: await this.discoverTables(sql)
+			: await this.discoverTables(pool)
 
 		stats.tables = tables
 
 		// Process each table
 		for (const table of tables) {
 			try {
-				const tableStats = await this.processTable(sql, table, options)
+				const tableStats = await this.processTable(pool, table, options)
 				stats.totalRecordsArchived += tableStats.recordsArchived
 				stats.totalRecordsSoftDeleted += tableStats.recordsSoftDeleted
 				stats.totalRecordsHardDeleted += tableStats.recordsHardDeleted
@@ -66,7 +66,7 @@ export class Orchestrator {
 	}
 
 	private async processTable(
-		sql: SQL,
+		pool: Pool,
 		tableName: string,
 		options: RunOptions,
 	): Promise<TableStats> {
@@ -82,13 +82,14 @@ export class Orchestrator {
 		if (options.dryRun) {
 			// Dry run: just count
 			const cutoff = this.getRetentionCutoff(tableName)
-			const _oldRecords = await sql`
-        SELECT COUNT(*) as count
+			await pool.query(
+				`SELECT COUNT(*) as count
         FROM audit_log
-        WHERE table_name = ${tableName}
-          AND changed_at < ${cutoff}
-          AND archived_at IS NULL
-      `
+        WHERE table_name = $1
+          AND changed_at < $2
+          AND archived_at IS NULL`,
+				[tableName, cutoff],
+			)
 			// Don't actually process
 			stats.durationMs = Date.now() - startTime
 			return stats
@@ -97,7 +98,7 @@ export class Orchestrator {
 		// Create archiver
 		const { PgHistoryArchiver } = await import('./PgHistoryArchiver')
 		const archiver = new PgHistoryArchiver({
-			sql,
+			pool,
 			s3: this.config.s3,
 			retention: this.config.retention,
 			gracePeriod: this.config.gracePeriod,
@@ -124,11 +125,12 @@ export class Orchestrator {
 			if (options.skipS3Upload) {
 				// Skip actual S3 upload in test, just mark as archived
 				for (const record of records) {
-					await sql`
-            UPDATE audit_log
+					await pool.query(
+						`UPDATE audit_log
             SET archived_at = NOW()
-            WHERE id = ${record.id}
-          `
+            WHERE id = $1`,
+						[record.id],
+					)
 				}
 			} else {
 				// Real archival with S3 upload

@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import type { SQL } from 'bun'
+import type { Pool } from 'pg'
 import { PgHistoryArchiver } from '../../src/PgHistoryArchiver'
 import { setupArchiverSchema } from '../../src/schema'
 import { cleanupTestData, getTestConnection, setupTestData } from './helpers/db'
 import { ensureTestBucket, isS3Configured } from './helpers/s3'
 
 describe('PgHistoryArchiver - Batch Query', () => {
-	let sql: SQL
+	let pool: Pool
 	let archiver: PgHistoryArchiver
 
 	beforeEach(async () => {
-		sql = await getTestConnection()
-		await setupTestData(sql)
-		await setupArchiverSchema(sql)
+		pool = await getTestConnection()
+		await setupTestData(pool)
+		await setupArchiverSchema(pool)
 
 		// Ensure test bucket exists if S3 is configured
 		if (isS3Configured()) {
@@ -20,7 +20,7 @@ describe('PgHistoryArchiver - Batch Query', () => {
 		}
 
 		archiver = new PgHistoryArchiver({
-			sql,
+			pool,
 			s3: {
 				bucket: 'test-bucket',
 				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
@@ -37,8 +37,8 @@ describe('PgHistoryArchiver - Batch Query', () => {
 	})
 
 	afterEach(async () => {
-		await cleanupTestData(sql)
-		await sql.close()
+		await cleanupTestData(pool)
+		await pool.end()
 	})
 
 	test('should query old records based on retention policy', async () => {
@@ -77,9 +77,11 @@ describe('PgHistoryArchiver - Batch Query', () => {
 
 	test('should generate correct S3 path with Hive partitioning', () => {
 		const date = new Date('2025-01-15T10:30:00Z')
-		const path = archiver.generateS3Path('users', date, 1)
+		const path = archiver.generateS3Path('users', date)
 
-		expect(path).toBe('users/year=2025/month=01/day=15/part-00001.parquet')
+		expect(path).toMatch(
+			/^users\/year=2025\/month=01\/day=15\/data-[0-9a-f-]{36}\.parquet$/,
+		)
 	})
 
 	test('should upload Parquet file to S3', async () => {
@@ -103,11 +105,10 @@ describe('PgHistoryArchiver - Batch Query', () => {
 				records,
 				'users',
 				new Date('2025-01-15'),
-				1,
 			)
 
 			expect(s3Path).toContain('users/year=2025/month=01/day=15')
-			expect(s3Path).toEndWith('.parquet')
+			expect(s3Path).toMatch(/data-[0-9a-f-]{36}\.parquet$/)
 		} catch (error) {
 			// Skip test if S3 is not properly configured (bucket missing, wrong credentials, etc)
 			console.error(error)
@@ -130,13 +131,13 @@ describe('PgHistoryArchiver - Batch Query', () => {
 })
 
 describe('PgHistoryArchiver - Batch Processing', () => {
-	let sql: SQL
+	let pool: Pool
 	let archiver: PgHistoryArchiver
 
 	beforeEach(async () => {
-		sql = await getTestConnection()
-		await setupTestData(sql)
-		await setupArchiverSchema(sql)
+		pool = await getTestConnection()
+		await setupTestData(pool)
+		await setupArchiverSchema(pool)
 
 		// Ensure test bucket exists if S3 is configured
 		if (isS3Configured()) {
@@ -144,7 +145,7 @@ describe('PgHistoryArchiver - Batch Processing', () => {
 		}
 
 		archiver = new PgHistoryArchiver({
-			sql,
+			pool,
 			s3: {
 				bucket: 'test-bucket',
 				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
@@ -161,8 +162,8 @@ describe('PgHistoryArchiver - Batch Processing', () => {
 	})
 
 	afterEach(async () => {
-		await cleanupTestData(sql)
-		await sql.close()
+		await cleanupTestData(pool)
+		await pool.end()
 	})
 
 	test('should process batch with transaction', async () => {
@@ -172,7 +173,7 @@ describe('PgHistoryArchiver - Batch Processing', () => {
 			cutoffDate.setDate(cutoffDate.getDate() - 100)
 
 			// Process one batch
-			const result = await archiver.processBatch('users', cutoffDate, 1)
+			const result = await archiver.processBatch('users', cutoffDate)
 
 			expect(result.recordCount).toBe(10) // batchSize is 10
 			expect(result.s3Path).toContain('users/year=')
@@ -203,17 +204,17 @@ describe('PgHistoryArchiver - Batch Processing', () => {
 			const cutoffDate = new Date()
 			cutoffDate.setDate(cutoffDate.getDate() - 100)
 
-			await archiver.processBatch('users', cutoffDate, 1)
+			await archiver.processBatch('users', cutoffDate)
 
 			// Check that records were marked
-			const archived = await sql`
+			const archived = await pool.query(`
     SELECT COUNT(*) as count
     FROM audit_log
     WHERE table_name = 'users'
       AND archived_at IS NOT NULL
-  `
+  `)
 
-			expect(Number(archived[0].count)).toBe(10)
+			expect(Number(archived.rows[0].count)).toBe(10)
 		} catch (error) {
 			// Skip test if S3 is not properly configured
 			if (
@@ -236,7 +237,7 @@ describe('PgHistoryArchiver - Batch Processing', () => {
 	test('should rollback on S3 upload failure', async () => {
 		// Create archiver with invalid S3 config to force failure
 		const badArchiver = new PgHistoryArchiver({
-			sql,
+			pool,
 			s3: {
 				bucket: 'invalid-bucket',
 				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
@@ -253,16 +254,16 @@ describe('PgHistoryArchiver - Batch Processing', () => {
 		cutoffDate.setDate(cutoffDate.getDate() - 100)
 
 		await expect(
-			badArchiver.processBatch('users', cutoffDate, 1),
+			badArchiver.processBatch('users', cutoffDate),
 		).rejects.toThrow()
 
 		// Verify no records were marked as archived
-		const archived = await sql`
+		const archived = await pool.query(`
     SELECT COUNT(*) as count
     FROM audit_log
     WHERE archived_at IS NOT NULL
-  `
+  `)
 
-		expect(Number(archived[0].count)).toBe(0)
+		expect(Number(archived.rows[0].count)).toBe(0)
 	})
 })

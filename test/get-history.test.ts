@@ -6,25 +6,31 @@ setupTestDatabase()
 
 describe('PgHistory.getHistory', () => {
 	beforeEach(async () => {
-		const sql = await getTestConnection()
-		await sql`
+		const pool = await getTestConnection()
+		await pool.query(`
       CREATE TABLE users (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         email TEXT
       )
-    `
+    `)
 	})
 
 	test('should return paginated history for a record', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Create some history
-		await sql`INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'alice@example.com')`
-		await sql`UPDATE users SET email = 'alice2@example.com' WHERE id = 1`
-		await sql`UPDATE users SET email = 'alice3@example.com' WHERE id = 1`
+		await pool.query(
+			`INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'alice@example.com')`,
+		)
+		await pool.query(
+			`UPDATE users SET email = 'alice2@example.com' WHERE id = 1`,
+		)
+		await pool.query(
+			`UPDATE users SET email = 'alice3@example.com' WHERE id = 1`,
+		)
 
 		// Get history
 		const result = await audit.getHistory('users', '1', { limit: 2 })
@@ -35,13 +41,15 @@ describe('PgHistory.getHistory', () => {
 	})
 
 	test('should return results in descending order by default', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
-		await sql`INSERT INTO users (id, name, email) VALUES (1, 'Bob', 'bob1@example.com')`
-		await sql`UPDATE users SET email = 'bob2@example.com' WHERE id = 1`
-		await sql`UPDATE users SET email = 'bob3@example.com' WHERE id = 1`
+		await pool.query(
+			`INSERT INTO users (id, name, email) VALUES (1, 'Bob', 'bob1@example.com')`,
+		)
+		await pool.query(`UPDATE users SET email = 'bob2@example.com' WHERE id = 1`)
+		await pool.query(`UPDATE users SET email = 'bob3@example.com' WHERE id = 1`)
 
 		const result = await audit.getHistory('users', '1')
 
@@ -51,14 +59,18 @@ describe('PgHistory.getHistory', () => {
 	})
 
 	test('should support cursor-based pagination', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Create 5 changes
-		await sql`INSERT INTO users (id, name, email) VALUES (1, 'Charlie', 'c1@example.com')`
+		await pool.query(
+			`INSERT INTO users (id, name, email) VALUES (1, 'Charlie', 'c1@example.com')`,
+		)
 		for (let i = 2; i <= 5; i++) {
-			await sql`UPDATE users SET email = ${`c${i}@example.com`} WHERE id = 1`
+			await pool.query(`UPDATE users SET email = $1 WHERE id = 1`, [
+				`c${i}@example.com`,
+			])
 		}
 
 		// Get first page
@@ -86,13 +98,15 @@ describe('PgHistory.getHistory', () => {
 	})
 
 	test('should support ascending order', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
-		await sql`INSERT INTO users (id, name, email) VALUES (1, 'David', 'd1@example.com')`
-		await sql`UPDATE users SET email = 'd2@example.com' WHERE id = 1`
-		await sql`UPDATE users SET email = 'd3@example.com' WHERE id = 1`
+		await pool.query(
+			`INSERT INTO users (id, name, email) VALUES (1, 'David', 'd1@example.com')`,
+		)
+		await pool.query(`UPDATE users SET email = 'd2@example.com' WHERE id = 1`)
+		await pool.query(`UPDATE users SET email = 'd3@example.com' WHERE id = 1`)
 
 		const result = await audit.getHistory('users', '1', { order: 'asc' })
 

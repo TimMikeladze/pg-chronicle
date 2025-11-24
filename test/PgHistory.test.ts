@@ -6,9 +6,9 @@ setupTestDatabase()
 
 describe('PgHistory', () => {
 	test('should initialize with tables config', async () => {
-		const sql = await getTestConnection()
+		const pool = await getTestConnection()
 		const audit = new PgHistory({
-			sql,
+			pool,
 			tables: ['users', 'orders'],
 		})
 

@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import type { SQL } from 'bun'
+import type { Pool } from 'pg'
 import { PgHistoryArchiver } from '../../src/PgHistoryArchiver'
 import { setupArchiverSchema } from '../../src/schema'
 import { cleanupTestData, getTestConnection, setupTestData } from './helpers/db'
 import { ensureTestBucket, isS3Configured } from './helpers/s3'
 
 describe('PgHistoryArchiver - Soft Delete', () => {
-	let sql: SQL
+	let pool: Pool
 	let archiver: PgHistoryArchiver
 
 	beforeEach(async () => {
-		sql = await getTestConnection()
-		await setupTestData(sql)
-		await setupArchiverSchema(sql)
+		pool = await getTestConnection()
+		await setupTestData(pool)
+		await setupArchiverSchema(pool)
 
 		// Ensure test bucket exists if S3 is configured
 		if (isS3Configured()) {
@@ -20,7 +20,7 @@ describe('PgHistoryArchiver - Soft Delete', () => {
 		}
 
 		archiver = new PgHistoryArchiver({
-			sql,
+			pool,
 			s3: {
 				bucket: 'test-bucket',
 				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
@@ -35,19 +35,19 @@ describe('PgHistoryArchiver - Soft Delete', () => {
 	})
 
 	afterEach(async () => {
-		await cleanupTestData(sql)
-		await sql.close()
+		await cleanupTestData(pool)
+		await pool.end()
 	})
 
 	test('should mark archived records as soft deleted', async () => {
 		// First, mark some records as archived past the grace period
-		const result = await sql`
+		const result = await pool.query(`
       UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '10 days'
       WHERE table_name = 'users' AND id LIKE 'old-%'
-    `
+    `)
 
-		const updatedCount = result.count || 0
+		const updatedCount = result.rowCount || 0
 		expect(updatedCount).toBeGreaterThan(0)
 
 		// Soft delete archived records older than grace period (7 days)
@@ -56,23 +56,23 @@ describe('PgHistoryArchiver - Soft Delete', () => {
 		expect(count).toBe(updatedCount)
 
 		// Verify soft_deleted_at is set
-		const softDeleted = await sql`
+		const softDeleted = await pool.query(`
       SELECT COUNT(*) as count
       FROM audit_log
       WHERE table_name = 'users'
         AND soft_deleted_at IS NOT NULL
-    `
+    `)
 
-		expect(Number(softDeleted[0].count)).toBe(updatedCount)
+		expect(Number(softDeleted.rows[0].count)).toBe(updatedCount)
 	})
 
 	test('should not soft delete recently archived records', async () => {
 		// Mark records as archived within grace period (3 days < 7 days grace period)
-		await sql`
+		await pool.query(`
       UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '3 days'
       WHERE table_name = 'users' AND id LIKE 'old-%'
-    `
+    `)
 
 		const count = await archiver.softDeleteArchived('users')
 
@@ -82,12 +82,12 @@ describe('PgHistoryArchiver - Soft Delete', () => {
 
 	test('should not soft delete already soft-deleted records', async () => {
 		// Mark records as archived and already soft deleted
-		await sql`
+		await pool.query(`
       UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '10 days',
           soft_deleted_at = NOW() - INTERVAL '5 days'
       WHERE table_name = 'users' AND id LIKE 'old-%'
-    `
+    `)
 
 		const count = await archiver.softDeleteArchived('users')
 

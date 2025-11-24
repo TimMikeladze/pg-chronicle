@@ -6,30 +6,34 @@ setupTestDatabase()
 
 describe('PgHistory.search', () => {
 	beforeEach(async () => {
-		const sql = await getTestConnection()
-		await sql`
+		const pool = await getTestConnection()
+		await pool.query(`
       CREATE TABLE users (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         email TEXT
       )
-    `
-		await sql`
+    `)
+		await pool.query(`
       CREATE TABLE orders (
         id SERIAL PRIMARY KEY,
         user_id INTEGER,
         total NUMERIC
       )
-    `
+    `)
 	})
 
 	test('should search across JSONB data', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users', 'orders'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users', 'orders'] })
 		await audit.setup()
 
-		await sql`INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')`
-		await sql`INSERT INTO users (name, email) VALUES ('Bob', 'bob@example.com')`
+		await pool.query(
+			`INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')`,
+		)
+		await pool.query(
+			`INSERT INTO users (name, email) VALUES ('Bob', 'bob@example.com')`,
+		)
 
 		const result = await audit.search({
 			tables: ['users'],
@@ -41,12 +45,14 @@ describe('PgHistory.search', () => {
 	})
 
 	test('should search across multiple tables', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users', 'orders'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users', 'orders'] })
 		await audit.setup()
 
-		await sql`INSERT INTO users (name, email) VALUES ('Charlie', 'charlie@example.com')`
-		await sql`INSERT INTO orders (user_id, total) VALUES (1, 99.99)`
+		await pool.query(
+			`INSERT INTO users (name, email) VALUES ('Charlie', 'charlie@example.com')`,
+		)
+		await pool.query(`INSERT INTO orders (user_id, total) VALUES (1, 99.99)`)
 
 		const result = await audit.search({
 			tables: ['users', 'orders'],
@@ -57,12 +63,16 @@ describe('PgHistory.search', () => {
 	})
 
 	test('should filter by operation', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
-		await sql`INSERT INTO users (name, email) VALUES ('David', 'david@example.com')`
-		await sql`UPDATE users SET email = 'david2@example.com' WHERE name = 'David'`
+		await pool.query(
+			`INSERT INTO users (name, email) VALUES ('David', 'david@example.com')`,
+		)
+		await pool.query(
+			`UPDATE users SET email = 'david2@example.com' WHERE name = 'David'`,
+		)
 
 		const result = await audit.search({
 			tables: ['users'],
@@ -75,15 +85,17 @@ describe('PgHistory.search', () => {
 	})
 
 	test('should filter by date range', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
 		const now = new Date()
 		const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
 		const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000)
 
-		await sql`INSERT INTO users (name, email) VALUES ('Eve', 'eve@example.com')`
+		await pool.query(
+			`INSERT INTO users (name, email) VALUES ('Eve', 'eve@example.com')`,
+		)
 
 		const result = await audit.search({
 			tables: ['users'],
@@ -95,13 +107,16 @@ describe('PgHistory.search', () => {
 	})
 
 	test('should support pagination', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Create multiple entries
 		for (let i = 1; i <= 5; i++) {
-			await sql`INSERT INTO users (name, email) VALUES (${`User${i}`}, ${`user${i}@example.com`})`
+			await pool.query(`INSERT INTO users (name, email) VALUES ($1, $2)`, [
+				`User${i}`,
+				`user${i}@example.com`,
+			])
 		}
 
 		const page1 = await audit.search({
@@ -123,17 +138,21 @@ describe('PgHistory.search', () => {
 	})
 
 	test('should filter by changedBy', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await audit.setUser('user-123', { action: 'api' })
-		await sql`INSERT INTO users (name, email) VALUES ('Frank', 'frank@example.com')`
+		await pool.query(
+			`INSERT INTO users (name, email) VALUES ('Frank', 'frank@example.com')`,
+		)
 
 		await new Promise((resolve) => setTimeout(resolve, 100))
 
 		await audit.setUser('user-456', { action: 'api' })
-		await sql`INSERT INTO users (name, email) VALUES ('Grace', 'grace@example.com')`
+		await pool.query(
+			`INSERT INTO users (name, email) VALUES ('Grace', 'grace@example.com')`,
+		)
 
 		await new Promise((resolve) => setTimeout(resolve, 100))
 

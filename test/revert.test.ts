@@ -6,25 +6,31 @@ setupTestDatabase()
 
 describe('PgHistory.revert', () => {
 	beforeEach(async () => {
-		const sql = await getTestConnection()
-		await sql`
+		const pool = await getTestConnection()
+		await pool.query(`
       CREATE TABLE users (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         email TEXT
       )
-    `
+    `)
 	})
 
 	test('should revert record to old_data from audit entry', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Create and modify a user
-		await sql`INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'alice1@example.com')`
-		await sql`UPDATE users SET email = 'alice2@example.com' WHERE id = 1`
-		await sql`UPDATE users SET email = 'alice3@example.com' WHERE id = 1`
+		await pool.query(
+			`INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'alice1@example.com')`,
+		)
+		await pool.query(
+			`UPDATE users SET email = 'alice2@example.com' WHERE id = 1`,
+		)
+		await pool.query(
+			`UPDATE users SET email = 'alice3@example.com' WHERE id = 1`,
+		)
 
 		// Get history to find audit entry for first update
 		const history = await audit.getHistory('users', '1')
@@ -37,17 +43,20 @@ describe('PgHistory.revert', () => {
 		await audit.revert('users', '1', firstUpdate?.id ?? '')
 
 		// Check current state - should be reverted to old_data (alice1)
-		const [user] = await sql`SELECT * FROM users WHERE id = 1`
+		const result = await pool.query(`SELECT * FROM users WHERE id = 1`)
+		const user = result.rows[0]
 		expect(user.email).toBe('alice1@example.com')
 	})
 
 	test('should create audit entry for revert operation', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
-		await sql`INSERT INTO users (id, name, email) VALUES (1, 'Bob', 'bob1@example.com')`
-		await sql`UPDATE users SET email = 'bob2@example.com' WHERE id = 1`
+		await pool.query(
+			`INSERT INTO users (id, name, email) VALUES (1, 'Bob', 'bob1@example.com')`,
+		)
+		await pool.query(`UPDATE users SET email = 'bob2@example.com' WHERE id = 1`)
 
 		const history = await audit.getHistory('users', '1')
 		const insertEntry = history.data.find((e) => e.operation === 'INSERT')
@@ -65,13 +74,17 @@ describe('PgHistory.revert', () => {
 	})
 
 	test('should use old_data for UPDATE revert, new_data for INSERT revert', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Create user and update
-		await sql`INSERT INTO users (id, name, email) VALUES (1, 'Charlie', 'charlie1@example.com')`
-		await sql`UPDATE users SET email = 'charlie2@example.com' WHERE id = 1`
+		await pool.query(
+			`INSERT INTO users (id, name, email) VALUES (1, 'Charlie', 'charlie1@example.com')`,
+		)
+		await pool.query(
+			`UPDATE users SET email = 'charlie2@example.com' WHERE id = 1`,
+		)
 
 		const history = await audit.getHistory('users', '1')
 
@@ -80,16 +93,19 @@ describe('PgHistory.revert', () => {
 		expect(updateEntry).toBeDefined()
 		await audit.revert('users', '1', updateEntry?.id ?? '')
 
-		const [user] = await sql`SELECT * FROM users WHERE id = 1`
+		const result = await pool.query(`SELECT * FROM users WHERE id = 1`)
+		const user = result.rows[0]
 		expect(user.email).toBe('charlie1@example.com')
 	})
 
 	test('should throw error if audit entry not found', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
-		await sql`INSERT INTO users (id, name, email) VALUES (1, 'David', 'david@example.com')`
+		await pool.query(
+			`INSERT INTO users (id, name, email) VALUES (1, 'David', 'david@example.com')`,
+		)
 
 		await expect(async () => {
 			await audit.revert('users', '1', '99999')
@@ -97,12 +113,14 @@ describe('PgHistory.revert', () => {
 	})
 
 	test('should associate revert with user context', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
-		await sql`INSERT INTO users (id, name, email) VALUES (1, 'Eve', 'eve1@example.com')`
-		await sql`UPDATE users SET email = 'eve2@example.com' WHERE id = 1`
+		await pool.query(
+			`INSERT INTO users (id, name, email) VALUES (1, 'Eve', 'eve1@example.com')`,
+		)
+		await pool.query(`UPDATE users SET email = 'eve2@example.com' WHERE id = 1`)
 
 		const history = await audit.getHistory('users', '1')
 		const insertEntry = history.data.find((e) => e.operation === 'INSERT')

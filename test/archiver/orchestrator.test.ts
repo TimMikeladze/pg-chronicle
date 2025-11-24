@@ -1,17 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import type { SQL } from 'bun'
+import type { Pool } from 'pg'
 import { Orchestrator } from '../../src/orchestrator'
 import { setupArchiverSchema } from '../../src/schema'
 import { cleanupTestData, getTestConnection, setupTestData } from './helpers/db'
 import { ensureTestBucket, isS3Configured } from './helpers/s3'
 
 describe('Orchestrator', () => {
-	let sql: SQL
+	let pool: Pool
 
 	beforeEach(async () => {
-		sql = await getTestConnection()
-		await setupTestData(sql)
-		await setupArchiverSchema(sql)
+		pool = await getTestConnection()
+		await setupTestData(pool)
+		await setupArchiverSchema(pool)
 
 		// Ensure test bucket exists if S3 is configured
 		if (isS3Configured()) {
@@ -20,8 +20,8 @@ describe('Orchestrator', () => {
 	})
 
 	afterEach(async () => {
-		await cleanupTestData(sql)
-		await sql.close()
+		await cleanupTestData(pool)
+		await pool.end()
 	})
 
 	test('should discover tables from audit_log', async () => {
@@ -33,7 +33,7 @@ describe('Orchestrator', () => {
 			batchSize: 100,
 		})
 
-		const tables = await orchestrator.discoverTables(sql)
+		const tables = await orchestrator.discoverTables(pool)
 
 		expect(tables).toContain('users')
 		expect(tables.length).toBeGreaterThan(0)
@@ -72,14 +72,14 @@ describe('Orchestrator', () => {
 
 	test('should run in dry-run mode without making changes', async () => {
 		// Mark some records as old
-		await sql`
+		await pool.query(`
       UPDATE audit_log
       SET changed_at = NOW() - INTERVAL '100 days'
       WHERE table_name = 'users'
         AND id IN (
           SELECT id FROM audit_log WHERE table_name = 'users' LIMIT 50
         )
-    `
+    `)
 
 		const orchestrator = new Orchestrator({
 			database: { url: 'not-used' },
@@ -89,18 +89,18 @@ describe('Orchestrator', () => {
 			batchSize: 10,
 		})
 
-		const stats = await orchestrator.run(sql, { dryRun: true })
+		const stats = await orchestrator.run(pool, { dryRun: true })
 
 		expect(stats.totalRecordsArchived).toBe(0)
 		expect(stats.totalRecordsSoftDeleted).toBe(0)
 		expect(stats.totalRecordsHardDeleted).toBe(0)
 
 		// Verify no records were actually archived
-		const archived = await sql`
+		const archived = await pool.query(`
       SELECT COUNT(*) as count
       FROM audit_log
       WHERE archived_at IS NOT NULL
-    `
-		expect(Number(archived[0].count)).toBe(0)
+    `)
+		expect(Number(archived.rows[0].count)).toBe(0)
 	})
 })

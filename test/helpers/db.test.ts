@@ -16,7 +16,7 @@ afterAll(async () => {
 })
 
 test('should create and connect to test database', async () => {
-	const sql = await getTestConnection()
-	const result = await sql`SELECT 1 as value`
-	expect(result[0]?.value).toBe(1)
+	const pool = await getTestConnection()
+	const result = await pool.query(`SELECT 1 as value`)
+	expect(result.rows[0]?.value).toBe(1)
 })

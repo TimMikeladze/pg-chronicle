@@ -1,27 +1,27 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import type { SQL } from 'bun'
+import type { Pool } from 'pg'
 import { PgHistory } from '../src/PgHistory'
 import { cleanDatabase, getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()
 
 describe('PgHistory input validation', () => {
-	let sql: SQL
+	let pool: Pool
 	let audit: PgHistory
 
 	beforeEach(async () => {
-		sql = await getTestConnection()
+		pool = await getTestConnection()
 		await cleanDatabase()
 
-		await sql`
+		await pool.query(`
 			CREATE TABLE users (
 				id SERIAL PRIMARY KEY,
 				name TEXT NOT NULL,
 				email TEXT
 			)
-		`
+		`)
 
-		audit = new PgHistory({ sql, tables: ['users'] })
+		audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 	})
 
@@ -93,7 +93,9 @@ describe('PgHistory input validation', () => {
 
 		test('should cap limit at maximum', async () => {
 			// Insert a record to test with
-			await sql`INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')`
+			await pool.query(
+				`INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')`,
+			)
 
 			// Request huge limit, should be capped
 			const result = await audit.getHistory('users', '1', { limit: 99999 })
@@ -109,7 +111,9 @@ describe('PgHistory input validation', () => {
 		})
 
 		test('should accept valid recordId', async () => {
-			await sql`INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')`
+			await pool.query(
+				`INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')`,
+			)
 			await expect(async () => {
 				await audit.getHistory('users', '1')
 			}).not.toThrow()
@@ -133,8 +137,12 @@ describe('PgHistory input validation', () => {
 
 		test('should escape wildcards in query', async () => {
 			// Insert test data
-			await sql`INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')`
-			await sql`UPDATE users SET email = 'alice2@example.com' WHERE id = 1`
+			await pool.query(
+				`INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')`,
+			)
+			await pool.query(
+				`UPDATE users SET email = 'alice2@example.com' WHERE id = 1`,
+			)
 
 			// Search with wildcards - they should be escaped, not treated as wildcards
 			const result = await audit.search({
@@ -147,7 +155,9 @@ describe('PgHistory input validation', () => {
 		})
 
 		test('should cap limit at maximum', async () => {
-			await sql`INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')`
+			await pool.query(
+				`INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')`,
+			)
 
 			// Request huge limit, should be capped
 			const result = await audit.search({ tables: ['users'], limit: 99999 })
@@ -157,7 +167,9 @@ describe('PgHistory input validation', () => {
 		})
 
 		test('should accept valid search parameters', async () => {
-			await sql`INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')`
+			await pool.query(
+				`INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')`,
+			)
 
 			await expect(async () => {
 				await audit.search({
@@ -172,7 +184,7 @@ describe('PgHistory input validation', () => {
 	describe('setup error handling', () => {
 		test('should handle setup gracefully when table does not exist', async () => {
 			// Create audit with non-existent table
-			const badAudit = new PgHistory({ sql, tables: ['nonexistent_table'] })
+			const badAudit = new PgHistory({ pool, tables: ['nonexistent_table'] })
 
 			// Setup should not throw for non-existent tables - it just skips them
 			// This is by design for idempotency
@@ -185,7 +197,7 @@ describe('PgHistory input validation', () => {
 		})
 
 		test('should throw on empty table list', async () => {
-			const badAudit = new PgHistory({ sql, tables: [] })
+			const badAudit = new PgHistory({ pool, tables: [] })
 
 			await expect(async () => {
 				await badAudit.setup()

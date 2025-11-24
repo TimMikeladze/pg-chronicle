@@ -2,7 +2,7 @@
 
 **PostgreSQL audit trails without writing triggers**
 
-Built for Bun with native `Bun.sql` integration. Production-ready change tracking, compliance-ready audit logs, and zero-maintenance PostgreSQL triggers.
+Production-ready change tracking, compliance-ready audit logs, and zero-maintenance PostgreSQL triggers. Uses the standard `pg` package for maximum compatibility.
 
 [![npm version](https://img.shields.io/npm/v/pg-history.svg)](https://www.npmjs.com/package/pg-history)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -51,7 +51,7 @@ Built for Bun with native `Bun.sql` integration. Production-ready change trackin
 - ⚡ **High Performance** - GIN indexes, cursor pagination, optimized for millions of audit records
 - 🔑 **Flexible Primary Keys** - Supports single, composite, or no primary keys
 - 🔒 **Transaction Safety** - All operations respect PostgreSQL transaction boundaries
-- 📦 **Bun Native** - Built specifically for Bun with `Bun.sql` integration
+- 📦 **Standard PostgreSQL** - Uses the `pg` package for broad Node.js runtime compatibility
 
 ## Limitations
 
@@ -68,15 +68,15 @@ bun add pg-history
 ## Quick Start
 
 ```typescript
-import { SQL } from 'bun';
+import { Pool } from 'pg';
 import { PgHistory } from 'pg-history';
 
 // Connect to your database
-const sql = new SQL('postgres://localhost:5432/mydb');
+const pool = new Pool({ connectionString: 'postgres://localhost:5432/mydb' });
 
 // Initialize with tables to track
 const history = new PgHistory({
-  sql,
+  pool,
   tables: ['users', 'orders', 'payments']
 });
 
@@ -86,16 +86,15 @@ await history.setup();
 // That's it! All changes are now automatically tracked.
 // Your application code continues working normally:
 
-await sql`
-  INSERT INTO users (id, name, email, role)
-  VALUES (1, 'Alice Johnson', 'alice@example.com', 'admin')
-`;
+await pool.query(
+  'INSERT INTO users (id, name, email, role) VALUES ($1, $2, $3, $4)',
+  [1, 'Alice Johnson', 'alice@example.com', 'admin']
+);
 
-await sql`
-  UPDATE users
-  SET role = 'superadmin'
-  WHERE id = 1
-`;
+await pool.query(
+  'UPDATE users SET role = $1 WHERE id = $2',
+  ['superadmin', 1]
+);
 
 // Query what changed
 const userHistory = await history.getHistory('users', '1');
@@ -122,13 +121,13 @@ await history.revert('users', '1', userHistory.data[1].id);
 ### Production Setup with User Tracking
 
 ```typescript
-import { SQL } from 'bun';
+import { Pool } from 'pg';
 import { PgHistory } from 'pg-history';
 
 // Initialize once at app startup
-const sql = new SQL(process.env.DATABASE_URL!);
+const pool = new Pool({ connectionString: process.env.DATABASE_URL! });
 const history = new PgHistory({
-  sql,
+  pool,
   tables: ['users', 'orders', 'payments', 'subscriptions']
 });
 
@@ -144,7 +143,7 @@ async function handleRequest(req: Request, userId: string) {
   });
 
   // All database changes in this request are now tracked with user context
-  await sql`UPDATE users SET last_login = NOW() WHERE id = ${userId}`;
+  await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [userId]);
 
   // Clear user context after request
   await history.clearUser();
@@ -266,8 +265,8 @@ new PgHistory(config: PgHistoryConfig)
 
 **Options:**
 - `tables: string[]` - (Required) List of tables to track
-- `sql?: SQL` - Existing Bun.sql connection
-- `connection?: string` - PostgreSQL connection string (alternative to `sql`)
+- `pool?: Pool` - Existing pg Pool connection
+- `connection?: string` - PostgreSQL connection string (alternative to `pool`)
 
 ### Methods
 

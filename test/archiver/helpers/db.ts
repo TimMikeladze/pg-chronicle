@@ -1,28 +1,34 @@
-import { SQL } from 'bun'
+import type { Pool } from 'pg'
+import pkg from 'pg'
+
+const { Pool: PgPool } = pkg
 
 const TEST_DB = 'pg_audit_archiver_test'
 const BASE_URL = 'postgres://postgres:postgres@localhost:5432'
 
 export async function createTestDatabase(): Promise<void> {
 	// Connect to postgres database to create test db
-	const adminSql = new SQL(`${BASE_URL}/postgres`)
+	const adminPool = new PgPool({ connectionString: `${BASE_URL}/postgres` })
 
 	try {
 		// Terminate active connections before dropping
 		try {
-			await adminSql.unsafe(`
+			await adminPool.query(
+				`
 				SELECT pg_terminate_backend(pid)
 				FROM pg_stat_activity
-				WHERE datname = '${TEST_DB}'
+				WHERE datname = $1
 				AND pid <> pg_backend_pid()
-			`)
+			`,
+				[TEST_DB],
+			)
 		} catch (_error) {
 			// Ignore errors if database doesn't exist or no connections to terminate
 		}
 
 		// Drop if exists
 		try {
-			await adminSql.unsafe(`DROP DATABASE IF EXISTS ${TEST_DB}`)
+			await adminPool.query(`DROP DATABASE IF EXISTS ${TEST_DB}`)
 		} catch (error) {
 			throw new Error(
 				`Failed to drop test database ${TEST_DB}: ${error instanceof Error ? error.message : String(error)}`,
@@ -31,52 +37,55 @@ export async function createTestDatabase(): Promise<void> {
 
 		// Create fresh
 		try {
-			await adminSql.unsafe(`CREATE DATABASE ${TEST_DB}`)
+			await adminPool.query(`CREATE DATABASE ${TEST_DB}`)
 		} catch (error) {
 			throw new Error(
 				`Failed to create test database ${TEST_DB}: ${error instanceof Error ? error.message : String(error)}`,
 			)
 		}
 	} finally {
-		await adminSql.close()
+		await adminPool.end()
 	}
 }
 
 export async function dropTestDatabase(): Promise<void> {
-	const adminSql = new SQL(`${BASE_URL}/postgres`)
+	const adminPool = new PgPool({ connectionString: `${BASE_URL}/postgres` })
 
 	try {
 		// Terminate active connections before dropping
 		try {
-			await adminSql.unsafe(`
+			await adminPool.query(
+				`
 				SELECT pg_terminate_backend(pid)
 				FROM pg_stat_activity
-				WHERE datname = '${TEST_DB}'
+				WHERE datname = $1
 				AND pid <> pg_backend_pid()
-			`)
+			`,
+				[TEST_DB],
+			)
 		} catch (_error) {
 			// Ignore errors if database doesn't exist or no connections to terminate
 		}
 
 		try {
-			await adminSql.unsafe(`DROP DATABASE IF EXISTS ${TEST_DB}`)
+			await adminPool.query(`DROP DATABASE IF EXISTS ${TEST_DB}`)
 		} catch (error) {
 			throw new Error(
 				`Failed to drop test database ${TEST_DB}: ${error instanceof Error ? error.message : String(error)}`,
 			)
 		}
 	} finally {
-		await adminSql.close()
+		await adminPool.end()
 	}
 }
 
-export async function getTestConnection(): Promise<SQL> {
-	return new SQL(`${BASE_URL}/${TEST_DB}`)
+export async function getTestConnection(): Promise<Pool> {
+	return new PgPool({ connectionString: `${BASE_URL}/${TEST_DB}` })
 }
 
-export async function setupTestData(sql: SQL): Promise<void> {
+export async function setupTestData(pool: Pool): Promise<void> {
 	// Create audit_log table for testing
-	await sql`
+	await pool.query(`
     CREATE TABLE IF NOT EXISTS audit_log (
       id TEXT PRIMARY KEY,
       table_name TEXT NOT NULL,
@@ -88,44 +97,50 @@ export async function setupTestData(sql: SQL): Promise<void> {
       changed_by TEXT,
       metadata JSONB
     )
-  `
+  `)
 
 	// Insert test records
 	const oldDate = new Date('2024-01-15')
 	const recentDate = new Date()
 
 	for (let i = 0; i < 100; i++) {
-		await sql`
+		await pool.query(
+			`
       INSERT INTO audit_log (id, table_name, record_id, operation, changed_at, new_data, changed_by)
-      VALUES (
-        ${`old-${i}`},
-        'users',
-        ${`user-${i}`},
-        'INSERT',
-        ${oldDate},
-        ${{ name: `User ${i}` }},
-        'system'
-      )
-    `
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `,
+			[
+				`old-${i}`,
+				'users',
+				`user-${i}`,
+				'INSERT',
+				oldDate,
+				JSON.stringify({ name: `User ${i}` }),
+				'system',
+			],
+		)
 	}
 
 	for (let i = 0; i < 50; i++) {
-		await sql`
+		await pool.query(
+			`
       INSERT INTO audit_log (id, table_name, record_id, operation, changed_at, new_data, changed_by)
-      VALUES (
-        ${`recent-${i}`},
-        'users',
-        ${`user-${i + 100}`},
-        'INSERT',
-        ${recentDate},
-        ${{ name: `User ${i + 100}` }},
-        'system'
-      )
-    `
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `,
+			[
+				`recent-${i}`,
+				'users',
+				`user-${i + 100}`,
+				'INSERT',
+				recentDate,
+				JSON.stringify({ name: `User ${i + 100}` }),
+				'system',
+			],
+		)
 	}
 }
 
-export async function cleanupTestData(sql: SQL): Promise<void> {
-	await sql`DROP TABLE IF EXISTS audit_log CASCADE`
-	await sql`DROP TABLE IF EXISTS audit_archive_metadata CASCADE`
+export async function cleanupTestData(pool: Pool): Promise<void> {
+	await pool.query(`DROP TABLE IF EXISTS audit_log CASCADE`)
+	await pool.query(`DROP TABLE IF EXISTS audit_archive_metadata CASCADE`)
 }

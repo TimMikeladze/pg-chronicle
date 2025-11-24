@@ -1,4 +1,4 @@
-import type { SQL } from 'bun'
+import type { Pool } from 'pg'
 
 export interface PgHistoryConfig {
 	/** List of tables to track history */
@@ -7,8 +7,8 @@ export interface PgHistoryConfig {
 	/** Provide connection string (e.g., 'postgres://user:pass@localhost:5432/db') */
 	connection?: string
 
-	/** Or provide an existing SQL connection instance */
-	sql?: SQL
+	/** Or provide an existing Pool connection instance */
+	pool?: Pool
 }
 
 export interface AuditEntry {
@@ -50,8 +50,8 @@ export interface ArchiverConfig {
 	/** Database connection string */
 	connection?: string
 
-	/** Or provide existing SQL connection */
-	sql?: SQL
+	/** Or provide existing Pool connection */
+	pool?: Pool
 
 	/** S3 configuration */
 	s3: S3Config

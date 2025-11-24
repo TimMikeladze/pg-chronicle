@@ -6,51 +6,51 @@ setupTestDatabase()
 
 describe('PgHistory.setup', () => {
 	test('should create audit_log table', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 
 		await audit.setup()
 
 		// Check table exists
-		const tables = await sql`
+		const tables = await pool.query(`
       SELECT tablename FROM pg_tables
       WHERE schemaname = 'public'
       AND tablename = 'audit_log'
-    `
+    `)
 
-		expect(tables.length).toBe(1)
+		expect(tables.rows.length).toBe(1)
 	})
 
 	test('should create partition for each table', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users', 'orders'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users', 'orders'] })
 
 		await audit.setup()
 
 		// Check partitions exist
-		const partitions = await sql`
+		const partitions = await pool.query(`
       SELECT tablename FROM pg_tables
       WHERE schemaname = 'public'
       AND (tablename = 'audit_log_users' OR tablename = 'audit_log_orders')
-    `
+    `)
 
-		expect(partitions.length).toBe(2)
+		expect(partitions.rows.length).toBe(2)
 	})
 
 	test('should create indexes on audit_log', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 
 		await audit.setup()
 
 		// Check specific indexes exist
-		const indexes = await sql`
+		const indexes = await pool.query(`
       SELECT indexname FROM pg_indexes
       WHERE schemaname = 'public'
       AND tablename = 'audit_log'
-    `
+    `)
 
-		const indexNames = indexes.map(
+		const indexNames = indexes.rows.map(
 			(idx: { indexname: string }) => idx.indexname,
 		)
 
@@ -62,50 +62,50 @@ describe('PgHistory.setup', () => {
 	})
 
 	test('should be idempotent - running setup twice works', async () => {
-		const sql = await getTestConnection()
-		const audit = new PgHistory({ sql, tables: ['users'] })
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
 
 		await audit.setup()
 		await audit.setup() // Should not error
 
-		const tables = await sql`
+		const tables = await pool.query(`
       SELECT tablename FROM pg_tables
       WHERE schemaname = 'public'
       AND tablename = 'audit_log'
-    `
+    `)
 
-		expect(tables.length).toBe(1)
+		expect(tables.rows.length).toBe(1)
 	})
 
 	test('should reject invalid table names', async () => {
-		const sql = await getTestConnection()
+		const pool = await getTestConnection()
 
 		// Test various invalid table names
 		expect(
-			() => new PgHistory({ sql, tables: ['users; DROP TABLE audit_log;'] }),
+			() => new PgHistory({ pool, tables: ['users; DROP TABLE audit_log;'] }),
 		).toThrow('Invalid table name')
-		expect(() => new PgHistory({ sql, tables: ['users--'] })).toThrow(
+		expect(() => new PgHistory({ pool, tables: ['users--'] })).toThrow(
 			'Invalid table name',
 		)
-		expect(() => new PgHistory({ sql, tables: ['123users'] })).toThrow(
+		expect(() => new PgHistory({ pool, tables: ['123users'] })).toThrow(
 			'Invalid table name',
 		)
-		expect(() => new PgHistory({ sql, tables: ['user-name'] })).toThrow(
+		expect(() => new PgHistory({ pool, tables: ['user-name'] })).toThrow(
 			'Invalid table name',
 		)
-		expect(() => new PgHistory({ sql, tables: ['user name'] })).toThrow(
+		expect(() => new PgHistory({ pool, tables: ['user name'] })).toThrow(
 			'Invalid table name',
 		)
 	})
 
 	test('should accept valid table names', async () => {
-		const sql = await getTestConnection()
+		const pool = await getTestConnection()
 
 		// These should not throw
-		expect(() => new PgHistory({ sql, tables: ['users'] })).not.toThrow()
-		expect(() => new PgHistory({ sql, tables: ['_users'] })).not.toThrow()
-		expect(() => new PgHistory({ sql, tables: ['users_table'] })).not.toThrow()
-		expect(() => new PgHistory({ sql, tables: ['users123'] })).not.toThrow()
-		expect(() => new PgHistory({ sql, tables: ['UsErS'] })).not.toThrow()
+		expect(() => new PgHistory({ pool, tables: ['users'] })).not.toThrow()
+		expect(() => new PgHistory({ pool, tables: ['_users'] })).not.toThrow()
+		expect(() => new PgHistory({ pool, tables: ['users_table'] })).not.toThrow()
+		expect(() => new PgHistory({ pool, tables: ['users123'] })).not.toThrow()
+		expect(() => new PgHistory({ pool, tables: ['UsErS'] })).not.toThrow()
 	})
 })

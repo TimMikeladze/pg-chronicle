@@ -1,4 +1,4 @@
-import { SQL } from 'bun'
+import type { Pool } from 'pg'
 import type {
 	AuditEntry,
 	GetHistoryOptions,
@@ -8,7 +8,7 @@ import type {
 } from './types'
 
 export class PgHistory {
-	private sql: SQL
+	private pool: Pool
 	private tables: string[]
 	private ownConnection: boolean
 	private schema: string = 'public'
@@ -22,11 +22,12 @@ export class PgHistory {
 			this.validateTableName(tableName)
 		}
 
-		if (config.sql) {
-			this.sql = config.sql
+		if (config.pool) {
+			this.pool = config.pool
 			this.ownConnection = false
 		} else if (config.connection) {
-			this.sql = new SQL(config.connection)
+			const { Pool } = require('pg')
+			this.pool = new Pool({ connectionString: config.connection })
 			this.ownConnection = true
 		} else {
 			throw new Error('PgHistory: No connection configuration provided')
@@ -136,16 +137,17 @@ export class PgHistory {
 		}
 
 		// Query PostgreSQL system catalogs to find primary key columns
-		const result = await this.sql`
-			SELECT a.attname as column_name
+		const result = await this.pool.query(
+			`SELECT a.attname as column_name
 			FROM pg_index i
 			JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-			WHERE i.indrelid = ${tableName}::regclass
+			WHERE i.indrelid = $1::regclass
 			AND i.indisprimary
-			ORDER BY array_position(i.indkey, a.attnum)
-		`
+			ORDER BY array_position(i.indkey, a.attnum)`,
+			[tableName],
+		)
 
-		const columns = result.map(
+		const columns = result.rows.map(
 			(row: { column_name: string }) => row.column_name,
 		)
 
@@ -199,11 +201,13 @@ export class PgHistory {
 	 */
 	private async setupInternal(): Promise<void> {
 		// Detect current schema (C2)
-		const schemaResult = await this.sql`SELECT current_schema() as schema`
-		this.schema = schemaResult[0]?.schema || 'public'
+		const schemaResult = await this.pool.query(
+			'SELECT current_schema() as schema',
+		)
+		this.schema = schemaResult.rows[0]?.schema || 'public'
 
 		// Create partitioned audit_log table
-		await this.sql`
+		await this.pool.query(`
 			CREATE TABLE IF NOT EXISTS audit_log (
 				id BIGSERIAL,
 				table_name TEXT NOT NULL,
@@ -216,24 +220,23 @@ export class PgHistory {
 				metadata JSONB,
 				PRIMARY KEY (id, table_name)
 			) PARTITION BY LIST (table_name)
-		`
+		`)
 
 		// Create partitions for each table
 		for (const tableName of this.tables) {
 			const partitionName = `audit_log_${tableName}`
 
 			// Check if partition exists
-			const exists = await this.sql`
-				SELECT 1 FROM pg_tables
-				WHERE schemaname = ${this.schema}
-				AND tablename = ${partitionName}
-			`
+			const exists = await this.pool.query(
+				'SELECT 1 FROM pg_tables WHERE schemaname = $1 AND tablename = $2',
+				[this.schema, partitionName],
+			)
 
-			if (exists.length === 0) {
+			if (exists.rows.length === 0) {
 				try {
-					// Safe to use unsafe() here because tableName has been validated in constructor
+					// Safe to use string interpolation here because tableName has been validated in constructor
 					// through validateTableName() which ensures it contains only safe characters
-					await this.sql.unsafe(`
+					await this.pool.query(`
 						CREATE TABLE ${partitionName}
 						PARTITION OF audit_log
 						FOR VALUES IN ('${tableName}')
@@ -252,30 +255,30 @@ export class PgHistory {
 		}
 
 		// Create indexes (IF NOT EXISTS will skip if they exist)
-		await this.sql`
+		await this.pool.query(`
 			CREATE INDEX IF NOT EXISTS idx_audit_old_data_gin
 			ON audit_log USING GIN (old_data jsonb_path_ops)
-		`
+		`)
 
-		await this.sql`
+		await this.pool.query(`
 			CREATE INDEX IF NOT EXISTS idx_audit_new_data_gin
 			ON audit_log USING GIN (new_data jsonb_path_ops)
-		`
+		`)
 
-		await this.sql`
+		await this.pool.query(`
 			CREATE INDEX IF NOT EXISTS idx_audit_changed_at
 			ON audit_log (changed_at DESC)
-		`
+		`)
 
-		await this.sql`
+		await this.pool.query(`
 			CREATE INDEX IF NOT EXISTS idx_audit_record_id
 			ON audit_log (table_name, record_id, changed_at DESC)
-		`
+		`)
 
-		await this.sql`
+		await this.pool.query(`
 			CREATE INDEX IF NOT EXISTS idx_audit_changed_by
 			ON audit_log (changed_by)
-		`
+		`)
 
 		// Create triggers for each table with table-specific trigger functions
 		for (const tableName of this.tables) {
@@ -283,13 +286,12 @@ export class PgHistory {
 			const funcName = `audit_trigger_func_${tableName}`
 
 			// Check if the target table exists
-			const tableExists = await this.sql`
-				SELECT 1 FROM pg_tables
-				WHERE schemaname = ${this.schema}
-				AND tablename = ${tableName}
-			`
+			const tableExists = await this.pool.query(
+				'SELECT 1 FROM pg_tables WHERE schemaname = $1 AND tablename = $2',
+				[this.schema, tableName],
+			)
 
-			if (tableExists.length === 0) {
+			if (tableExists.rows.length === 0) {
 				console.warn(
 					`[pg-history] Table ${tableName} does not exist, skipping trigger creation`,
 				)
@@ -426,18 +428,18 @@ export class PgHistory {
 				`
 			}
 
-			await this.sql.unsafe(functionBody)
+			await this.pool.query(functionBody)
 
 			// Check if trigger exists
-			const triggerExists = await this.sql`
-				SELECT 1 FROM pg_trigger
-				WHERE tgname = ${triggerName}
-			`
+			const triggerExists = await this.pool.query(
+				'SELECT 1 FROM pg_trigger WHERE tgname = $1',
+				[triggerName],
+			)
 
-			if (triggerExists.length === 0) {
+			if (triggerExists.rows.length === 0) {
 				try {
-					// Safe to use unsafe() here because tableName has been validated in constructor
-					await this.sql.unsafe(`
+					// Safe to use string interpolation here because tableName has been validated in constructor
+					await this.pool.query(`
 						CREATE TRIGGER ${triggerName}
 						AFTER INSERT OR UPDATE OR DELETE ON ${tableName}
 						FOR EACH ROW EXECUTE FUNCTION ${funcName}()
@@ -455,19 +457,19 @@ export class PgHistory {
 		}
 
 		// Create user correlation table
-		await this.sql`
+		await this.pool.query(`
 			CREATE TABLE IF NOT EXISTS audit_user_context (
 				id BIGSERIAL PRIMARY KEY,
 				user_id TEXT NOT NULL,
 				metadata JSONB,
 				created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 			)
-		`
+		`)
 
-		await this.sql`
+		await this.pool.query(`
 			CREATE INDEX IF NOT EXISTS idx_audit_user_context_created_at
 			ON audit_user_context (created_at DESC)
-		`
+		`)
 	}
 
 	async setUser(
@@ -479,7 +481,11 @@ export class PgHistory {
 
 		// Store user context in PostgreSQL session variables
 		// This allows triggers to access the user context
-		await this.sql`SELECT set_config('audit.user_id', ${userId}, false)`
+		await this.pool.query('SELECT set_config($1, $2, $3)', [
+			'audit.user_id',
+			userId,
+			false,
+		])
 
 		if (metadata) {
 			// Safely serialize metadata, catching circular references and other JSON errors
@@ -499,30 +505,45 @@ export class PgHistory {
 				)
 			}
 
-			await this
-				.sql`SELECT set_config('audit.user_metadata', ${metadataJson}, false)`
+			await this.pool.query('SELECT set_config($1, $2, $3)', [
+				'audit.user_metadata',
+				metadataJson,
+				false,
+			])
 
 			// Also insert into audit_user_context table for tracking
 			// Cast to JSONB explicitly to ensure correct type handling
-			await this.sql`
-				INSERT INTO audit_user_context (user_id, metadata)
-				VALUES (${userId}, ${metadataJson}::jsonb)
-			`
+			await this.pool.query(
+				'INSERT INTO audit_user_context (user_id, metadata) VALUES ($1, $2::jsonb)',
+				[userId, metadataJson],
+			)
 		} else {
-			await this.sql`SELECT set_config('audit.user_metadata', '', false)`
+			await this.pool.query('SELECT set_config($1, $2, $3)', [
+				'audit.user_metadata',
+				'',
+				false,
+			])
 
 			// Also insert into audit_user_context table for tracking
-			await this.sql`
-				INSERT INTO audit_user_context (user_id, metadata)
-				VALUES (${userId}, NULL)
-			`
+			await this.pool.query(
+				'INSERT INTO audit_user_context (user_id, metadata) VALUES ($1, NULL)',
+				[userId],
+			)
 		}
 	}
 
 	async clearUser(): Promise<void> {
 		// Clear user context from session variables
-		await this.sql`SELECT set_config('audit.user_id', '', false)`
-		await this.sql`SELECT set_config('audit.user_metadata', '', false)`
+		await this.pool.query('SELECT set_config($1, $2, $3)', [
+			'audit.user_id',
+			'',
+			false,
+		])
+		await this.pool.query('SELECT set_config($1, $2, $3)', [
+			'audit.user_metadata',
+			'',
+			false,
+		])
 	}
 
 	async getHistory(
@@ -548,50 +569,54 @@ export class PgHistory {
 			this.validateStringInput(options.cursor, 'cursor', 100)
 		}
 
-		let query: Promise<unknown[]>
+		let queryResult: { rows: unknown[] }
 		if (options.cursor) {
 			// Cursor-based pagination
 			if (order === 'desc') {
-				query = this.sql`
-					SELECT * FROM audit_log
-					WHERE table_name = ${tableName}
-					AND record_id = ${recordId}
-					AND id < ${options.cursor}
+				queryResult = await this.pool.query(
+					`SELECT * FROM audit_log
+					WHERE table_name = $1
+					AND record_id = $2
+					AND id < $3
 					ORDER BY id DESC
-					LIMIT ${limit + 1}
-				`
+					LIMIT $4`,
+					[tableName, recordId, options.cursor, limit + 1],
+				)
 			} else {
-				query = this.sql`
-					SELECT * FROM audit_log
-					WHERE table_name = ${tableName}
-					AND record_id = ${recordId}
-					AND id > ${options.cursor}
+				queryResult = await this.pool.query(
+					`SELECT * FROM audit_log
+					WHERE table_name = $1
+					AND record_id = $2
+					AND id > $3
 					ORDER BY id ASC
-					LIMIT ${limit + 1}
-				`
+					LIMIT $4`,
+					[tableName, recordId, options.cursor, limit + 1],
+				)
 			}
 		} else {
 			// First page
 			if (order === 'desc') {
-				query = this.sql`
-					SELECT * FROM audit_log
-					WHERE table_name = ${tableName}
-					AND record_id = ${recordId}
+				queryResult = await this.pool.query(
+					`SELECT * FROM audit_log
+					WHERE table_name = $1
+					AND record_id = $2
 					ORDER BY id DESC
-					LIMIT ${limit + 1}
-				`
+					LIMIT $3`,
+					[tableName, recordId, limit + 1],
+				)
 			} else {
-				query = this.sql`
-					SELECT * FROM audit_log
-					WHERE table_name = ${tableName}
-					AND record_id = ${recordId}
+				queryResult = await this.pool.query(
+					`SELECT * FROM audit_log
+					WHERE table_name = $1
+					AND record_id = $2
 					ORDER BY id ASC
-					LIMIT ${limit + 1}
-				`
+					LIMIT $3`,
+					[tableName, recordId, limit + 1],
+				)
 			}
 		}
 
-		const rows = (await query) as Array<{
+		const rows = queryResult.rows as Array<{
 			id: number
 			table_name: string
 			record_id: string
@@ -731,7 +756,8 @@ export class PgHistory {
 		`
 		params.push(limit + 1)
 
-		const rows = (await this.sql.unsafe(query, params)) as Array<{
+		const queryResult = await this.pool.query(query, params)
+		const rows = queryResult.rows as Array<{
 			id: number
 			table_name: string
 			record_id: string
@@ -780,15 +806,20 @@ export class PgHistory {
 		}
 
 		// Wrap entire revert operation in a transaction for consistency
-		// Use Bun's transaction API
-		return await this.sql.begin(async (tx) => {
+		// Get a client from the pool and use it for the transaction
+		const client = await this.pool.connect()
+		try {
+			await client.query('BEGIN')
+
 			// Get the audit entry
-			const [entry] = (await tx`
-				SELECT * FROM audit_log
-				WHERE id = ${auditEntryId}
-				AND table_name = ${tableName}
-				AND record_id = ${recordId}
-			`) as Array<{
+			const entryResult = await client.query(
+				`SELECT * FROM audit_log
+				WHERE id = $1
+				AND table_name = $2
+				AND record_id = $3`,
+				[auditEntryId, tableName, recordId],
+			)
+			const [entry] = entryResult.rows as Array<{
 				id: number
 				table_name: string
 				record_id: string
@@ -881,8 +912,8 @@ export class PgHistory {
 				RETURNING true as success
 			`
 
-			const updateResult = await tx.unsafe(updateQuery, values)
-			if (!updateResult || updateResult.length === 0) {
+			const updateResult = await client.query(updateQuery, values)
+			if (!updateResult.rows || updateResult.rows.length === 0) {
 				throw new Error(
 					`Failed to revert record ${recordId} in table ${tableName} - no rows updated`,
 				)
@@ -892,9 +923,8 @@ export class PgHistory {
 			// Mark the newly created audit entry as a revert using a more reliable method
 			// We use the fact that it's the most recent entry for this table/record
 			// within this transaction, and we check it was just created
-			const markedRows = await tx.unsafe(
-				`
-				UPDATE audit_log
+			const markedRows = await client.query(
+				`UPDATE audit_log
 				SET metadata = jsonb_set(
 					COALESCE(metadata, '{}'::jsonb),
 					'{revertedFrom}',
@@ -908,18 +938,24 @@ export class PgHistory {
 					ORDER BY id DESC
 					LIMIT 1
 				)
-				RETURNING id
-			`,
+				RETURNING id`,
 				[auditEntryId, tableName, recordId],
 			)
 
-			if (!markedRows || markedRows.length === 0) {
+			if (!markedRows.rows || markedRows.rows.length === 0) {
 				// Log warning but don't fail - the revert succeeded
 				console.warn(
 					`[pg-history] Failed to mark audit entry as revert for ${tableName}:${recordId}`,
 				)
 			}
-		})
+
+			await client.query('COMMIT')
+		} catch (error) {
+			await client.query('ROLLBACK')
+			throw error
+		} finally {
+			client.release()
+		}
 	}
 
 	async teardown(): Promise<void> {
@@ -927,7 +963,7 @@ export class PgHistory {
 		for (const tableName of this.tables) {
 			const triggerName = `audit_trigger_${tableName}`
 
-			await this.sql.unsafe(`
+			await this.pool.query(`
 				DROP TRIGGER IF EXISTS ${triggerName} ON ${tableName}
 			`)
 		}
@@ -936,25 +972,25 @@ export class PgHistory {
 		for (const tableName of this.tables) {
 			const funcName = `audit_trigger_func_${tableName}`
 
-			await this.sql.unsafe(`
+			await this.pool.query(`
 				DROP FUNCTION IF EXISTS ${funcName}() CASCADE
 			`)
 		}
 
 		// Drop user context table
-		await this.sql`
+		await this.pool.query(`
 			DROP TABLE IF EXISTS audit_user_context CASCADE
-		`
+		`)
 
 		// Drop audit_log table (cascades to partitions)
-		await this.sql`
+		await this.pool.query(`
 			DROP TABLE IF EXISTS audit_log CASCADE
-		`
+		`)
 	}
 
 	async close(): Promise<void> {
 		if (this.ownConnection) {
-			await this.sql.close()
+			await this.pool.end()
 		}
 	}
 }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import type { SQL } from 'bun'
+import type { Pool } from 'pg'
 import { PgHistory } from '../src/PgHistory'
 import { cleanDatabase, getTestConnection, setupTestDatabase } from './helpers'
 
@@ -54,11 +54,11 @@ describe('PgHistory security - validation', () => {
 })
 
 describe('PgHistory security - database operations', () => {
-	let sql: SQL
+	let pool: Pool
 	let audit: PgHistory
 
 	beforeEach(async () => {
-		sql = await getTestConnection()
+		pool = await getTestConnection()
 		await cleanDatabase()
 	})
 
@@ -72,25 +72,25 @@ describe('PgHistory security - database operations', () => {
 	test('should reject malicious column names from database', async () => {
 		// Create a test table with a malicious column name
 		// This simulates a compromised database
-		await sql`
+		await pool.query(`
 			CREATE TABLE malicious_table (
 				id SERIAL PRIMARY KEY,
 				name TEXT
 			)
-		`
+		`)
 
 		audit = new PgHistory({
-			sql,
+			pool,
 			tables: ['malicious_table'],
 		})
 
 		await audit.setup()
 
 		// Now try to insert data
-		await sql`
+		await pool.query(`
 			INSERT INTO malicious_table (name)
 			VALUES ('test')
-		`
+		`)
 
 		// This should work fine as the column names are valid
 		const history = await audit.getHistory('malicious_table', '1')
@@ -102,10 +102,10 @@ describe('PgHistory security - database operations', () => {
 		const circular: Record<string, unknown> = {}
 		circular.self = circular
 
-		await sql`CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)`
+		await pool.query(`CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)`)
 
 		audit = new PgHistory({
-			sql,
+			pool,
 			tables: ['users'],
 		})
 
@@ -117,10 +117,10 @@ describe('PgHistory security - database operations', () => {
 	})
 
 	test('should successfully serialize valid metadata', async () => {
-		await sql`CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)`
+		await pool.query(`CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)`)
 
 		audit = new PgHistory({
-			sql,
+			pool,
 			tables: ['users'],
 		})
 

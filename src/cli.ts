@@ -1,7 +1,10 @@
 #!/usr/bin/env bun
 import { randomUUID } from 'node:crypto'
 import { parseArgs } from 'node:util'
-import { SQL } from 'bun'
+import pkg from 'pg'
+
+const { Pool } = pkg
+
 import { loadConfig } from './config'
 import { HealthServer } from './health'
 import { createLogger } from './logger'
@@ -118,16 +121,16 @@ async function main() {
 		healthServer.start()
 
 		// Connect to database
-		const sql = new SQL(config.database.url)
+		const pool = new Pool({ connectionString: config.database.url })
 		logger.info('Connected to database')
 
 		// Ensure schema is set up
-		await setupArchiverSchema(sql)
+		await setupArchiverSchema(pool)
 		logger.info('Schema verified')
 
 		// Run orchestrator
 		const orchestrator = new Orchestrator(config)
-		const stats = await orchestrator.run(sql, {
+		const stats = await orchestrator.run(pool, {
 			dryRun: opts.dryRun,
 			targetTable: opts.table,
 		})
@@ -151,7 +154,7 @@ async function main() {
 		}
 
 		// Close connection
-		await sql.close()
+		await pool.end()
 
 		// Stop health server
 		healthServer.stop()
