@@ -55,17 +55,20 @@ export async function loadConfig(
 	if (process.env.PG_AUDIT_DB_URL) {
 		config.database.url = process.env.PG_AUDIT_DB_URL
 	}
-	if (process.env.S3_BUCKET) {
-		config.s3.bucket = process.env.S3_BUCKET
+	if (process.env.PG_HISTORY_S3_BUCKET) {
+		config.s3.bucket = process.env.PG_HISTORY_S3_BUCKET
 	}
-	if (process.env.S3_ENDPOINT) {
-		config.s3.endpoint = process.env.S3_ENDPOINT
+	if (process.env.PG_HISTORY_S3_ENDPOINT) {
+		config.s3.endpoint = process.env.PG_HISTORY_S3_ENDPOINT
 	}
-	if (process.env.S3_ACCESS_KEY_ID) {
-		config.s3.accessKeyId = process.env.S3_ACCESS_KEY_ID
+	if (process.env.PG_HISTORY_S3_ACCESS_KEY_ID) {
+		config.s3.accessKeyId = process.env.PG_HISTORY_S3_ACCESS_KEY_ID
 	}
-	if (process.env.S3_SECRET_ACCESS_KEY) {
-		config.s3.secretAccessKey = process.env.S3_SECRET_ACCESS_KEY
+	if (process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY) {
+		config.s3.secretAccessKey = process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY
+	}
+	if (process.env.PG_HISTORY_S3_REGION) {
+		config.s3.region = process.env.PG_HISTORY_S3_REGION
 	}
 	if (process.env.ARCHIVE_RETENTION_DEFAULT) {
 		config.retention.default = parsePositiveInt(

@@ -11,7 +11,7 @@ describe('Config Loading', () => {
 	afterEach(() => {
 		// Clean up environment variables after each test
 		delete process.env.PG_AUDIT_DB_URL
-		delete process.env.S3_BUCKET
+		delete process.env.PG_HISTORY_S3_BUCKET
 		delete process.env.ARCHIVE_RETENTION_DEFAULT
 		delete process.env.ARCHIVE_GRACE_PERIOD
 		delete process.env.ARCHIVE_BATCH_SIZE
@@ -30,7 +30,7 @@ describe('Config Loading', () => {
 
 	test('should override with environment variables', async () => {
 		process.env.PG_AUDIT_DB_URL = 'postgres://override@localhost/test'
-		process.env.S3_BUCKET = 'override-bucket'
+		process.env.PG_HISTORY_S3_BUCKET = 'override-bucket'
 
 		const config = await loadConfig({
 			configPath: testConfigPath,
