@@ -66,5 +66,26 @@
 		"url": "https://github.com/TimMikeladze/ygoapi/issues"
 	},
 	"license": "MIT",
-	"keywords": []
+	"keywords": [
+		"postgresql",
+		"postgres",
+		"audit",
+		"history",
+		"change-tracking",
+		"audit-log",
+		"audit-trail",
+		"database",
+		"triggers",
+		"bun",
+		"sql",
+		"compliance",
+		"rollback",
+		"revert",
+		"undo",
+		"versioning",
+		"change-data-capture",
+		"cdc",
+		"temporal",
+		"jsonb"
+	]
 }
