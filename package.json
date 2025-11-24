@@ -87,5 +87,9 @@
 		"cdc",
 		"temporal",
 		"jsonb"
-	]
+	],
+	"dependencies": {
+		"hyparquet": "^1.21.0",
+		"hyparquet-writer": "^0.9.1"
+	}
 }

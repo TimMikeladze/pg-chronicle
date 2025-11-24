@@ -4,6 +4,10 @@
   "workspaces": {
     "": {
       "name": "pg-audit",
+      "dependencies": {
+        "hyparquet": "^1.21.0",
+        "hyparquet-writer": "^0.9.1",
+      },
       "devDependencies": {
         "@biomejs/biome": "^2.2.4",
         "@types/bun": "^1.2.22",
@@ -179,6 +183,10 @@
 
     "giget": ["giget@2.0.0", "", { "dependencies": { "citty": "^0.1.6", "consola": "^3.4.0", "defu": "^6.1.4", "node-fetch-native": "^1.6.6", "nypm": "^0.6.0", "pathe": "^2.0.3" }, "bin": { "giget": "dist/cli.mjs" } }, "sha512-L5bGsVkxJbJgdnwyuheIunkGatUF/zssUoxxjACCseZYAVbaqdh9Tsmmlkl8vYan09H7sbvKt4pS8GqKLBrEzA=="],
 
+    "hyparquet": ["hyparquet@1.21.0", "", {}, "sha512-7AgWwXQy9sNRkPQksY+oeDEIdZNDSYeRy01T1YseJm+7MJpREGYVN1yLvHIoukHQaaTYYfzTzAX4nNOTiaffQw=="],
+
+    "hyparquet-writer": ["hyparquet-writer@0.9.1", "", { "dependencies": { "hyparquet": "1.20.2" } }, "sha512-TSzG3B2Ib11YUxiqNhvtRBYKQh9WCgS0UUxlXA1I1u+supy8h0viXbyPlB81BoXtgoHBbvX72Owu1mJ318XROQ=="],
+
     "jiti": ["jiti@2.6.1", "", { "bin": { "jiti": "lib/jiti-cli.mjs" } }, "sha512-ekilCSN1jwRvIbgeg/57YFh8qQDNbwDb9xT/qu2DAHbFFZUicIl4ygVaAvzveMhMVr3LnpSKTNnwt8PoOfmKhQ=="],
 
     "jsonc-parser": ["jsonc-parser@3.3.1", "", {}, "sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ=="],
@@ -264,5 +272,7 @@
     "@oxc-resolver/binding-wasm32-wasi/@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@0.2.12", "", { "dependencies": { "@emnapi/core": "^1.4.3", "@emnapi/runtime": "^1.4.3", "@tybys/wasm-util": "^0.10.0" } }, "sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ=="],
 
     "@oxc-transform/binding-wasm32-wasi/@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@0.2.12", "", { "dependencies": { "@emnapi/core": "^1.4.3", "@emnapi/runtime": "^1.4.3", "@tybys/wasm-util": "^0.10.0" } }, "sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ=="],
+
+    "hyparquet-writer/hyparquet": ["hyparquet@1.20.2", "", {}, "sha512-aFTpoe/ufVxb5f3PRCWBXZgKhUFKfcueGq31bGn2W1Qx7sLm45UJeHovwQhtTykL8AMhKEgNsgaKbOZcvFVtoA=="],
   }
 }
