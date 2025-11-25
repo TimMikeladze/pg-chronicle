@@ -8,7 +8,9 @@ import type { ServerConfig } from './types'
 
 type Variables = JwtVariables
 
-export async function createServer(config: ServerConfig) {
+export async function createServer(
+	config: ServerConfig,
+): Promise<Hono<{ Variables: Variables }>> {
 	const app = new Hono<{ Variables: Variables }>()
 
 	// If archiver is enabled, run the orchestrator
