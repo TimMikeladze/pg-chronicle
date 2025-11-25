@@ -120,29 +120,23 @@ export interface TableArchiveSummary {
 	size: number
 }
 
-export interface ConfigFile {
-	database: {
-		url: string
-	}
-	s3: {
-		bucket: string
-		endpoint?: string
-		region?: string
-		accessKeyId?: string
-		secretAccessKey?: string
-	}
-	retention: {
-		default: number
-		tables?: Record<string, number>
-	}
-	gracePeriod: number
-	batchSize: number
-	healthPort?: number
-}
+export interface ServerConfig {
+	/** PostgreSQL connection pool */
+	pool: Pool
 
-export interface LoadConfigOptions {
-	configPath: string
-	overrides?: Partial<ConfigFile>
+	/** Server port (default: 3001) */
+	port?: number
+
+	/** Enable archiver integration */
+	enableArchiver?: boolean
+
+	/** Archiver configuration (required if enableArchiver is true) */
+	archiverConfig?: {
+		s3: S3Config
+		retention: RetentionConfig
+		gracePeriod: number
+		batchSize: number
+	}
 }
 
 export interface OrchestratorStats {

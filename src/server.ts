@@ -2,17 +2,16 @@ import { Hono } from 'hono'
 import type { JwtVariables } from 'hono/jwt'
 import { jwt } from 'hono/jwt'
 import { openAPIRouteHandler } from 'hono-openapi'
-import type { Pool } from 'pg'
 import { getArchivalStats } from './schema'
-import type { ConfigFile } from './types'
+import type { ServerConfig } from './types'
 
 type Variables = JwtVariables
 
-export function createServer(pool: Pool, config: ConfigFile) {
+export function createServer(config: ServerConfig) {
 	const app = new Hono<{ Variables: Variables }>()
 
-	// Conditionally apply JWT auth if JWT_SECRET is set
-	const jwtSecret = process.env.JWT_SECRET
+	// Conditionally apply JWT auth if PG_HISTORY_JWT_SECRET is set
+	const jwtSecret = process.env.PG_HISTORY_JWT_SECRET
 	if (jwtSecret) {
 		console.log('JWT authentication enabled')
 		app.use('/api/*', (c, next) => {
@@ -29,10 +28,13 @@ export function createServer(pool: Pool, config: ConfigFile) {
 	})
 
 	// Archival stats endpoint (fast - no audit_log scan)
-	app.get('/api/stats', async (c) => {
-		const stats = await getArchivalStats(pool)
-		return c.json({ stats })
-	})
+	// Only available if archiver is enabled
+	if (config.enableArchiver) {
+		app.get('/api/stats', async (c) => {
+			const stats = await getArchivalStats(config.pool)
+			return c.json({ stats })
+		})
+	}
 
 	// OpenAPI documentation endpoint (no auth required)
 	app.get(
@@ -46,7 +48,7 @@ export function createServer(pool: Pool, config: ConfigFile) {
 				},
 				servers: [
 					{
-						url: `http://localhost:${config.healthPort || 3001}`,
+						url: `http://localhost:${config.port || 3001}`,
 						description: 'Local Server',
 					},
 				],
@@ -55,4 +57,47 @@ export function createServer(pool: Pool, config: ConfigFile) {
 	)
 
 	return app
+}
+
+// If this file is run directly (e.g. `bun server.ts`), create and start the server
+if (require.main === module) {
+	;(async () => {
+		const { Pool } = await import('pg')
+
+		const databaseUrl = process.env.PG_HISTORY_DATABASE_URL
+		if (!databaseUrl) {
+			throw new Error(
+				'PG_HISTORY_DATABASE_URL environment variable is required',
+			)
+		}
+
+		const pool = new Pool({ connectionString: databaseUrl })
+
+		const port = process.env.PG_HISTORY_PORT
+			? Number.parseInt(process.env.PG_HISTORY_PORT, 10)
+			: 3001
+
+		const app = createServer({ pool, port })
+
+		console.log(`Starting server on port ${port}`)
+		const server = Bun.serve({
+			port,
+			fetch: app.fetch,
+		})
+
+		// Graceful shutdown
+		process.on('SIGTERM', async () => {
+			console.log('Received SIGTERM, shutting down gracefully...')
+			server.stop()
+			await pool.end()
+			process.exit(0)
+		})
+
+		process.on('SIGINT', async () => {
+			console.log('Received SIGINT, shutting down gracefully...')
+			server.stop()
+			await pool.end()
+			process.exit(0)
+		})
+	})().catch(console.error)
 }

@@ -40,19 +40,18 @@ describe('Orchestrator Integration', () => {
         )
     `)
 
-		const orchestrator = new Orchestrator({
-			database: { url: 'not-used' },
-			s3: {
+		const orchestrator = new Orchestrator(
+			{
 				bucket: 'test-bucket',
 				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
 				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
 				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
 				region: process.env.PG_HISTORY_S3_REGION,
 			},
-			retention: { default: 90 },
-			gracePeriod: 7,
-			batchSize: 10,
-		})
+			{ default: 90 },
+			7,
+			10,
+		)
 
 		// Run with explicit target table (no trigger discovery needed)
 		const stats = await orchestrator.run(pool, {
@@ -83,19 +82,18 @@ describe('Orchestrator Integration', () => {
         )
     `)
 
-		const orchestrator = new Orchestrator({
-			database: { url: 'not-used' },
-			s3: {
+		const orchestrator = new Orchestrator(
+			{
 				bucket: 'test-bucket',
 				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
 				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
 				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
 				region: process.env.PG_HISTORY_S3_REGION,
 			},
-			retention: { default: 90 },
-			gracePeriod: 7,
-			batchSize: 10,
-		})
+			{ default: 90 },
+			7,
+			10,
+		)
 
 		const stats = await orchestrator.run(pool, {
 			targetTable: 'users',
@@ -129,19 +127,18 @@ describe('Orchestrator Integration', () => {
       SELECT COUNT(*) as count FROM audit_log WHERE table_name = 'users'
     `)
 
-		const orchestrator = new Orchestrator({
-			database: { url: 'not-used' },
-			s3: {
+		const orchestrator = new Orchestrator(
+			{
 				bucket: 'test-bucket',
 				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
 				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
 				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
 				region: process.env.PG_HISTORY_S3_REGION,
 			},
-			retention: { default: 90 },
-			gracePeriod: 7,
-			batchSize: 10,
-		})
+			{ default: 90 },
+			7,
+			10,
+		)
 
 		const stats = await orchestrator.run(pool, {
 			targetTable: 'users',

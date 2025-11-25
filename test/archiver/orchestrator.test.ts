@@ -39,13 +39,12 @@ describe('Orchestrator', () => {
 			FOR EACH ROW EXECUTE FUNCTION audit_trigger_func_test_table()
 		`)
 
-		const orchestrator = new Orchestrator({
-			database: { url: 'not-used' },
-			s3: { bucket: 'test' },
-			retention: { default: 90 },
-			gracePeriod: 7,
-			batchSize: 100,
-		})
+		const orchestrator = new Orchestrator(
+			{ bucket: 'test' },
+			{ default: 90 },
+			7,
+			100,
+		)
 
 		const tables = await orchestrator.discoverTables(pool)
 
@@ -54,16 +53,15 @@ describe('Orchestrator', () => {
 	})
 
 	test('should calculate retention cutoff date', () => {
-		const orchestrator = new Orchestrator({
-			database: { url: 'not-used' },
-			s3: { bucket: 'test' },
-			retention: {
+		const orchestrator = new Orchestrator(
+			{ bucket: 'test' },
+			{
 				default: 90,
 				tables: { users: 30 },
 			},
-			gracePeriod: 7,
-			batchSize: 100,
-		})
+			7,
+			100,
+		)
 
 		const defaultCutoff = orchestrator.getRetentionCutoff('orders')
 		const customCutoff = orchestrator.getRetentionCutoff('users')
@@ -95,13 +93,12 @@ describe('Orchestrator', () => {
         )
     `)
 
-		const orchestrator = new Orchestrator({
-			database: { url: 'not-used' },
-			s3: { bucket: 'test' },
-			retention: { default: 90 },
-			gracePeriod: 7,
-			batchSize: 10,
-		})
+		const orchestrator = new Orchestrator(
+			{ bucket: 'test' },
+			{ default: 90 },
+			7,
+			10,
+		)
 
 		const stats = await orchestrator.run(pool, { dryRun: true })
 

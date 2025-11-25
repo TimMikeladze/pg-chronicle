@@ -1,0 +1,83 @@
+# flyctl launch added from .gitignore
+**/node_modules
+**/.pnp
+**/.pnp.js
+**/coverage
+**/dist
+**/out
+**/build
+**/.DS_Store
+**/*.pem
+**/.idea
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/.pnpm-debug.log*
+**/.env
+**/.env.local
+**/.env.development.local
+**/.env.test.local
+**/.env.production.local
+**/.turbo
+**/.worktrees
+
+# flyctl launch added from .worktrees/s3-archival/.gitignore
+.worktrees/s3-archival/**/node_modules
+.worktrees/s3-archival/**/.pnp
+.worktrees/s3-archival/**/.pnp.js
+.worktrees/s3-archival/**/coverage
+.worktrees/s3-archival/**/dist
+.worktrees/s3-archival/**/out
+.worktrees/s3-archival/**/build
+.worktrees/s3-archival/**/.DS_Store
+.worktrees/s3-archival/**/*.pem
+.worktrees/s3-archival/**/.idea
+.worktrees/s3-archival/**/npm-debug.log*
+.worktrees/s3-archival/**/yarn-debug.log*
+.worktrees/s3-archival/**/yarn-error.log*
+.worktrees/s3-archival/**/.pnpm-debug.log*
+.worktrees/s3-archival/**/.env
+.worktrees/s3-archival/**/.env.local
+.worktrees/s3-archival/**/.env.development.local
+.worktrees/s3-archival/**/.env.test.local
+.worktrees/s3-archival/**/.env.production.local
+.worktrees/s3-archival/**/.turbo
+.worktrees/s3-archival/**/.worktrees
+
+# flyctl launch added from docs/.gitignore
+# deps
+docs/node_modules
+
+# generated content
+docs/**/.source
+
+# test & build
+docs/coverage
+docs/.next
+docs/out
+docs/build
+docs/**/*.tsbuildinfo
+
+# misc
+docs/**/.DS_Store
+docs/**/*.pem
+docs/.pnp
+docs/**/.pnp.js
+docs/**/npm-debug.log*
+docs/**/yarn-debug.log*
+docs/**/yarn-error.log*
+
+# others
+docs/**/.env*.local
+docs/**/.vercel
+docs/**/next-env.d.ts
+
+# Exclude test files and docs from Docker build
+test
+docs
+*.md
+!README.md
+.git
+.github
+fly.toml
+archiver.config.json

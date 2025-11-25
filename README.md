@@ -86,44 +86,37 @@ bun add pg-history
 
 pg-history includes a CLI tool for automated archival of old audit records to S3.
 
-### 1. Create Configuration File
+### 1. Set Environment Variables
+
+Configure archival using environment variables:
 
 ```bash
-cp archiver.config.example.json archiver.config.json
-```
+# Required
+export PG_HISTORY_DATABASE_URL="postgres://user:password@localhost:5432/your_database"
+export PG_HISTORY_S3_BUCKET="your-audit-archives"
 
-Edit `archiver.config.json`:
+# Optional S3 configuration
+export PG_HISTORY_S3_ENDPOINT="https://s3.amazonaws.com"
+export PG_HISTORY_S3_REGION="us-west-2"
+export PG_HISTORY_S3_ACCESS_KEY_ID="your-access-key"
+export PG_HISTORY_S3_SECRET_ACCESS_KEY="your-secret-key"
 
-```json
-{
-  "database": {
-    "url": "postgres://user:password@localhost:5432/your_database"
-  },
-  "s3": {
-    "bucket": "your-audit-archives",
-    "endpoint": "https://s3.amazonaws.com",
-    "region": "us-west-2",
-    "accessKeyId": "your-access-key",
-    "secretAccessKey": "your-secret-key"
-  },
-  "retention": {
-    "default": 90,
-    "tables": {
-      "sensitive_table": 30,
-      "high_volume_table": 7
-    }
-  },
-  "gracePeriod": 7,
-  "batchSize": 10000,
-  "healthPort": 3001
-}
+# Optional retention configuration (defaults shown)
+export PG_HISTORY_RETENTION_DEFAULT_DAYS="90"
+export PG_HISTORY_RETENTION_TABLES='{"sensitive_table":30,"high_volume_table":7}'
+export PG_HISTORY_GRACE_PERIOD_DAYS="7"
+export PG_HISTORY_BATCH_SIZE="10000"
+
+# Optional server configuration
+export PG_HISTORY_PORT="3001"
+export PG_HISTORY_JWT_SECRET="your-secret-key"
 ```
 
 ### 2. Run Archiver
 
 ```bash
 # Archive all tables
-bun run cli.ts --config ./archiver.config.json
+bun run cli.ts
 
 # Dry run (preview what would be archived)
 bun run cli.ts --dry-run
@@ -131,8 +124,8 @@ bun run cli.ts --dry-run
 # Archive specific table only
 bun run cli.ts --table users
 
-# Custom health check port
-bun run cli.ts --health-port 3002
+# Custom port
+bun run cli.ts --port 3002
 ```
 
 ### 3. API Endpoints
@@ -144,10 +137,10 @@ The archiver starts a REST API server with:
 
 ### 4. JWT Authentication (Optional)
 
-Enable JWT authentication by setting the `JWT_SECRET` environment variable:
+Enable JWT authentication by setting the `PG_HISTORY_JWT_SECRET` environment variable:
 
 ```bash
-JWT_SECRET="your-secret-key" bun run cli.ts
+PG_HISTORY_JWT_SECRET="your-secret-key" bun run cli.ts
 ```
 
 When enabled:

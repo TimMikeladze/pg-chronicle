@@ -1,14 +1,20 @@
 import type { Pool } from 'pg'
 import { updateArchivalStats } from './schema'
 import type {
-	ConfigFile,
 	OrchestratorStats,
+	RetentionConfig,
 	RunOptions,
+	S3Config,
 	TableStats,
 } from './types'
 
 export class Orchestrator {
-	constructor(private config: ConfigFile) {}
+	constructor(
+		private s3Config: S3Config,
+		private retentionConfig: RetentionConfig,
+		private gracePeriod: number,
+		private batchSize: number,
+	) {}
 
 	async discoverTables(pool: Pool): Promise<string[]> {
 		// Query pg_trigger to find tables with audit triggers
@@ -26,7 +32,7 @@ export class Orchestrator {
 
 	getRetentionCutoff(tableName: string): Date {
 		const retentionDays =
-			this.config.retention.tables?.[tableName] || this.config.retention.default
+			this.retentionConfig.tables?.[tableName] || this.retentionConfig.default
 		const cutoff = new Date()
 		cutoff.setDate(cutoff.getDate() - retentionDays)
 		return cutoff
@@ -86,7 +92,7 @@ export class Orchestrator {
 
 		const cutoff = this.getRetentionCutoff(tableName)
 		const gracePeriodDate = new Date()
-		gracePeriodDate.setDate(gracePeriodDate.getDate() - this.config.gracePeriod)
+		gracePeriodDate.setDate(gracePeriodDate.getDate() - this.gracePeriod)
 
 		if (options.dryRun) {
 			// Dry run: count what would be processed
@@ -138,10 +144,10 @@ export class Orchestrator {
 		const { PgHistoryArchiver } = await import('./PgHistoryArchiver')
 		const archiver = new PgHistoryArchiver({
 			pool,
-			s3: this.config.s3,
-			retention: this.config.retention,
-			gracePeriod: this.config.gracePeriod,
-			batchSize: this.config.batchSize,
+			s3: this.s3Config,
+			retention: this.retentionConfig,
+			gracePeriod: this.gracePeriod,
+			batchSize: this.batchSize,
 		})
 
 		// Archive old records in batches with retry
@@ -203,13 +209,8 @@ export class Orchestrator {
 
 		// Update stats table for fast querying (avoid future audit_log scans)
 		const retentionDays =
-			this.config.retention.tables?.[tableName] || this.config.retention.default
-		await updateArchivalStats(
-			pool,
-			tableName,
-			retentionDays,
-			this.config.gracePeriod,
-		)
+			this.retentionConfig.tables?.[tableName] || this.retentionConfig.default
+		await updateArchivalStats(pool, tableName, retentionDays, this.gracePeriod)
 
 		stats.durationMs = Date.now() - startTime
 		return stats
