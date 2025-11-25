@@ -3,15 +3,36 @@ import type { JwtVariables } from 'hono/jwt'
 import { jwt } from 'hono/jwt'
 import { openAPIRouteHandler } from 'hono-openapi'
 import { Orchestrator } from './orchestrator'
+import { PgHistory } from './PgHistory'
 import { getArchivalStats, setupArchiverSchema } from './schema'
 import type { ServerConfig } from './types'
 
-type Variables = JwtVariables
+type Variables = JwtVariables & {
+	pgHistory?: PgHistory
+}
 
 export async function createServer(
 	config: ServerConfig,
 ): Promise<Hono<{ Variables: Variables }>> {
 	const app = new Hono<{ Variables: Variables }>()
+
+	// Initialize PgHistory if enabled
+	let pgHistory: PgHistory | undefined
+	if (config.enableHistory && config.historyConfig) {
+		console.log('Initializing PgHistory API...')
+		pgHistory = new PgHistory({
+			tables: config.historyConfig.tables,
+			pool: config.pool,
+		})
+	}
+
+	// Store in context for route handlers
+	app.use('*', async (c, next) => {
+		if (pgHistory) {
+			c.set('pgHistory', pgHistory)
+		}
+		await next()
+	})
 
 	// If archiver is enabled, run the orchestrator
 	if (config.enableArchiver && config.archiverConfig) {
