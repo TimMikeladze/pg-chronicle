@@ -15,7 +15,7 @@ describe('PgHistoryArchiver - Batch Query', () => {
 		await setupArchiverSchema(pool)
 
 		// Ensure test bucket exists if S3 is configured
-		if (isS3Configured()) {
+		if (await isS3Configured()) {
 			await ensureTestBucket('test-bucket')
 		}
 
@@ -41,38 +41,45 @@ describe('PgHistoryArchiver - Batch Query', () => {
 		await pool.end()
 	})
 
-	test('should query old records based on retention policy', async () => {
+	test('should process batch and mark records as archived', async () => {
 		const cutoffDate = new Date()
 		cutoffDate.setDate(cutoffDate.getDate() - 90)
 
-		const records = await archiver.queryOldRecords('users', cutoffDate, 10)
+		// Check count before
+		const beforeCount = await pool.query(
+			`SELECT COUNT(*) as count
+			 FROM audit_log
+			 WHERE table_name = 'users'
+			   AND changed_at < $1
+			   AND archived_at IS NULL`,
+			[cutoffDate],
+		)
 
-		expect(records.length).toBeGreaterThan(0)
-		expect(records.length).toBeLessThanOrEqual(10)
+		const initialCount = Number.parseInt(beforeCount.rows[0]?.count || '0', 10)
+		expect(initialCount).toBeGreaterThan(0)
 
-		// All records should be older than cutoff
-		for (const record of records) {
-			const recordDate =
-				record.changed_at instanceof Date
-					? record.changed_at
-					: new Date(record.changed_at as string)
-			expect(recordDate.getTime()).toBeLessThan(cutoffDate.getTime())
-		}
-	})
+		// Process one batch (batch size is 10)
+		const result = await archiver.processBatch('users', cutoffDate)
 
-	test('should not query recent records', async () => {
-		const cutoffDate = new Date()
-		cutoffDate.setDate(cutoffDate.getDate() - 1) // 1 day ago
+		expect(result.recordCount).toBeGreaterThan(0)
+		expect(result.recordCount).toBeLessThanOrEqual(10)
+		expect(result.s3Path).toMatch(
+			/^users\/year=\d{4}\/month=\d{2}\/day=\d{2}\//,
+		)
+		expect(result.status).toBe('completed')
 
-		const records = await archiver.queryOldRecords('users', cutoffDate, 100)
+		// Verify records are marked as archived
+		const afterCount = await pool.query(
+			`SELECT COUNT(*) as count
+			 FROM audit_log
+			 WHERE table_name = 'users'
+			   AND changed_at < $1
+			   AND archived_at IS NULL`,
+			[cutoffDate],
+		)
 
-		// Should only get old records (from 2024-01-15), not recent ones
-		expect(records.length).toBe(100)
-		expect(
-			records.every((r: Record<string, unknown>) =>
-				(r.id as string).startsWith('old-'),
-			),
-		).toBe(true)
+		const remainingCount = Number.parseInt(afterCount.rows[0]?.count || '0', 10)
+		expect(remainingCount).toBe(initialCount - result.recordCount)
 	})
 
 	test('should generate correct S3 path with Hive partitioning', () => {
@@ -140,7 +147,7 @@ describe('PgHistoryArchiver - Batch Processing', () => {
 		await setupArchiverSchema(pool)
 
 		// Ensure test bucket exists if S3 is configured
-		if (isS3Configured()) {
+		if (await isS3Configured()) {
 			await ensureTestBucket('test-bucket')
 		}
 

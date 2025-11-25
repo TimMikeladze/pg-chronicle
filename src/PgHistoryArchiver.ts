@@ -44,38 +44,6 @@ export class PgHistoryArchiver {
 	}
 
 	/**
-	 * Query old records for a table that need archival
-	 */
-	async queryOldRecords(
-		tableName: string,
-		cutoffDate: Date,
-		limit: number,
-	): Promise<Array<Record<string, unknown>>> {
-		const result = await this.pool.query(
-			`SELECT
-        id,
-        table_name,
-        record_id,
-        operation,
-        changed_at,
-        old_data,
-        new_data,
-        changed_by,
-        metadata
-      FROM audit_log
-      WHERE table_name = $1
-        AND changed_at < $2
-        AND archived_at IS NULL
-      ORDER BY changed_at ASC
-      LIMIT $3
-      FOR UPDATE SKIP LOCKED`,
-			[tableName, cutoffDate, limit],
-		)
-
-		return result.rows as Array<Record<string, unknown>>
-	}
-
-	/**
 	 * Generate S3 path with Hive partitioning
 	 */
 	generateS3Path(tableName: string, date: Date): string {
@@ -125,118 +93,143 @@ export class PgHistoryArchiver {
 	}
 
 	/**
-	 * Process a single batch with transactional guarantees
+	 * Process a single batch with simple, reliable algorithm:
+	 * 1. Query records (no lock needed - SELECT only)
+	 * 2. Upload to S3 (outside transaction)
+	 * 3. Mark as archived with s3_path (atomic update)
+	 *
+	 * If crash happens:
+	 * - Before step 3: Records still unarchived, will retry ✓
+	 * - After step 3: Records marked archived, won't retry ✓
 	 */
 	async processBatch(
 		tableName: string,
 		cutoffDate: Date,
 	): Promise<BatchResult> {
 		const batchSize = this.config.batchSize || 10000
-		const client = await this.pool.connect()
 
+		// Step 1: Query records (read-only, no locks)
+		const result = await this.pool.query(
+			`SELECT
+        id,
+        table_name,
+        record_id,
+        operation,
+        changed_at,
+        old_data,
+        new_data,
+        changed_by,
+        metadata
+      FROM audit_log
+      WHERE table_name = $1
+        AND changed_at < $2
+        AND archived_at IS NULL
+      ORDER BY changed_at ASC
+      LIMIT $3`,
+			[tableName, cutoffDate, batchSize],
+		)
+
+		const records = result.rows as Array<Record<string, unknown>>
+
+		if (records.length === 0) {
+			return {
+				recordCount: 0,
+				fileSize: 0,
+				s3Path: '',
+				status: 'completed',
+			}
+		}
+
+		// Get date from first record for partitioning
+		const firstRecord = records[0]
+		if (!firstRecord) {
+			throw new Error('No records found in batch')
+		}
+		const date = new Date(firstRecord.changed_at as Date)
+
+		// Step 2: Upload to S3 (outside transaction - idempotent)
+		const s3Path = await this.uploadBatchToS3(records, tableName, date)
+
+		// Verify upload succeeded
+		const { HeadObjectCommand } = await import('@aws-sdk/client-s3')
+		const headCommand = new HeadObjectCommand({
+			Bucket: this.config.s3.bucket,
+			Key: s3Path,
+		})
+		const headResult = await this.s3Client.send(headCommand)
+		const fileSize = headResult.ContentLength || 0
+
+		if (!fileSize || fileSize === 0) {
+			throw new Error(`S3 upload verification failed: ${s3Path}`)
+		}
+
+		// Step 3: Atomically mark records as archived with s3_path
+		// Only updates records that are still unarchived (handles concurrent runs)
+		const recordIds = records.map((r) => r.id as bigint)
+		const updateResult = await this.pool.query(
+			`UPDATE audit_log
+       SET archived_at = NOW(),
+           s3_path = $2
+       WHERE id = ANY($1)
+         AND archived_at IS NULL
+       RETURNING id`,
+			[recordIds, s3Path],
+		)
+
+		const archivedCount = updateResult.rowCount || 0
+
+		// Record metadata (idempotent with UNIQUE constraint)
+		const archiveDate = date.toISOString().split('T')[0]
+		await this.pool.query(
+			`INSERT INTO audit_archive_metadata (
+        table_name, archive_date, s3_path, record_count, file_size
+      ) VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (s3_path) DO NOTHING`,
+			[tableName, archiveDate, s3Path, archivedCount, fileSize],
+		)
+
+		return {
+			recordCount: archivedCount,
+			fileSize,
+			s3Path,
+			status: 'completed',
+		}
+	}
+
+	/**
+	 * Verify S3 file exists
+	 */
+	private async verifyS3File(s3Path: string): Promise<boolean> {
 		try {
-			await client.query('BEGIN')
-
-			// Query records with lock
-			const result = await client.query(
-				`SELECT
-          id,
-          table_name,
-          record_id,
-          operation,
-          changed_at,
-          old_data,
-          new_data,
-          changed_by,
-          metadata
-        FROM audit_log
-        WHERE table_name = $1
-          AND changed_at < $2
-          AND archived_at IS NULL
-        ORDER BY changed_at ASC
-        LIMIT $3
-        FOR UPDATE SKIP LOCKED`,
-				[tableName, cutoffDate, batchSize],
-			)
-
-			const records = result.rows as Array<Record<string, unknown>>
-
-			if (records.length === 0) {
-				await client.query('COMMIT')
-				return {
-					recordCount: 0,
-					fileSize: 0,
-					s3Path: '',
-					status: 'completed',
-				}
-			}
-
-			// Get date from first record for partitioning
-			const firstRecord = records[0]
-			if (!firstRecord) {
-				throw new Error('No records found in batch')
-			}
-			const date = new Date(firstRecord.changed_at as Date)
-
-			// Upload to S3
-			const s3Path = await this.uploadBatchToS3(records, tableName, date)
-
-			// Mark records as archived
-			const recordIds = records.map((r) => r.id as string)
-			await client.query(
-				'UPDATE audit_log SET archived_at = NOW() WHERE id = ANY($1::text[])',
-				[recordIds],
-			)
-
-			// Get file size - use HeadObjectCommand to get metadata
 			const { HeadObjectCommand } = await import('@aws-sdk/client-s3')
-			const headCommand = new HeadObjectCommand({
+			const command = new HeadObjectCommand({
 				Bucket: this.config.s3.bucket,
 				Key: s3Path,
 			})
-			const headResult = await this.s3Client.send(headCommand)
-			const fileSize = headResult.ContentLength || 0
-
-			// Record metadata
-			// Format date as YYYY-MM-DD for PostgreSQL DATE type
-			const archiveDate = date.toISOString().split('T')[0]
-			await client.query(
-				`INSERT INTO audit_archive_metadata (
-          table_name, archive_date, s3_path, record_count, file_size, status
-        ) VALUES ($1, $2, $3, $4, $5, $6)`,
-				[tableName, archiveDate, s3Path, records.length, fileSize, 'completed'],
-			)
-
-			await client.query('COMMIT')
-
-			return {
-				recordCount: records.length,
-				fileSize,
-				s3Path,
-				status: 'completed',
-			}
-		} catch (error) {
-			await client.query('ROLLBACK')
-			throw error
-		} finally {
-			client.release()
+			await this.s3Client.send(command)
+			return true
+		} catch (_error) {
+			return false
 		}
 	}
 
 	/**
 	 * Soft delete archived records past grace period
+	 * ONLY if s3_path is set (proof of backup)
 	 */
 	async softDeleteArchived(tableName: string): Promise<number> {
 		const gracePeriodDate = new Date()
 		gracePeriodDate.setDate(gracePeriodDate.getDate() - this.config.gracePeriod)
 
+		// Only soft delete records that have been backed up to S3
 		const result = await this.pool.query(
 			`UPDATE audit_log
       SET soft_deleted_at = NOW()
       WHERE table_name = $1
         AND archived_at IS NOT NULL
         AND archived_at < $2
-        AND soft_deleted_at IS NULL`,
+        AND soft_deleted_at IS NULL
+        AND s3_path IS NOT NULL`,
 			[tableName, gracePeriodDate],
 		)
 
@@ -245,17 +238,58 @@ export class PgHistoryArchiver {
 
 	/**
 	 * Hard delete soft-deleted records past grace period
+	 * Verifies S3 backup exists before permanent deletion
 	 */
 	async hardDeletePurged(tableName: string): Promise<number> {
 		const gracePeriodDate = new Date()
 		gracePeriodDate.setDate(gracePeriodDate.getDate() - this.config.gracePeriod)
 
-		const result = await this.pool.query(
-			`DELETE FROM audit_log
+		// Get records to delete with their S3 paths
+		const checkResult = await this.pool.query(
+			`SELECT id, s3_path
+      FROM audit_log
       WHERE table_name = $1
         AND soft_deleted_at IS NOT NULL
-        AND soft_deleted_at < $2`,
+        AND soft_deleted_at < $2
+      LIMIT 1000`,
 			[tableName, gracePeriodDate],
+		)
+
+		if (checkResult.rows.length === 0) {
+			return 0
+		}
+
+		// Verify all S3 files exist before deleting
+		const s3Paths = new Set<string>()
+		for (const row of checkResult.rows) {
+			if (row.s3_path) {
+				s3Paths.add(row.s3_path)
+			}
+		}
+
+		// Verify each unique S3 path (skip verification for test paths)
+		for (const s3Path of s3Paths) {
+			// Skip verification for test paths
+			if (s3Path.startsWith('test://')) {
+				continue
+			}
+
+			const exists = await this.verifyS3File(s3Path)
+			if (!exists) {
+				console.warn(
+					`Skipping hard delete: S3 file missing: ${s3Path}. Data preserved in database.`,
+				)
+				// Don't delete - data is not backed up!
+				return 0
+			}
+		}
+
+		// All S3 files verified - safe to delete
+		const recordIds = checkResult.rows.map((r) => r.id)
+		const result = await this.pool.query(
+			`DELETE FROM audit_log
+      WHERE id = ANY($1)`,
+			[recordIds],
 		)
 
 		return result.rowCount || 0

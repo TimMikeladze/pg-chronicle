@@ -169,5 +169,4 @@ export interface TableStats {
 export interface RunOptions {
 	dryRun?: boolean
 	targetTable?: string
-	skipS3Upload?: boolean // For testing
 }

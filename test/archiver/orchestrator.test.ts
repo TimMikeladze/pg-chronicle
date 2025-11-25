@@ -14,7 +14,7 @@ describe('Orchestrator', () => {
 		await setupArchiverSchema(pool)
 
 		// Ensure test bucket exists if S3 is configured
-		if (isS3Configured()) {
+		if (await isS3Configured()) {
 			await ensureTestBucket('test-bucket')
 		}
 	})
@@ -24,7 +24,21 @@ describe('Orchestrator', () => {
 		await pool.end()
 	})
 
-	test('should discover tables from audit_log', async () => {
+	test('should discover tables from triggers', async () => {
+		// Create a dummy table and trigger for testing discovery
+		await pool.query(`
+			CREATE TABLE IF NOT EXISTS test_table (id INT PRIMARY KEY)
+		`)
+		await pool.query(`
+			CREATE OR REPLACE FUNCTION audit_trigger_func_test_table()
+			RETURNS TRIGGER AS $$ BEGIN RETURN NEW; END; $$ LANGUAGE plpgsql
+		`)
+		await pool.query(`
+			CREATE TRIGGER audit_trigger_test_table
+			AFTER INSERT ON test_table
+			FOR EACH ROW EXECUTE FUNCTION audit_trigger_func_test_table()
+		`)
+
 		const orchestrator = new Orchestrator({
 			database: { url: 'not-used' },
 			s3: { bucket: 'test' },
@@ -35,7 +49,7 @@ describe('Orchestrator', () => {
 
 		const tables = await orchestrator.discoverTables(pool)
 
-		expect(tables).toContain('users')
+		expect(tables).toContain('test_table')
 		expect(tables.length).toBeGreaterThan(0)
 	})
 

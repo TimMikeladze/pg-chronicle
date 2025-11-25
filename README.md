@@ -1,8 +1,8 @@
 # pg-history
 
-**PostgreSQL audit trails without writing triggers**
+**PostgreSQL audit trails with automated archival**
 
-Production-ready change tracking, compliance-ready audit logs, and zero-maintenance PostgreSQL triggers. Uses the standard `pg` package for maximum compatibility.
+Production-ready change tracking, compliance-ready audit logs, and zero-maintenance PostgreSQL triggers. Includes automated S3 archival and retention management. Uses the standard `pg` package for maximum compatibility.
 
 [![npm version](https://img.shields.io/npm/v/pg-history.svg)](https://www.npmjs.com/package/pg-history)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -12,14 +12,16 @@ Production-ready change tracking, compliance-ready audit logs, and zero-maintena
 
 ## Why pg-history?
 
-**Stop writing PostgreSQL triggers by hand.** pg-history gives you production-grade audit logging with a simple TypeScript API.
+**Stop writing PostgreSQL triggers by hand.** pg-history gives you production-grade audit logging with a simple TypeScript API, plus automated archival to keep your database lean.
 
 ### What you get:
 - **Zero trigger maintenance** - No SQL to write, test, or debug
 - **Bulletproof reliability** - Triggers execute atomically within transactions
+- **Automated archival** - S3 archival with configurable retention policies
 - **Compliance-ready** - Immutable audit trails with full change history
 - **Flexible architecture** - Works with any primary key strategy (single, composite, or none)
 - **Performance at scale** - Partitioned storage, GIN indexes, cursor pagination
+- **REST API with OpenAPI** - Built-in Hono server for monitoring and management
 
 ### Perfect for:
 - ✅ Compliance requirements (SOC2, HIPAA, GDPR audit trails)
@@ -27,6 +29,7 @@ Production-ready change tracking, compliance-ready audit logs, and zero-maintena
 - ✅ Building rollback/undo features
 - ✅ Forensic analysis and change investigation
 - ✅ Multi-tenant applications with user tracking
+- ✅ Long-term audit retention with automated archival
 
 ### vs. Manual Triggers
 
@@ -43,6 +46,7 @@ Production-ready change tracking, compliance-ready audit logs, and zero-maintena
 
 ## Features
 
+### Core Audit Logging
 - 🔍 **Automatic Change Tracking** - PostgreSQL triggers capture INSERT/UPDATE/DELETE operations atomically
 - 📊 **Partitioned Storage** - Efficient table partitioning with JSONB data compression
 - 👤 **User Context** - Track who made changes with customizable metadata
@@ -52,6 +56,19 @@ Production-ready change tracking, compliance-ready audit logs, and zero-maintena
 - 🔑 **Flexible Primary Keys** - Supports single, composite, or no primary keys
 - 🔒 **Transaction Safety** - All operations respect PostgreSQL transaction boundaries
 - 📦 **Standard PostgreSQL** - Uses the `pg` package for broad Node.js runtime compatibility
+
+### Automated Archival
+- 📦 **S3 Archival** - Automatically archive old audit records to S3-compatible storage
+- ⏰ **Retention Policies** - Configure retention periods per table or globally
+- 🗑️ **Soft/Hard Delete** - Grace period before permanent deletion
+- 🔄 **Batch Processing** - Efficient batched archival with configurable batch sizes
+- 🎯 **Table Discovery** - Automatically discovers tables with audit triggers (no table scan required)
+
+### API & Management
+- 🌐 **REST API** - Built-in Hono server with health checks and OpenAPI documentation
+- 🔐 **JWT Authentication** - Optional JWT auth for API endpoints
+- 📊 **OpenAPI Docs** - Interactive API documentation at `/openapi`
+- 🏥 **Health Checks** - Monitor archival status and performance
 
 ## Limitations
 
@@ -64,6 +81,95 @@ Production-ready change tracking, compliance-ready audit logs, and zero-maintena
 ```bash
 bun add pg-history
 ```
+
+## Archival Setup
+
+pg-history includes a CLI tool for automated archival of old audit records to S3.
+
+### 1. Create Configuration File
+
+```bash
+cp archiver.config.example.json archiver.config.json
+```
+
+Edit `archiver.config.json`:
+
+```json
+{
+  "database": {
+    "url": "postgres://user:password@localhost:5432/your_database"
+  },
+  "s3": {
+    "bucket": "your-audit-archives",
+    "endpoint": "https://s3.amazonaws.com",
+    "region": "us-west-2",
+    "accessKeyId": "your-access-key",
+    "secretAccessKey": "your-secret-key"
+  },
+  "retention": {
+    "default": 90,
+    "tables": {
+      "sensitive_table": 30,
+      "high_volume_table": 7
+    }
+  },
+  "gracePeriod": 7,
+  "batchSize": 10000,
+  "healthPort": 3001
+}
+```
+
+### 2. Run Archiver
+
+```bash
+# Archive all tables
+bun run cli.ts --config ./archiver.config.json
+
+# Dry run (preview what would be archived)
+bun run cli.ts --dry-run
+
+# Archive specific table only
+bun run cli.ts --table users
+
+# Custom health check port
+bun run cli.ts --health-port 3002
+```
+
+### 3. API Endpoints
+
+The archiver starts a REST API server with:
+
+- `GET /health` - Health check endpoint
+- `GET /openapi` - OpenAPI documentation
+
+### 4. JWT Authentication (Optional)
+
+Enable JWT authentication by setting the `JWT_SECRET` environment variable:
+
+```bash
+JWT_SECRET="your-secret-key" bun run cli.ts
+```
+
+When enabled:
+- All `/api/*` endpoints require a valid JWT token
+- Public endpoints (`/health`, `/openapi`) remain accessible
+- Send requests with: `Authorization: Bearer <your-jwt-token>`
+
+### Archival Process
+
+The archiver follows this workflow:
+
+1. **Discovery** - Finds tables with audit triggers (queries `pg_trigger` catalog, not audit log)
+2. **Archival** - Moves old records to S3 based on retention policy
+3. **Soft Delete** - Marks archived records as deleted (keeps for grace period)
+4. **Hard Delete** - Permanently removes records past grace period
+
+**Retention Example:**
+- Record created: Day 0
+- Retention period: 90 days
+- Archived to S3: Day 90
+- Soft deleted: Day 90
+- Hard deleted: Day 97 (90 + 7 day grace period)
 
 ## Quick Start
 

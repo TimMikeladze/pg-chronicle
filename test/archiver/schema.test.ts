@@ -27,7 +27,7 @@ describe('Schema Setup', () => {
     `)
 
 		expect(result.rows.length).toBe(1)
-		expect(result.rows[0].data_type).toBe('timestamp without time zone')
+		expect(result.rows[0].data_type).toBe('timestamp with time zone')
 	})
 
 	test('should create audit_archive_metadata table', async () => {
@@ -49,10 +49,11 @@ describe('Schema Setup', () => {
       SELECT indexname
       FROM pg_indexes
       WHERE tablename = 'audit_log'
-      AND indexname = 'idx_audit_log_archived'
+      AND indexname LIKE 'idx_audit_log_%'
     `)
 
-		expect(result.rows.length).toBe(1)
+		// Should have: idx_audit_log_archival, idx_audit_log_soft_delete, idx_audit_log_hard_delete
+		expect(result.rows.length).toBeGreaterThanOrEqual(3)
 	})
 
 	test('should add soft_deleted_at column to audit_log', async () => {
@@ -69,14 +70,27 @@ describe('Schema Setup', () => {
 		expect(result.rows[0].data_type).toBe('timestamp with time zone')
 	})
 
-	test('should create index on soft_deleted_at', async () => {
+	test('should create s3_path column', async () => {
 		await setupArchiverSchema(pool)
 
 		const result = await pool.query(`
-      SELECT indexname
-      FROM pg_indexes
-      WHERE tablename = 'audit_log'
-      AND indexname = 'idx_audit_log_soft_deleted'
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_name = 'audit_log'
+      AND column_name = 's3_path'
+    `)
+
+		expect(result.rows.length).toBe(1)
+		expect(result.rows[0].data_type).toBe('text')
+	})
+
+	test('should create audit_archival_stats table', async () => {
+		await setupArchiverSchema(pool)
+
+		const result = await pool.query(`
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_name = 'audit_archival_stats'
     `)
 
 		expect(result.rows.length).toBe(1)

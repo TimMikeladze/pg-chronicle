@@ -15,7 +15,7 @@ describe('PgHistoryArchiver - Hard Delete', () => {
 		await setupArchiverSchema(pool)
 
 		// Ensure test bucket exists if S3 is configured
-		if (isS3Configured()) {
+		if (await isS3Configured()) {
 			await ensureTestBucket('test-bucket')
 		}
 

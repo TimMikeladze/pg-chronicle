@@ -1,9 +1,54 @@
+import { Client } from 'pg'
 import { PgHistory } from '../src'
 
+async function createDatabaseIfNotExists(connectionString: string) {
+	// Parse the connection string to extract database name
+	const url = new URL(connectionString)
+	const targetDb = url.pathname.slice(1) || 'test'
+
+	// Connect to the default 'postgres' database to check/create our target database
+	const adminUrl = new URL(connectionString)
+	adminUrl.pathname = '/postgres'
+
+	const adminClient = new Client({ connectionString: adminUrl.toString() })
+
+	try {
+		await adminClient.connect()
+
+		// Check if database exists
+		const result = await adminClient.query(
+			'SELECT 1 FROM pg_database WHERE datname = $1',
+			[targetDb],
+		)
+
+		if (result.rowCount === 0) {
+			// Database doesn't exist, create it
+			console.log(`Creating database '${targetDb}'...`)
+			await adminClient.query(`CREATE DATABASE "${targetDb}"`)
+			console.log(`Database '${targetDb}' created successfully`)
+		} else {
+			console.log(`Database '${targetDb}' already exists`)
+		}
+	} finally {
+		await adminClient.end()
+	}
+}
+
 async function main() {
+	// Generate a random database name
+	const randomDbName = `pg_history_test_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+
+	const connectionString =
+		process.env.DATABASE_URL || `postgres://localhost:5432/${randomDbName}`
+
+	console.log(`Using database: ${randomDbName}`)
+
+	// Create database if it doesn't exist
+	await createDatabaseIfNotExists(connectionString)
+
 	// Initialize history tracking
 	const history = new PgHistory({
-		connection: process.env.DATABASE_URL || 'postgres://localhost:5432/test',
+		connection: connectionString,
 		tables: ['users', 'orders'],
 	})
 

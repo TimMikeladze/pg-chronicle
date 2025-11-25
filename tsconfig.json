@@ -16,13 +16,13 @@
 		"noImplicitOverride": true,
 
 		"declaration": true,
-		"isolatedDeclarations": true,
+		"isolatedDeclarations": false,
 
 		"noUnusedLocals": false,
 		"noUnusedParameters": false,
 		"noPropertyAccessFromIndexSignature": false
 	},
 
-	"include": ["src/**/*.ts", "test/**/*.ts"],
-	"exclude": ["node_modules", "dist", "bunup.config.ts", "packages"]
+	"include": ["**/*.ts"],
+	"exclude": ["node_modules", "dist", "bunup.config.ts"]
 }

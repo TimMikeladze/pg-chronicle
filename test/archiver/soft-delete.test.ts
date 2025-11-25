@@ -15,7 +15,7 @@ describe('PgHistoryArchiver - Soft Delete', () => {
 		await setupArchiverSchema(pool)
 
 		// Ensure test bucket exists if S3 is configured
-		if (isS3Configured()) {
+		if (await isS3Configured()) {
 			await ensureTestBucket('test-bucket')
 		}
 
@@ -40,10 +40,11 @@ describe('PgHistoryArchiver - Soft Delete', () => {
 	})
 
 	test('should mark archived records as soft deleted', async () => {
-		// First, mark some records as archived past the grace period
+		// First, mark some records as archived past the grace period with s3_path
 		const result = await pool.query(`
       UPDATE audit_log
-      SET archived_at = NOW() - INTERVAL '10 days'
+      SET archived_at = NOW() - INTERVAL '10 days',
+          s3_path = 'test://fake-s3-path'
       WHERE table_name = 'users' AND id LIKE 'old-%'
     `)
 
@@ -67,10 +68,11 @@ describe('PgHistoryArchiver - Soft Delete', () => {
 	})
 
 	test('should not soft delete recently archived records', async () => {
-		// Mark records as archived within grace period (3 days < 7 days grace period)
+		// Mark records as archived within grace period (3 days < 7 days grace period) with s3_path
 		await pool.query(`
       UPDATE audit_log
-      SET archived_at = NOW() - INTERVAL '3 days'
+      SET archived_at = NOW() - INTERVAL '3 days',
+          s3_path = 'test://fake-s3-path'
       WHERE table_name = 'users' AND id LIKE 'old-%'
     `)
 
@@ -81,11 +83,12 @@ describe('PgHistoryArchiver - Soft Delete', () => {
 	})
 
 	test('should not soft delete already soft-deleted records', async () => {
-		// Mark records as archived and already soft deleted
+		// Mark records as archived and already soft deleted with s3_path
 		await pool.query(`
       UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '10 days',
-          soft_deleted_at = NOW() - INTERVAL '5 days'
+          soft_deleted_at = NOW() - INTERVAL '5 days',
+          s3_path = 'test://fake-s3-path'
       WHERE table_name = 'users' AND id LIKE 'old-%'
     `)
 

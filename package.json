@@ -13,6 +13,9 @@
 	"module": "./dist/index.js",
 	"main": "./dist/index.cjs",
 	"types": "./dist/index.d.ts",
+	"bin": {
+		"pg-history": "./dist/cli.js"
+	},
 	"exports": {
 		".": {
 			"import": {
@@ -91,6 +94,9 @@
 	],
 	"dependencies": {
 		"@aws-sdk/client-s3": "^3.939.0",
+		"@hono/standard-validator": "^0.2.0",
+		"hono": "^4.10.6",
+		"hono-openapi": "^1.1.1",
 		"hyparquet": "^1.21.0",
 		"hyparquet-writer": "^0.9.1",
 		"pg": "^8.16.3"

@@ -3,7 +3,7 @@ import type { Pool } from 'pg'
 import { Orchestrator } from '../../src/orchestrator'
 import { setupArchiverSchema } from '../../src/schema'
 import { cleanupTestData, getTestConnection, setupTestData } from './helpers/db'
-import { ensureTestBucket, isS3Configured } from './helpers/s3'
+import { ensureTestBucket } from './helpers/s3'
 
 describe('Orchestrator Integration', () => {
 	let pool: Pool
@@ -13,10 +13,8 @@ describe('Orchestrator Integration', () => {
 		await setupTestData(pool)
 		await setupArchiverSchema(pool)
 
-		// Ensure test bucket exists if S3 is configured
-		if (isS3Configured()) {
-			await ensureTestBucket('test-bucket')
-		}
+		// Ensure test bucket exists (S3 is always configured in tests)
+		await ensureTestBucket('test-bucket')
 	})
 
 	afterEach(async () => {
@@ -24,7 +22,7 @@ describe('Orchestrator Integration', () => {
 		await pool.end()
 	})
 
-	test('should archive old records (skip S3 upload in test)', async () => {
+	test('should archive old records', async () => {
 		// First, make all records recent
 		await pool.query(`
       UPDATE audit_log
@@ -46,15 +44,20 @@ describe('Orchestrator Integration', () => {
 			database: { url: 'not-used' },
 			s3: {
 				bucket: 'test-bucket',
-				endpoint: 'http://localhost:9000',
+				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
+				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_HISTORY_S3_REGION,
 			},
 			retention: { default: 90 },
 			gracePeriod: 7,
 			batchSize: 10,
 		})
 
-		// This will fail on S3 upload, but that's expected in test
-		const stats = await orchestrator.run(pool, { skipS3Upload: true })
+		// Run with explicit target table (no trigger discovery needed)
+		const stats = await orchestrator.run(pool, {
+			targetTable: 'users',
+		})
 
 		expect(stats.totalRecordsArchived).toBe(30)
 
@@ -69,10 +72,11 @@ describe('Orchestrator Integration', () => {
 	})
 
 	test('should soft delete archived records past grace period', async () => {
-		// Create archived records past grace period
+		// Create archived records past grace period with s3_path
 		await pool.query(`
       UPDATE audit_log
-      SET archived_at = NOW() - INTERVAL '10 days'
+      SET archived_at = NOW() - INTERVAL '10 days',
+          s3_path = 'test://fake-s3-path'
       WHERE table_name = 'users'
         AND id IN (
           SELECT id FROM audit_log WHERE table_name = 'users' LIMIT 30
@@ -81,13 +85,21 @@ describe('Orchestrator Integration', () => {
 
 		const orchestrator = new Orchestrator({
 			database: { url: 'not-used' },
-			s3: { bucket: 'test' },
+			s3: {
+				bucket: 'test-bucket',
+				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
+				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_HISTORY_S3_REGION,
+			},
 			retention: { default: 90 },
 			gracePeriod: 7,
 			batchSize: 10,
 		})
 
-		const stats = await orchestrator.run(pool, { skipS3Upload: true })
+		const stats = await orchestrator.run(pool, {
+			targetTable: 'users',
+		})
 
 		expect(stats.totalRecordsSoftDeleted).toBe(30)
 
@@ -101,11 +113,12 @@ describe('Orchestrator Integration', () => {
 	})
 
 	test('should hard delete soft-deleted records past grace period', async () => {
-		// Create soft-deleted records past grace period
+		// Create soft-deleted records past grace period with s3_path
 		await pool.query(`
       UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '20 days',
-          soft_deleted_at = NOW() - INTERVAL '10 days'
+          soft_deleted_at = NOW() - INTERVAL '10 days',
+          s3_path = 'test://fake-s3-path'
       WHERE table_name = 'users'
         AND id IN (
           SELECT id FROM audit_log WHERE table_name = 'users' LIMIT 30
@@ -118,13 +131,21 @@ describe('Orchestrator Integration', () => {
 
 		const orchestrator = new Orchestrator({
 			database: { url: 'not-used' },
-			s3: { bucket: 'test' },
+			s3: {
+				bucket: 'test-bucket',
+				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
+				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_HISTORY_S3_REGION,
+			},
 			retention: { default: 90 },
 			gracePeriod: 7,
 			batchSize: 10,
 		})
 
-		const stats = await orchestrator.run(pool, { skipS3Upload: true })
+		const stats = await orchestrator.run(pool, {
+			targetTable: 'users',
+		})
 
 		expect(stats.totalRecordsHardDeleted).toBe(30)
 

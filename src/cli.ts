@@ -1,15 +1,13 @@
 #!/usr/bin/env bun
-import { randomUUID } from 'node:crypto'
 import { parseArgs } from 'node:util'
 import pkg from 'pg'
 
 const { Pool } = pkg
 
 import { loadConfig } from './config'
-import { HealthServer } from './health'
-import { createLogger } from './logger'
 import { Orchestrator } from './orchestrator'
 import { setupArchiverSchema } from './schema'
+import { createServer } from './server'
 
 interface CliOptions {
 	config: string
@@ -98,35 +96,40 @@ async function main() {
 		process.exit(0)
 	}
 
-	const correlationId = randomUUID()
-	const logger = createLogger({ correlationId })
-
-	logger.info('Starting pg-history-archiver', {
+	console.log('Starting pg-history-archiver', {
 		config: opts.config,
-		dry_run: opts.dryRun,
-		target_table: opts.table,
+		dryRun: opts.dryRun,
+		targetTable: opts.table,
 	})
 
 	try {
 		// Load config
 		const config = await loadConfig({ configPath: opts.config })
-		logger.info('Config loaded', {
-			retention_default: config.retention.default,
+		console.log('Config loaded', {
+			retentionDefault: config.retention.default,
 		})
-
-		// Start health check server
-		const healthServer = new HealthServer({
-			port: opts.healthPort || config.healthPort || 3001,
-		})
-		healthServer.start()
 
 		// Connect to database
 		const pool = new Pool({ connectionString: config.database.url })
-		logger.info('Connected to database')
+		console.log('Connected to database')
 
 		// Ensure schema is set up
 		await setupArchiverSchema(pool)
-		logger.info('Schema verified')
+		console.log('Schema verified')
+
+		// Start API server
+		const app = createServer(pool, config)
+		const port = opts.healthPort || config.healthPort || 3001
+
+		const server = Bun.serve({
+			port,
+			fetch: app.fetch,
+		})
+
+		console.log(`Server running on http://localhost:${server.port}`)
+		console.log(
+			`OpenAPI docs available at http://localhost:${server.port}/openapi`,
+		)
 
 		// Run orchestrator
 		const orchestrator = new Orchestrator(config)
@@ -135,29 +138,26 @@ async function main() {
 			targetTable: opts.table,
 		})
 
-		// Update health server with results
-		healthServer.updateLastRun(stats)
-
 		// Log summary
-		logger.info('Archival complete', {
+		console.log('Archival complete', {
 			tables: stats.tables.length,
-			records_archived: stats.totalRecordsArchived,
-			records_soft_deleted: stats.totalRecordsSoftDeleted,
-			records_hard_deleted: stats.totalRecordsHardDeleted,
+			recordsArchived: stats.totalRecordsArchived,
+			recordsSoftDeleted: stats.totalRecordsSoftDeleted,
+			recordsHardDeleted: stats.totalRecordsHardDeleted,
 			errors: stats.errors.length,
-			duration_ms: stats.durationMs,
+			durationMs: stats.durationMs,
 		})
 
 		// Log errors if any
 		for (const error of stats.errors) {
-			logger.error('Table processing error', error)
+			console.error('Table processing error', error)
 		}
 
 		// Close connection
 		await pool.end()
 
-		// Stop health server
-		healthServer.stop()
+		// Stop server
+		server.stop()
 
 		// Exit code
 		if (stats.errors.length > 0) {
@@ -165,7 +165,7 @@ async function main() {
 		}
 		process.exit(0)
 	} catch (error) {
-		logger.error('Fatal error', {
+		console.error('Fatal error', {
 			error: error instanceof Error ? error.message : String(error),
 			stack: error instanceof Error ? error.stack : undefined,
 		})
