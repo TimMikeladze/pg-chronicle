@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Pool } from 'pg'
+import { createErrorResponse } from '../src/api-helpers'
 import type { ErrorResponse, ServerConfig } from '../src/types'
 
 describe('Server API Types', () => {
@@ -25,5 +26,14 @@ describe('Server API Types', () => {
 			},
 		}
 		expect(error.error.code).toBe('VALIDATION_ERROR')
+	})
+
+	test('createErrorResponse should format error correctly', () => {
+		const response = createErrorResponse('NOT_FOUND', 'Record not found', {
+			id: '123',
+		})
+		expect(response.error.code).toBe('NOT_FOUND')
+		expect(response.error.message).toBe('Record not found')
+		expect(response.error.details).toEqual({ id: '123' })
 	})
 })
