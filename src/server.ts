@@ -126,6 +126,59 @@ export async function createServer(
 				return c.json(createErrorResponse('DATABASE_ERROR', message), 500)
 			}
 		})
+
+		app.post('/api/history/search', async (c) => {
+			const pgHistory = c.get('pgHistory')
+			if (!pgHistory) {
+				return c.json(
+					createErrorResponse('NOT_CONFIGURED', 'PgHistory not initialized'),
+					500,
+				)
+			}
+
+			const body = await c.req.json()
+
+			// Validate required fields
+			if (
+				!body.tables ||
+				!Array.isArray(body.tables) ||
+				body.tables.length === 0
+			) {
+				return c.json(
+					createErrorResponse(
+						'VALIDATION_ERROR',
+						'tables array is required and must not be empty',
+					),
+					400,
+				)
+			}
+
+			try {
+				const result = await pgHistory.search({
+					tables: body.tables,
+					query: body.query,
+					operation: body.operation,
+					dateFrom: body.dateFrom ? new Date(body.dateFrom) : undefined,
+					dateTo: body.dateTo ? new Date(body.dateTo) : undefined,
+					changedBy: body.changedBy,
+					limit: body.limit,
+					cursor: body.cursor,
+				})
+				return c.json(result)
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error)
+
+				if (message.includes('not configured')) {
+					return c.json(createErrorResponse('INVALID_TABLE', message), 400)
+				}
+
+				if (message.includes('must be') || message.includes('invalid')) {
+					return c.json(createErrorResponse('VALIDATION_ERROR', message), 400)
+				}
+
+				return c.json(createErrorResponse('DATABASE_ERROR', message), 500)
+			}
+		})
 	}
 
 	// OpenAPI documentation endpoint (no auth required)
