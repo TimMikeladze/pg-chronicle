@@ -171,6 +171,20 @@ export interface TableStats {
 	durationMs: number
 }
 
+export interface ErrorResponse {
+	error: {
+		code: string
+		message: string
+		details?: unknown
+	}
+}
+
+export interface HistoryApiContext {
+	Variables: {
+		pgHistory?: import('./PgHistory').PgHistory
+	}
+}
+
 export interface RunOptions {
 	dryRun?: boolean
 	targetTable?: string
