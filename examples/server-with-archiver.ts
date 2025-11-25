@@ -3,21 +3,17 @@
  * Example: Running pg-history server with archiver
  *
  * This example shows how to run the API server
- * with archival functionality enabled.
+ * with archival functionality enabled. The archiver runs
+ * automatically when the server starts.
  */
 
 import { Pool } from 'pg'
-import { Orchestrator } from '../src/orchestrator'
-import { setupArchiverSchema } from '../src/schema'
 import { createServer } from '../src/server'
 
 const pool = new Pool({
 	connectionString:
 		process.env.PG_HISTORY_DATABASE_URL || 'postgres://localhost:5432/mydb',
 })
-
-// Setup archiver schema
-await setupArchiverSchema(pool)
 
 const s3Config = {
 	bucket: process.env.PG_HISTORY_S3_BUCKET || 'my-audit-bucket',
@@ -36,7 +32,8 @@ const retentionConfig = {
 }
 
 // Create server with archiver enabled
-const app = createServer({
+// The archiver will run automatically before the server starts
+const app = await createServer({
 	pool,
 	port: 3001,
 	enableArchiver: true,
@@ -46,6 +43,10 @@ const app = createServer({
 		gracePeriod: 7,
 		batchSize: 10000,
 	},
+	runOptions: {
+		dryRun: false, // Set to true to preview what would be archived
+		// targetTable: 'users', // Optionally archive only specific table
+	},
 })
 
 const server = Bun.serve({
@@ -53,25 +54,11 @@ const server = Bun.serve({
 	fetch: app.fetch,
 })
 
+console.log('\n=== Server Started ===')
 console.log('Server running on http://localhost:3001')
 console.log('OpenAPI docs: http://localhost:3001/openapi')
 console.log('Health check: http://localhost:3001/health')
 console.log('Archival stats: http://localhost:3001/api/stats')
-console.log('\nArchiver is ENABLED')
-
-// Run archival process
-const orchestrator = new Orchestrator(s3Config, retentionConfig, 7, 10000)
-
-console.log('\nRunning archival process...')
-const stats = await orchestrator.run(pool, { dryRun: false })
-
-console.log('Archival complete:', {
-	tables: stats.tables.length,
-	recordsArchived: stats.totalRecordsArchived,
-	recordsSoftDeleted: stats.totalRecordsSoftDeleted,
-	recordsHardDeleted: stats.totalRecordsHardDeleted,
-	errors: stats.errors.length,
-})
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {

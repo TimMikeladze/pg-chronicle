@@ -15,7 +15,7 @@ const pool = new Pool({
 })
 
 // Create server without archiver
-const app = createServer({
+const app = await createServer({
 	pool,
 	port: 3001,
 	enableArchiver: false, // Server-only mode

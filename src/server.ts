@@ -2,13 +2,44 @@ import { Hono } from 'hono'
 import type { JwtVariables } from 'hono/jwt'
 import { jwt } from 'hono/jwt'
 import { openAPIRouteHandler } from 'hono-openapi'
-import { getArchivalStats } from './schema'
+import { Orchestrator } from './orchestrator'
+import { getArchivalStats, setupArchiverSchema } from './schema'
 import type { ServerConfig } from './types'
 
 type Variables = JwtVariables
 
-export function createServer(config: ServerConfig) {
+export async function createServer(config: ServerConfig) {
 	const app = new Hono<{ Variables: Variables }>()
+
+	// If archiver is enabled, run the orchestrator
+	if (config.enableArchiver && config.archiverConfig) {
+		console.log('Setting up archiver schema...')
+		await setupArchiverSchema(config.pool)
+
+		console.log('Running archival process...')
+		const orchestrator = new Orchestrator(
+			config.archiverConfig.s3,
+			config.archiverConfig.retention,
+			config.archiverConfig.gracePeriod,
+			config.archiverConfig.batchSize,
+		)
+
+		const stats = await orchestrator.run(config.pool, config.runOptions || {})
+
+		console.log('Archival complete', {
+			tables: stats.tables.length,
+			recordsArchived: stats.totalRecordsArchived,
+			recordsSoftDeleted: stats.totalRecordsSoftDeleted,
+			recordsHardDeleted: stats.totalRecordsHardDeleted,
+			errors: stats.errors.length,
+			durationMs: stats.durationMs,
+		})
+
+		// Log errors if any
+		for (const error of stats.errors) {
+			console.error('Table processing error', error)
+		}
+	}
 
 	// Conditionally apply JWT auth if PG_HISTORY_JWT_SECRET is set
 	const jwtSecret = process.env.PG_HISTORY_JWT_SECRET
@@ -77,7 +108,7 @@ if (require.main === module) {
 			? Number.parseInt(process.env.PG_HISTORY_PORT, 10)
 			: 3001
 
-		const app = createServer({ pool, port })
+		const app = await createServer({ pool, port })
 
 		console.log(`Starting server on port ${port}`)
 		const server = Bun.serve({

@@ -137,6 +137,9 @@ export interface ServerConfig {
 		gracePeriod: number
 		batchSize: number
 	}
+
+	/** Run options for archiver (only used if enableArchiver is true) */
+	runOptions?: RunOptions
 }
 
 export interface OrchestratorStats {

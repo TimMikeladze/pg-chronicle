@@ -84,63 +84,70 @@ bun add pg-history
 
 ## Archival Setup
 
-pg-history includes a CLI tool for automated archival of old audit records to S3.
+pg-history includes automated archival of old audit records to S3 with a built-in API server.
 
-### 1. Set Environment Variables
+### Running the Server with Archiver
 
-Configure archival using environment variables:
+```typescript
+import { Pool } from 'pg';
+import { createServer } from 'pg-history';
 
-```bash
-# Required
-export PG_HISTORY_DATABASE_URL="postgres://user:password@localhost:5432/your_database"
-export PG_HISTORY_S3_BUCKET="your-audit-archives"
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL
+});
 
-# Optional S3 configuration
-export PG_HISTORY_S3_ENDPOINT="https://s3.amazonaws.com"
-export PG_HISTORY_S3_REGION="us-west-2"
-export PG_HISTORY_S3_ACCESS_KEY_ID="your-access-key"
-export PG_HISTORY_S3_SECRET_ACCESS_KEY="your-secret-key"
+// Start server with archiver enabled
+// The archiver runs automatically when the server starts
+const app = await createServer({
+  pool,
+  port: 3001,
+  enableArchiver: true,
+  archiverConfig: {
+    s3: {
+      bucket: 'your-audit-archives',
+      endpoint: 'https://s3.amazonaws.com',
+      region: 'us-west-2',
+      accessKeyId: process.env.S3_ACCESS_KEY_ID,
+      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY
+    },
+    retention: {
+      default: 90,  // Keep 90 days by default
+      tables: {
+        sensitive_table: 30,    // Override: keep 30 days
+        high_volume_table: 7    // Override: keep 7 days
+      }
+    },
+    gracePeriod: 7,     // Wait 7 days before hard delete
+    batchSize: 10000    // Process in batches of 10k
+  },
+  runOptions: {
+    dryRun: false,           // Set true to preview
+    // targetTable: 'users'  // Optionally archive only one table
+  }
+});
 
-# Optional retention configuration (defaults shown)
-export PG_HISTORY_RETENTION_DEFAULT_DAYS="90"
-export PG_HISTORY_RETENTION_TABLES='{"sensitive_table":30,"high_volume_table":7}'
-export PG_HISTORY_GRACE_PERIOD_DAYS="7"
-export PG_HISTORY_BATCH_SIZE="10000"
-
-# Optional server configuration
-export PG_HISTORY_PORT="3001"
-export PG_HISTORY_JWT_SECRET="your-secret-key"
+const server = Bun.serve({
+  port: 3001,
+  fetch: app.fetch
+});
 ```
 
-### 2. Run Archiver
+### API Endpoints
 
-```bash
-# Archive all tables
-bun run cli.ts
-
-# Dry run (preview what would be archived)
-bun run cli.ts --dry-run
-
-# Archive specific table only
-bun run cli.ts --table users
-
-# Custom port
-bun run cli.ts --port 3002
-```
-
-### 3. API Endpoints
-
-The archiver starts a REST API server with:
+The server provides:
 
 - `GET /health` - Health check endpoint
+- `GET /api/stats` - Archival statistics (only if archiver enabled)
 - `GET /openapi` - OpenAPI documentation
 
-### 4. JWT Authentication (Optional)
+### JWT Authentication (Optional)
 
 Enable JWT authentication by setting the `PG_HISTORY_JWT_SECRET` environment variable:
 
-```bash
-PG_HISTORY_JWT_SECRET="your-secret-key" bun run cli.ts
+```typescript
+process.env.PG_HISTORY_JWT_SECRET = 'your-secret-key';
+
+const app = await createServer({ /* config */ });
 ```
 
 When enabled:
@@ -163,6 +170,28 @@ The archiver follows this workflow:
 - Archived to S3: Day 90
 - Soft deleted: Day 90
 - Hard deleted: Day 97 (90 + 7 day grace period)
+
+### Running as a Scheduled Job
+
+To run archival periodically (e.g., via cron), create a script that starts the server, runs archival, then exits:
+
+```typescript
+import { Pool } from 'pg';
+import { createServer } from 'pg-history';
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Run archiver (server starts, runs archival, then you can exit)
+await createServer({
+  pool,
+  enableArchiver: true,
+  archiverConfig: { /* ... */ }
+});
+
+// Close after archival completes
+await pool.end();
+process.exit(0);
+```
 
 ## Quick Start
 
