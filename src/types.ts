@@ -140,6 +140,14 @@ export interface ServerConfig {
 
 	/** Run options for archiver (only used if enableArchiver is true) */
 	runOptions?: RunOptions
+
+	/** Enable PgHistory API integration */
+	enableHistory?: boolean
+
+	/** PgHistory configuration (required if enableHistory is true) */
+	historyConfig?: {
+		tables: string[]
+	}
 }
 
 export interface OrchestratorStats {
