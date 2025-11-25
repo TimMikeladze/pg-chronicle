@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { JwtVariables } from 'hono/jwt'
 import { jwt } from 'hono/jwt'
 import { openAPIRouteHandler } from 'hono-openapi'
+import { createErrorResponse } from './api-helpers'
 import { Orchestrator } from './orchestrator'
 import { PgHistory } from './PgHistory'
 import { getArchivalStats, setupArchiverSchema } from './schema'
@@ -87,6 +88,43 @@ export async function createServer(
 		app.get('/api/stats', async (c) => {
 			const stats = await getArchivalStats(config.pool)
 			return c.json({ stats })
+		})
+	}
+
+	// History API endpoints (only if history enabled)
+	if (config.enableHistory && pgHistory) {
+		app.get('/api/history/:table/:recordId', async (c) => {
+			const pgHistory = c.get('pgHistory')
+			if (!pgHistory) {
+				return c.json(
+					createErrorResponse('NOT_CONFIGURED', 'PgHistory not initialized'),
+					500,
+				)
+			}
+
+			const table = c.req.param('table')
+			const recordId = c.req.param('recordId')
+			const limitQuery = c.req.query('limit')
+			const limit = limitQuery ? Number.parseInt(limitQuery, 10) : undefined
+			const cursor = c.req.query('cursor') || undefined
+			const order = (c.req.query('order') as 'asc' | 'desc') || 'desc'
+
+			try {
+				const result = await pgHistory.getHistory(table, recordId, {
+					limit,
+					cursor,
+					order,
+				})
+				return c.json(result)
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error)
+
+				if (message.includes('not configured')) {
+					return c.json(createErrorResponse('INVALID_TABLE', message), 400)
+				}
+
+				return c.json(createErrorResponse('DATABASE_ERROR', message), 500)
+			}
 		})
 	}
 

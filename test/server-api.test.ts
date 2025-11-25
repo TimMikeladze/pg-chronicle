@@ -57,3 +57,60 @@ describe('Server API Types', () => {
 		expect(res.status).toBe(200)
 	})
 })
+
+describe('GET /api/history/:table/:recordId', () => {
+	test('should return 401 without JWT when secret is set', async () => {
+		process.env.PG_HISTORY_JWT_SECRET = 'test-secret'
+
+		const pool = await getTestConnection()
+		const app = await createServer({
+			pool,
+			enableHistory: true,
+			historyConfig: { tables: ['users'] },
+		})
+
+		const res = await app.request('/api/history/users/123')
+		expect(res.status).toBe(401)
+
+		delete process.env.PG_HISTORY_JWT_SECRET
+	})
+
+	test('should return history for valid table and recordId', async () => {
+		const pool = await getTestConnection()
+
+		// Create test table first
+		await pool.query(`
+			CREATE TABLE IF NOT EXISTS users (
+				id SERIAL PRIMARY KEY,
+				name TEXT
+			)
+		`)
+
+		// Create server (which initializes PgHistory)
+		const app = await createServer({
+			pool,
+			enableHistory: true,
+			historyConfig: { tables: ['users'] },
+		})
+
+		// Get the pgHistory instance from the app context to set it up
+		const { PgHistory } = await import('../src/PgHistory')
+		const pgHistory = new PgHistory({ tables: ['users'], pool })
+		await pgHistory.setup()
+
+		// Insert and update to create history
+		await pool.query(`INSERT INTO users (id, name) VALUES (1, 'Alice')`)
+		await pool.query(`UPDATE users SET name = 'Bob' WHERE id = 1`)
+
+		const res = await app.request('/api/history/users/1')
+		expect(res.status).toBe(200)
+
+		const json = await res.json()
+		expect(json.data).toBeArray()
+		expect(json.data.length).toBeGreaterThan(0)
+		expect(json).toHaveProperty('nextCursor')
+		expect(json).toHaveProperty('hasMore')
+
+		await pgHistory.teardown()
+	})
+})
