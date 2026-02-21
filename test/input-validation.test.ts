@@ -27,40 +27,76 @@ describe('PgHistory input validation', () => {
 
 	describe('setUser validation', () => {
 		test('should reject userId exceeding max length', async () => {
-			const longUserId = 'x'.repeat(256)
-			await expect(async () => {
-				await audit.setUser(longUserId)
-			}).toThrow('userId exceeds maximum length')
+			const pool = await getTestConnection()
+			const client = await pool.connect()
+			try {
+				await client.query('BEGIN')
+				const longUserId = 'x'.repeat(256)
+				await expect(async () => {
+					await audit.setUser(client, longUserId)
+				}).toThrow('userId exceeds maximum length')
+				await client.query('ROLLBACK')
+			} finally {
+				client.release()
+			}
 		})
 
 		test('should reject userId with null bytes', async () => {
-			await expect(async () => {
-				await audit.setUser('user\0id')
-			}).toThrow('userId cannot contain null bytes')
+			const pool = await getTestConnection()
+			const client = await pool.connect()
+			try {
+				await client.query('BEGIN')
+				await expect(async () => {
+					await audit.setUser(client, 'user\0id')
+				}).toThrow('userId cannot contain null bytes')
+				await client.query('ROLLBACK')
+			} finally {
+				client.release()
+			}
 		})
 
 		test('should reject empty userId', async () => {
-			await expect(async () => {
-				await audit.setUser('')
-			}).toThrow('userId cannot be empty')
+			const pool = await getTestConnection()
+			const client = await pool.connect()
+			try {
+				await client.query('BEGIN')
+				await expect(async () => {
+					await audit.setUser(client, '')
+				}).toThrow('userId cannot be empty')
+				await client.query('ROLLBACK')
+			} finally {
+				client.release()
+			}
 		})
 
 		test('should reject metadata exceeding max size', async () => {
-			const hugeMetadata = { data: 'x'.repeat(10001) }
-			await expect(async () => {
-				await audit.setUser('user123', hugeMetadata)
-			}).toThrow('User metadata exceeds maximum size')
+			const pool = await getTestConnection()
+			const client = await pool.connect()
+			try {
+				await client.query('BEGIN')
+				const hugeMetadata = { data: 'x'.repeat(10001) }
+				await expect(async () => {
+					await audit.setUser(client, 'user123', hugeMetadata)
+				}).toThrow('User metadata exceeds maximum size')
+				await client.query('ROLLBACK')
+			} finally {
+				client.release()
+			}
 		})
 
-		test('should accept valid userId', async () => {
+		test('should accept valid userId via withUser', async () => {
 			await expect(async () => {
-				await audit.setUser('valid_user_123')
+				await audit.withUser('valid_user_123', undefined, async () => {})
 			}).not.toThrow()
 		})
 
-		test('should accept valid metadata', async () => {
+		test('should accept valid metadata via withUser', async () => {
 			await expect(async () => {
-				await audit.setUser('user123', { role: 'admin', permissions: ['read'] })
+				await audit.withUser(
+					'user123',
+					{ role: 'admin', permissions: ['read'] },
+					async () => {},
+				)
 			}).not.toThrow()
 		})
 	})

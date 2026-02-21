@@ -90,129 +90,158 @@ export class Orchestrator {
 			durationMs: 0,
 		}
 
-		const cutoff = this.getRetentionCutoff(tableName)
-		const gracePeriodDate = new Date()
-		gracePeriodDate.setDate(gracePeriodDate.getDate() - this.gracePeriod)
+		// Acquire advisory lock to prevent concurrent processing of the same table
+		const lockClient = await pool.connect()
+		try {
+			const lockResult = await lockClient.query(
+				`SELECT pg_try_advisory_lock(hashtext($1))`,
+				[`pg_history_archive_${tableName}`],
+			)
+			const acquired = lockResult.rows[0]?.pg_try_advisory_lock === true
+			if (!acquired) {
+				console.log(
+					`[pg-history] Skipping ${tableName} — another instance is processing it`,
+				)
+				stats.durationMs = Date.now() - startTime
+				return stats
+			}
+		} catch (error) {
+			lockClient.release()
+			throw error
+		}
 
-		if (options.dryRun) {
-			// Dry run: count what would be processed
-			const archiveCount = await pool.query(
-				`SELECT COUNT(*) as count
-        FROM audit_log
-        WHERE table_name = $1
-          AND changed_at < $2
-          AND archived_at IS NULL`,
-				[tableName, cutoff],
-			)
+		try {
+			const cutoff = this.getRetentionCutoff(tableName)
+			const gracePeriodDate = new Date()
+			gracePeriodDate.setDate(gracePeriodDate.getDate() - this.gracePeriod)
 
-			const softDeleteCount = await pool.query(
-				`SELECT COUNT(*) as count
-        FROM audit_log
-        WHERE table_name = $1
-          AND archived_at IS NOT NULL
-          AND archived_at < $2
-          AND soft_deleted_at IS NULL
-          AND s3_path IS NOT NULL`,
-				[tableName, gracePeriodDate],
-			)
+			if (options.dryRun) {
+				const archiveCount = await pool.query(
+					`SELECT COUNT(*) as count
+					FROM audit_log
+					WHERE table_name = $1
+						AND changed_at < $2
+						AND archived_at IS NULL`,
+					[tableName, cutoff],
+				)
 
-			const hardDeleteCount = await pool.query(
-				`SELECT COUNT(*) as count
-        FROM audit_log
-        WHERE table_name = $1
-          AND soft_deleted_at IS NOT NULL
-          AND soft_deleted_at < $2`,
-				[tableName, gracePeriodDate],
-			)
+				const softDeleteCount = await pool.query(
+					`SELECT COUNT(*) as count
+					FROM audit_log
+					WHERE table_name = $1
+						AND archived_at IS NOT NULL
+						AND archived_at < $2
+						AND soft_deleted_at IS NULL
+						AND s3_path IS NOT NULL`,
+					[tableName, gracePeriodDate],
+				)
 
-			console.log(`[DRY RUN] ${tableName}:`)
-			console.log(
-				`  Would archive: ${archiveCount.rows[0]?.count || 0} records`,
-			)
-			console.log(
-				`  Would soft delete: ${softDeleteCount.rows[0]?.count || 0} records`,
-			)
-			console.log(
-				`  Would hard delete: ${hardDeleteCount.rows[0]?.count || 0} records`,
+				const hardDeleteCount = await pool.query(
+					`SELECT COUNT(*) as count
+					FROM audit_log
+					WHERE table_name = $1
+						AND soft_deleted_at IS NOT NULL
+						AND soft_deleted_at < $2`,
+					[tableName, gracePeriodDate],
+				)
+
+				console.log(`[DRY RUN] ${tableName}:`)
+				console.log(
+					`  Would archive: ${archiveCount.rows[0]?.count || 0} records`,
+				)
+				console.log(
+					`  Would soft delete: ${softDeleteCount.rows[0]?.count || 0} records`,
+				)
+				console.log(
+					`  Would hard delete: ${hardDeleteCount.rows[0]?.count || 0} records`,
+				)
+
+				stats.durationMs = Date.now() - startTime
+				return stats
+			}
+
+			// Create archiver
+			const { PgHistoryArchiver } = await import('./PgHistoryArchiver')
+			const archiver = new PgHistoryArchiver({
+				pool,
+				s3: this.s3Config,
+				retention: this.retentionConfig,
+				gracePeriod: this.gracePeriod,
+				batchSize: this.batchSize,
+			})
+
+			// Archive old records in batches
+			let hasMore = true
+			let batchNumber = 0
+
+			while (hasMore) {
+				batchNumber++
+
+				try {
+					const batchResult = await archiver.processBatch(tableName, cutoff)
+
+					stats.recordsArchived += batchResult.recordCount
+
+					if (batchResult.recordCount === 0) {
+						hasMore = false
+					} else {
+						console.log(
+							`  Batch ${batchNumber}: Archived ${batchResult.recordCount} records to ${batchResult.s3Path}`,
+						)
+					}
+				} catch (error) {
+					console.error(
+						`  Batch ${batchNumber} failed: ${error instanceof Error ? error.message : String(error)}`,
+					)
+					throw error
+				}
+			}
+
+			// Soft delete archived records past grace period
+			console.log(`  Soft deleting records past grace period...`)
+			const softDeleted = await archiver.softDeleteArchived(tableName)
+			stats.recordsSoftDeleted = softDeleted
+			if (softDeleted > 0) {
+				console.log(`  Soft deleted ${softDeleted} records`)
+			}
+
+			// Hard delete soft-deleted records past grace period
+			console.log(`  Hard deleting soft-deleted records...`)
+			let totalHardDeleted = 0
+			let hardDeleteHasMore = true
+
+			while (hardDeleteHasMore) {
+				const hardDeleted = await archiver.hardDeletePurged(tableName)
+				totalHardDeleted += hardDeleted
+
+				if (hardDeleted === 0) {
+					hardDeleteHasMore = false
+				} else {
+					console.log(`  Hard deleted ${hardDeleted} records`)
+				}
+			}
+
+			stats.recordsHardDeleted = totalHardDeleted
+
+			const retentionDays =
+				this.retentionConfig.tables?.[tableName] || this.retentionConfig.default
+			await updateArchivalStats(
+				pool,
+				tableName,
+				retentionDays,
+				this.gracePeriod,
 			)
 
 			stats.durationMs = Date.now() - startTime
 			return stats
+		} finally {
+			// Release the advisory lock and return connection to pool
+			await lockClient
+				.query(`SELECT pg_advisory_unlock(hashtext($1))`, [
+					`pg_history_archive_${tableName}`,
+				])
+				.catch(() => {})
+			lockClient.release()
 		}
-
-		// Create archiver
-		const { PgHistoryArchiver } = await import('./PgHistoryArchiver')
-		const archiver = new PgHistoryArchiver({
-			pool,
-			s3: this.s3Config,
-			retention: this.retentionConfig,
-			gracePeriod: this.gracePeriod,
-			batchSize: this.batchSize,
-		})
-
-		// Archive old records in batches with retry
-		let hasMore = true
-		let batchNumber = 0
-
-		while (hasMore) {
-			batchNumber++
-
-			try {
-				// Use processBatch with S3 upload
-				const batchResult = await archiver.processBatch(tableName, cutoff)
-
-				stats.recordsArchived += batchResult.recordCount
-
-				if (batchResult.recordCount === 0) {
-					hasMore = false
-				} else {
-					console.log(
-						`  Batch ${batchNumber}: Archived ${batchResult.recordCount} records to ${batchResult.s3Path}`,
-					)
-				}
-			} catch (error) {
-				// Log error but continue with next batch
-				console.error(
-					`  Batch ${batchNumber} failed: ${error instanceof Error ? error.message : String(error)}`,
-				)
-				// Stop processing this table on error
-				throw error
-			}
-		}
-
-		// Soft delete archived records past grace period
-		console.log(`  Soft deleting records past grace period...`)
-		const softDeleted = await archiver.softDeleteArchived(tableName)
-		stats.recordsSoftDeleted = softDeleted
-		if (softDeleted > 0) {
-			console.log(`  Soft deleted ${softDeleted} records`)
-		}
-
-		// Hard delete soft-deleted records past grace period
-		console.log(`  Hard deleting soft-deleted records...`)
-		let totalHardDeleted = 0
-		let hardDeleteHasMore = true
-
-		// Process hard deletes in batches (they verify S3 each time)
-		while (hardDeleteHasMore) {
-			const hardDeleted = await archiver.hardDeletePurged(tableName)
-			totalHardDeleted += hardDeleted
-
-			if (hardDeleted === 0) {
-				hardDeleteHasMore = false
-			} else {
-				console.log(`  Hard deleted ${hardDeleted} records`)
-			}
-		}
-
-		stats.recordsHardDeleted = totalHardDeleted
-
-		// Update stats table for fast querying (avoid future audit_log scans)
-		const retentionDays =
-			this.retentionConfig.tables?.[tableName] || this.retentionConfig.default
-		await updateArchivalStats(pool, tableName, retentionDays, this.gracePeriod)
-
-		stats.durationMs = Date.now() - startTime
-		return stats
 	}
 }

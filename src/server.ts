@@ -72,6 +72,7 @@ export async function createServer(
 		app.use('/api/*', (c, next) => {
 			const jwtMiddleware = jwt({
 				secret: jwtSecret,
+				alg: 'HS256',
 			})
 			return jwtMiddleware(c, next)
 		})

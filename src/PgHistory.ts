@@ -1,4 +1,4 @@
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import type {
 	AuditEntry,
 	GetHistoryOptions,
@@ -121,6 +121,23 @@ export class PgHistory {
 		return Math.min(limit, MAX_LIMIT)
 	}
 
+	private buildPkWhereClause(
+		pkColumns: string[],
+		data: Record<string, unknown>,
+		paramOffset: number,
+	): { whereClause: string; values: unknown[] } {
+		const values: unknown[] = []
+		const clauses = pkColumns.map((col) => {
+			const value = data[col]
+			if (value === undefined) {
+				throw new Error(`Primary key column "${col}" not found in audit data`)
+			}
+			values.push(value)
+			return `"${col}" = $${paramOffset + values.length}`
+		})
+		return { whereClause: clauses.join(' AND '), values }
+	}
+
 	/**
 	 * Retrieves the primary key column(s) for a given table by querying PostgreSQL system catalogs.
 	 * For composite primary keys, returns all columns in the order they're defined.
@@ -234,10 +251,8 @@ export class PgHistory {
 
 			if (exists.rows.length === 0) {
 				try {
-					// Safe to use string interpolation here because tableName has been validated in constructor
-					// through validateTableName() which ensures it contains only safe characters
 					await this.pool.query(`
-						CREATE TABLE ${partitionName}
+						CREATE TABLE "${partitionName}"
 						PARTITION OF audit_log
 						FOR VALUES IN ('${tableName}')
 					`)
@@ -308,7 +323,7 @@ export class PgHistory {
 			if (pkColumns.length === 0) {
 				// No primary key: use hash of all column values
 				functionBody = `
-				CREATE OR REPLACE FUNCTION ${funcName}()
+				CREATE OR REPLACE FUNCTION "${funcName}"()
 				RETURNS TRIGGER AS $$
 				DECLARE
 					v_user_id TEXT;
@@ -347,7 +362,7 @@ export class PgHistory {
 				// Single primary key
 				const pkCol = pkColumns[0]
 				functionBody = `
-				CREATE OR REPLACE FUNCTION ${funcName}()
+				CREATE OR REPLACE FUNCTION "${funcName}"()
 				RETURNS TRIGGER AS $$
 				DECLARE
 					v_user_id TEXT;
@@ -391,7 +406,7 @@ export class PgHistory {
 					.map((col) => `COALESCE(OLD.${col}::text, '')`)
 					.join(" || '|' || ")
 				functionBody = `
-				CREATE OR REPLACE FUNCTION ${funcName}()
+				CREATE OR REPLACE FUNCTION "${funcName}"()
 				RETURNS TRIGGER AS $$
 				DECLARE
 					v_user_id TEXT;
@@ -438,11 +453,10 @@ export class PgHistory {
 
 			if (triggerExists.rows.length === 0) {
 				try {
-					// Safe to use string interpolation here because tableName has been validated in constructor
 					await this.pool.query(`
-						CREATE TRIGGER ${triggerName}
-						AFTER INSERT OR UPDATE OR DELETE ON ${tableName}
-						FOR EACH ROW EXECUTE FUNCTION ${funcName}()
+						CREATE TRIGGER "${triggerName}"
+						AFTER INSERT OR UPDATE OR DELETE ON "${tableName}"
+						FOR EACH ROW EXECUTE FUNCTION "${funcName}"()
 					`)
 				} catch (error) {
 					throw new Error(
@@ -455,40 +469,22 @@ export class PgHistory {
 				)
 			}
 		}
-
-		// Create user correlation table
-		await this.pool.query(`
-			CREATE TABLE IF NOT EXISTS audit_user_context (
-				id BIGSERIAL PRIMARY KEY,
-				user_id TEXT NOT NULL,
-				metadata JSONB,
-				created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-			)
-		`)
-
-		await this.pool.query(`
-			CREATE INDEX IF NOT EXISTS idx_audit_user_context_created_at
-			ON audit_user_context (created_at DESC)
-		`)
 	}
 
 	async setUser(
+		client: PoolClient,
 		userId: string,
 		metadata?: Record<string, unknown>,
 	): Promise<void> {
-		// Validate userId to prevent DOS attacks with huge strings
 		this.validateStringInput(userId, 'userId', 255)
 
-		// Store user context in PostgreSQL session variables
-		// This allows triggers to access the user context
-		await this.pool.query('SELECT set_config($1, $2, $3)', [
+		// Transaction-local set_config (true) — scoped to this client's transaction
+		await client.query('SELECT set_config($1, $2, true)', [
 			'audit.user_id',
 			userId,
-			false,
 		])
 
 		if (metadata) {
-			// Safely serialize metadata, catching circular references and other JSON errors
 			let metadataJson: string
 			try {
 				metadataJson = JSON.stringify(metadata)
@@ -498,52 +494,50 @@ export class PgHistory {
 				)
 			}
 
-			// Validate serialized metadata length to prevent DOS
 			if (metadataJson.length > 10000) {
 				throw new Error(
 					'User metadata exceeds maximum size of 10000 characters',
 				)
 			}
 
-			await this.pool.query('SELECT set_config($1, $2, $3)', [
+			await client.query('SELECT set_config($1, $2, true)', [
 				'audit.user_metadata',
 				metadataJson,
-				false,
 			])
-
-			// Also insert into audit_user_context table for tracking
-			// Cast to JSONB explicitly to ensure correct type handling
-			await this.pool.query(
-				'INSERT INTO audit_user_context (user_id, metadata) VALUES ($1, $2::jsonb)',
-				[userId, metadataJson],
-			)
 		} else {
-			await this.pool.query('SELECT set_config($1, $2, $3)', [
+			await client.query('SELECT set_config($1, $2, true)', [
 				'audit.user_metadata',
 				'',
-				false,
 			])
-
-			// Also insert into audit_user_context table for tracking
-			await this.pool.query(
-				'INSERT INTO audit_user_context (user_id, metadata) VALUES ($1, NULL)',
-				[userId],
-			)
 		}
 	}
 
-	async clearUser(): Promise<void> {
-		// Clear user context from session variables
-		await this.pool.query('SELECT set_config($1, $2, $3)', [
-			'audit.user_id',
-			'',
-			false,
-		])
-		await this.pool.query('SELECT set_config($1, $2, $3)', [
+	async clearUser(client: PoolClient): Promise<void> {
+		await client.query('SELECT set_config($1, $2, true)', ['audit.user_id', ''])
+		await client.query('SELECT set_config($1, $2, true)', [
 			'audit.user_metadata',
 			'',
-			false,
 		])
+	}
+
+	async withUser<T>(
+		userId: string,
+		metadata: Record<string, unknown> | undefined,
+		fn: (client: PoolClient) => Promise<T>,
+	): Promise<T> {
+		const client = await this.pool.connect()
+		try {
+			await client.query('BEGIN')
+			await this.setUser(client, userId, metadata)
+			const result = await fn(client)
+			await client.query('COMMIT')
+			return result
+		} catch (error) {
+			await client.query('ROLLBACK')
+			throw error
+		} finally {
+			client.release()
+		}
 	}
 
 	async getHistory(
@@ -692,23 +686,40 @@ export class PgHistory {
 		params.push(pgArray)
 		paramIndex++
 
-		// Full-text search on JSONB with wildcard escaping and length validation
+		// Search on JSONB data
 		if (options.query) {
-			// Validate query length to prevent DOS
 			this.validateStringInput(options.query, 'query', 500)
 
-			// Escape SQL wildcards (% and _) to prevent wildcard abuse
-			// Users wanting wildcards should use proper JSONB operators instead
-			const escapedQuery = options.query
-				.replace(/\\/g, '\\\\') // Escape backslash first
-				.replace(/%/g, '\\%') // Escape %
-				.replace(/_/g, '\\_') // Escape _
+			const trimmed = options.query.trim()
+			if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+				// JSON object query — use @> containment (uses GIN index)
+				let parsed: unknown
+				try {
+					parsed = JSON.parse(trimmed)
+				} catch {
+					throw new Error(
+						'PgHistory: query looks like JSON but failed to parse',
+					)
+				}
+				const jsonStr = JSON.stringify(parsed)
+				conditions.push(
+					`(old_data @> $${paramIndex}::jsonb OR new_data @> $${paramIndex}::jsonb)`,
+				)
+				params.push(jsonStr)
+				paramIndex++
+			} else {
+				// Plain text query — ILIKE fallback
+				const escapedQuery = options.query
+					.replace(/\\/g, '\\\\')
+					.replace(/%/g, '\\%')
+					.replace(/_/g, '\\_')
 
-			conditions.push(
-				`(old_data::text ILIKE $${paramIndex} OR new_data::text ILIKE $${paramIndex})`,
-			)
-			params.push(`%${escapedQuery}%`)
-			paramIndex++
+				conditions.push(
+					`(old_data::text ILIKE $${paramIndex} OR new_data::text ILIKE $${paramIndex})`,
+				)
+				params.push(`%${escapedQuery}%`)
+				paramIndex++
+			}
 		}
 
 		// Operation filter
@@ -798,6 +809,7 @@ export class PgHistory {
 		tableName: string,
 		recordId: string,
 		auditEntryId: string,
+		userContext?: { userId: string; metadata?: Record<string, unknown> },
 	): Promise<void> {
 		if (!this.tables.includes(tableName)) {
 			throw new Error(
@@ -810,6 +822,10 @@ export class PgHistory {
 		const client = await this.pool.connect()
 		try {
 			await client.query('BEGIN')
+
+			if (userContext) {
+				await this.setUser(client, userContext.userId, userContext.metadata)
+			}
 
 			// Get the audit entry
 			const entryResult = await client.query(
@@ -834,95 +850,109 @@ export class PgHistory {
 				)
 			}
 
-			// Determine which data to use for revert
-			// For UPDATE: use old_data (state before the update)
-			// For INSERT: use new_data (the inserted state)
-			// For DELETE: use old_data (the deleted state)
-			let revertData: Record<string, unknown>
-
-			if (entry.operation === 'INSERT') {
-				revertData = entry.new_data || {}
-			} else {
-				revertData = entry.old_data || {}
-			}
-
-			if (!revertData || Object.keys(revertData).length === 0) {
-				throw new Error(`No data available to revert for entry ${auditEntryId}`)
-			}
-
-			// Get primary key columns for WHERE clause
+			// Get primary key columns
 			const pkColumns = await this.getPrimaryKeyColumns(tableName)
-
-			// Build UPDATE statement dynamically
-			// Filter out primary key columns from SET clause
-			const columns = Object.keys(revertData).filter(
-				(k) => !pkColumns.includes(k),
-			)
-
-			// Validate all column names from audit data to prevent SQL injection
-			this.validateColumnNames(columns)
-			this.validateColumnNames(pkColumns)
-
-			const setClauses = columns
-				.map((col, idx) => `${col} = $${idx + 1}`)
-				.join(', ')
-			const values = columns.map((col) => revertData[col])
-
-			// Build WHERE clause based on primary key configuration
-			let whereClause: string
 			if (pkColumns.length === 0) {
-				// No primary key: can't reliably update specific row
 				throw new Error(
 					`Cannot revert table "${tableName}" - no primary key defined`,
 				)
-			} else if (pkColumns.length === 1) {
-				// Single primary key
-				const pkCol = pkColumns[0]
-				if (!pkCol) {
-					throw new Error('Primary key column not found')
-				}
-				const pkValue = revertData[pkCol]
-				if (pkValue === undefined) {
+			}
+
+			// Validate PK columns
+			this.validateColumnNames(pkColumns)
+
+			// Branch on operation type
+			if (entry.operation === 'INSERT') {
+				// Undo INSERT = DELETE the row
+				const revertData = entry.new_data || {}
+				const { whereClause, values } = this.buildPkWhereClause(
+					pkColumns,
+					revertData,
+					0,
+				)
+
+				const deleteQuery = `
+					DELETE FROM "${tableName}"
+					WHERE ${whereClause}
+					RETURNING true as success
+				`
+				const deleteResult = await client.query(deleteQuery, values)
+				if (!deleteResult.rows || deleteResult.rows.length === 0) {
 					throw new Error(
-						`Primary key column "${pkCol}" not found in audit data`,
+						`Failed to revert INSERT for record ${recordId} in table ${tableName} - row not found`,
 					)
 				}
-				whereClause = `${pkCol} = $${values.length + 1}`
-				values.push(pkValue)
+			} else if (entry.operation === 'DELETE') {
+				// Undo DELETE = re-INSERT the row
+				const revertData = entry.old_data
+				if (!revertData || Object.keys(revertData).length === 0) {
+					throw new Error(
+						`No old_data available to revert DELETE for entry ${auditEntryId}`,
+					)
+				}
+
+				const allColumns = Object.keys(revertData)
+				this.validateColumnNames(allColumns)
+
+				const columnList = allColumns.map((col) => `"${col}"`).join(', ')
+				const placeholders = allColumns
+					.map((_, idx) => `$${idx + 1}`)
+					.join(', ')
+				const values = allColumns.map((col) => revertData[col])
+
+				const insertQuery = `
+					INSERT INTO "${tableName}" (${columnList})
+					VALUES (${placeholders})
+					RETURNING true as success
+				`
+				const insertResult = await client.query(insertQuery, values)
+				if (!insertResult.rows || insertResult.rows.length === 0) {
+					throw new Error(
+						`Failed to revert DELETE for record ${recordId} in table ${tableName}`,
+					)
+				}
 			} else {
-				// Composite primary key
-				const pkWhereClauses = pkColumns.map((col) => {
-					const value = revertData[col]
-					if (value === undefined) {
-						throw new Error(
-							`Primary key column "${col}" not found in audit data`,
-						)
-					}
-					values.push(value)
-					return `${col} = $${values.length}`
-				})
-				whereClause = pkWhereClauses.join(' AND ')
-			}
+				// UPDATE: restore old_data
+				const revertData = entry.old_data
+				if (!revertData || Object.keys(revertData).length === 0) {
+					throw new Error(
+						`No old_data available to revert for entry ${auditEntryId}`,
+					)
+				}
 
-			// Table name is validated in constructor, column names validated above
-			const updateQuery = `
-				UPDATE ${tableName}
-				SET ${setClauses}
-				WHERE ${whereClause}
-				RETURNING true as success
-			`
-
-			const updateResult = await client.query(updateQuery, values)
-			if (!updateResult.rows || updateResult.rows.length === 0) {
-				throw new Error(
-					`Failed to revert record ${recordId} in table ${tableName} - no rows updated`,
+				const columns = Object.keys(revertData).filter(
+					(k) => !pkColumns.includes(k),
 				)
+				this.validateColumnNames(columns)
+
+				const setClauses = columns
+					.map((col, idx) => `"${col}" = $${idx + 1}`)
+					.join(', ')
+				const values: unknown[] = columns.map((col) => revertData[col])
+
+				const { whereClause, values: pkValues } = this.buildPkWhereClause(
+					pkColumns,
+					revertData,
+					values.length,
+				)
+				values.push(...pkValues)
+
+				const updateQuery = `
+					UPDATE "${tableName}"
+					SET ${setClauses}
+					WHERE ${whereClause}
+					RETURNING true as success
+				`
+
+				const updateResult = await client.query(updateQuery, values)
+				if (!updateResult.rows || updateResult.rows.length === 0) {
+					throw new Error(
+						`Failed to revert record ${recordId} in table ${tableName} - no rows updated`,
+					)
+				}
 			}
 
-			// The revert UPDATE will be captured by trigger
-			// Mark the newly created audit entry as a revert using a more reliable method
-			// We use the fact that it's the most recent entry for this table/record
-			// within this transaction, and we check it was just created
+			// Mark the newly created audit entry as a revert
 			const markedRows = await client.query(
 				`UPDATE audit_log
 				SET metadata = jsonb_set(
@@ -943,7 +973,6 @@ export class PgHistory {
 			)
 
 			if (!markedRows.rows || markedRows.rows.length === 0) {
-				// Log warning but don't fail - the revert succeeded
 				console.warn(
 					`[pg-history] Failed to mark audit entry as revert for ${tableName}:${recordId}`,
 				)
@@ -964,7 +993,7 @@ export class PgHistory {
 			const triggerName = `audit_trigger_${tableName}`
 
 			await this.pool.query(`
-				DROP TRIGGER IF EXISTS ${triggerName} ON ${tableName}
+				DROP TRIGGER IF EXISTS "${triggerName}" ON "${tableName}"
 			`)
 		}
 
@@ -973,14 +1002,9 @@ export class PgHistory {
 			const funcName = `audit_trigger_func_${tableName}`
 
 			await this.pool.query(`
-				DROP FUNCTION IF EXISTS ${funcName}() CASCADE
+				DROP FUNCTION IF EXISTS "${funcName}"() CASCADE
 			`)
 		}
-
-		// Drop user context table
-		await this.pool.query(`
-			DROP TABLE IF EXISTS audit_user_context CASCADE
-		`)
 
 		// Drop audit_log table (cascades to partitions)
 		await this.pool.query(`

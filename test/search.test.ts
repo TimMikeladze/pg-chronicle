@@ -142,17 +142,17 @@ describe('PgHistory.search', () => {
 		const audit = new PgHistory({ pool, tables: ['users'] })
 		await audit.setup()
 
-		await audit.setUser('user-123', { action: 'api' })
-		await pool.query(
-			`INSERT INTO users (name, email) VALUES ('Frank', 'frank@example.com')`,
-		)
+		await audit.withUser('user-123', { action: 'api' }, async (client) => {
+			await client.query(
+				`INSERT INTO users (name, email) VALUES ('Frank', 'frank@example.com')`,
+			)
+		})
 
-		await new Promise((resolve) => setTimeout(resolve, 100))
-
-		await audit.setUser('user-456', { action: 'api' })
-		await pool.query(
-			`INSERT INTO users (name, email) VALUES ('Grace', 'grace@example.com')`,
-		)
+		await audit.withUser('user-456', { action: 'api' }, async (client) => {
+			await client.query(
+				`INSERT INTO users (name, email) VALUES ('Grace', 'grace@example.com')`,
+			)
+		})
 
 		await new Promise((resolve) => setTimeout(resolve, 100))
 

@@ -61,12 +61,19 @@ async function main() {
 		// These are automatically captured by triggers
 		console.log('Changes are now being tracked automatically')
 
-		// Set user context (optional)
-		await history.setUser('admin-123', {
-			ip: '192.168.1.1',
-			action: 'api_call',
-			requestId: 'req-456',
-		})
+		// Set user context via withUser (scoped to a transaction)
+		await history.withUser(
+			'admin-123',
+			{
+				ip: '192.168.1.1',
+				action: 'api_call',
+				requestId: 'req-456',
+			},
+			async (client) => {
+				// All operations here are attributed to admin-123
+				await client.query(`SELECT 1`)
+			},
+		)
 
 		// Query history for a record
 		const recordHistory = await history.getHistory('users', '1')

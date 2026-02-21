@@ -68,7 +68,7 @@ export async function writeParquet(
 	await parquetWriteFile({
 		filename: filePath,
 		columnData,
-		compressed: true,
+		codec: 'SNAPPY',
 	})
 
 	// Get file size

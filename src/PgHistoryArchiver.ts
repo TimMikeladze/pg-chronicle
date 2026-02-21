@@ -259,7 +259,7 @@ export class PgHistoryArchiver {
 			return 0
 		}
 
-		// Verify all S3 files exist before deleting
+		// Verify S3 files per-path, collecting verified and missing paths
 		const s3Paths = new Set<string>()
 		for (const row of checkResult.rows) {
 			if (row.s3_path) {
@@ -267,29 +267,39 @@ export class PgHistoryArchiver {
 			}
 		}
 
-		// Verify each unique S3 path (skip verification for test paths)
+		const verifiedPaths = new Set<string>()
+		const missingPaths = new Set<string>()
+
 		for (const s3Path of s3Paths) {
-			// Skip verification for test paths
 			if (s3Path.startsWith('test://')) {
+				verifiedPaths.add(s3Path)
 				continue
 			}
 
 			const exists = await this.verifyS3File(s3Path)
-			if (!exists) {
+			if (exists) {
+				verifiedPaths.add(s3Path)
+			} else {
+				missingPaths.add(s3Path)
 				console.warn(
-					`Skipping hard delete: S3 file missing: ${s3Path}. Data preserved in database.`,
+					`[pg-history] S3 file missing: ${s3Path}. Skipping records with this path.`,
 				)
-				// Don't delete - data is not backed up!
-				return 0
 			}
 		}
 
-		// All S3 files verified - safe to delete
-		const recordIds = checkResult.rows.map((r) => r.id)
+		// Only delete records whose S3 path is verified
+		const verifiedIds = checkResult.rows
+			.filter((r) => r.s3_path && verifiedPaths.has(r.s3_path))
+			.map((r) => r.id)
+
+		if (verifiedIds.length === 0) {
+			return 0
+		}
+
 		const result = await this.pool.query(
 			`DELETE FROM audit_log
       WHERE id = ANY($1)`,
-			[recordIds],
+			[verifiedIds],
 		)
 
 		return result.rowCount || 0

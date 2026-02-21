@@ -59,18 +59,18 @@ describe('PgHistory.revert', () => {
 		await pool.query(`UPDATE users SET email = 'bob2@example.com' WHERE id = 1`)
 
 		const history = await audit.getHistory('users', '1')
-		const insertEntry = history.data.find((e) => e.operation === 'INSERT')
+		const updateEntry = history.data.find((e) => e.operation === 'UPDATE')
 
-		// Revert
-		expect(insertEntry).toBeDefined()
-		await audit.revert('users', '1', insertEntry?.id ?? '')
+		// Revert the UPDATE (restores old_data)
+		expect(updateEntry).toBeDefined()
+		await audit.revert('users', '1', updateEntry?.id ?? '')
 
 		// Check revert was audited
 		const newHistory = await audit.getHistory('users', '1')
 		const revertEntry = newHistory.data[0]
 
 		expect(revertEntry?.operation).toBe('UPDATE')
-		expect(revertEntry?.metadata?.revertedFrom).toBe(insertEntry?.id)
+		expect(revertEntry?.metadata?.revertedFrom).toBe(updateEntry?.id)
 	})
 
 	test('should use old_data for UPDATE revert, new_data for INSERT revert', async () => {
@@ -123,12 +123,13 @@ describe('PgHistory.revert', () => {
 		await pool.query(`UPDATE users SET email = 'eve2@example.com' WHERE id = 1`)
 
 		const history = await audit.getHistory('users', '1')
-		const insertEntry = history.data.find((e) => e.operation === 'INSERT')
+		const updateEntry = history.data.find((e) => e.operation === 'UPDATE')
 
-		// Set user before revert
-		await audit.setUser('admin-123', { action: 'revert', reason: 'mistake' })
-		expect(insertEntry).toBeDefined()
-		await audit.revert('users', '1', insertEntry?.id ?? '')
+		expect(updateEntry).toBeDefined()
+		await audit.revert('users', '1', updateEntry?.id ?? '', {
+			userId: 'admin-123',
+			metadata: { action: 'revert', reason: 'mistake' },
+		})
 
 		await new Promise((resolve) => setTimeout(resolve, 100))
 
@@ -138,5 +139,57 @@ describe('PgHistory.revert', () => {
 
 		expect(revertEntry?.changedBy).toBe('admin-123')
 		expect(revertEntry?.metadata?.action).toBe('revert')
+	})
+
+	test('should revert a DELETE by re-inserting the row', async () => {
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
+		await audit.setup()
+
+		// Insert then delete
+		await pool.query(
+			`INSERT INTO users (id, name, email) VALUES (1, 'Frank', 'frank@example.com')`,
+		)
+		await pool.query(`DELETE FROM users WHERE id = 1`)
+
+		// Verify row is gone
+		const gone = await pool.query(`SELECT * FROM users WHERE id = 1`)
+		expect(gone.rows.length).toBe(0)
+
+		// Find the DELETE audit entry
+		const history = await audit.getHistory('users', '1')
+		const deleteEntry = history.data.find((e) => e.operation === 'DELETE')
+		expect(deleteEntry).toBeDefined()
+
+		// Revert the DELETE — should re-insert the row
+		await audit.revert('users', '1', deleteEntry?.id ?? '')
+
+		// Verify row is back
+		const result = await pool.query(`SELECT * FROM users WHERE id = 1`)
+		expect(result.rows.length).toBe(1)
+		expect(result.rows[0].name).toBe('Frank')
+		expect(result.rows[0].email).toBe('frank@example.com')
+	})
+
+	test('should revert an INSERT by deleting the row', async () => {
+		const pool = await getTestConnection()
+		const audit = new PgHistory({ pool, tables: ['users'] })
+		await audit.setup()
+
+		await pool.query(
+			`INSERT INTO users (id, name, email) VALUES (1, 'Grace', 'grace@example.com')`,
+		)
+
+		// Find the INSERT audit entry
+		const history = await audit.getHistory('users', '1')
+		const insertEntry = history.data.find((e) => e.operation === 'INSERT')
+		expect(insertEntry).toBeDefined()
+
+		// Revert the INSERT — should delete the row
+		await audit.revert('users', '1', insertEntry?.id ?? '')
+
+		// Verify row is gone
+		const result = await pool.query(`SELECT * FROM users WHERE id = 1`)
+		expect(result.rows.length).toBe(0)
 	})
 })

@@ -111,9 +111,16 @@ describe('PgHistory security - database operations', () => {
 
 		await audit.setup()
 
-		await expect(async () => {
-			await audit.setUser('user123', circular)
-		}).toThrow('Failed to serialize user metadata')
+		const client = await pool.connect()
+		try {
+			await client.query('BEGIN')
+			await expect(async () => {
+				await audit.setUser(client, 'user123', circular)
+			}).toThrow('Failed to serialize user metadata')
+			await client.query('ROLLBACK')
+		} finally {
+			client.release()
+		}
 	})
 
 	test('should successfully serialize valid metadata', async () => {
@@ -126,12 +133,16 @@ describe('PgHistory security - database operations', () => {
 
 		await audit.setup()
 
-		// Valid metadata should work
+		// Valid metadata should work via withUser
 		await expect(async () => {
-			await audit.setUser('user123', {
-				role: 'admin',
-				permissions: ['read', 'write'],
-			})
+			await audit.withUser(
+				'user123',
+				{
+					role: 'admin',
+					permissions: ['read', 'write'],
+				},
+				async () => {},
+			)
 		}).not.toThrow()
 	})
 })

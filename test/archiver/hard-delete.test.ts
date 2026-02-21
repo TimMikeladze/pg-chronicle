@@ -40,11 +40,12 @@ describe('PgHistoryArchiver - Hard Delete', () => {
 	})
 
 	test('should permanently delete soft-deleted records past grace period', async () => {
-		// Create soft-deleted records past grace period
+		// Create soft-deleted records past grace period with s3_path set
 		await pool.query(`
       UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '20 days',
-          soft_deleted_at = NOW() - INTERVAL '10 days'
+          soft_deleted_at = NOW() - INTERVAL '10 days',
+          s3_path = 'test://archive/' || id || '.parquet'
       WHERE table_name = 'users' AND id LIKE 'old-%'
     `)
 
