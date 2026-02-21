@@ -8,7 +8,7 @@ export async function writeParquet(
 	const columnData = [
 		{
 			name: 'id',
-			data: records.map((r) => r.id as string),
+			data: records.map((r) => String(r.id)),
 			type: 'STRING' as const,
 		},
 		{

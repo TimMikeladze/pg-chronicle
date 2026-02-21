@@ -383,15 +383,15 @@ export class PgHistory {
 
 					IF (TG_OP = 'DELETE') THEN
 						INSERT INTO audit_log (table_name, record_id, operation, old_data, changed_by, metadata)
-						VALUES (TG_TABLE_NAME, OLD.${pkCol}::text, TG_OP, to_jsonb(OLD), v_user_id, v_metadata);
+						VALUES (TG_TABLE_NAME, OLD."${pkCol}"::text, TG_OP, to_jsonb(OLD), v_user_id, v_metadata);
 						RETURN OLD;
 					ELSIF (TG_OP = 'UPDATE') THEN
 						INSERT INTO audit_log (table_name, record_id, operation, old_data, new_data, changed_by, metadata)
-						VALUES (TG_TABLE_NAME, NEW.${pkCol}::text, TG_OP, to_jsonb(OLD), to_jsonb(NEW), v_user_id, v_metadata);
+						VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, to_jsonb(OLD), to_jsonb(NEW), v_user_id, v_metadata);
 						RETURN NEW;
 					ELSIF (TG_OP = 'INSERT') THEN
 						INSERT INTO audit_log (table_name, record_id, operation, new_data, changed_by, metadata)
-						VALUES (TG_TABLE_NAME, NEW.${pkCol}::text, TG_OP, to_jsonb(NEW), v_user_id, v_metadata);
+						VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, to_jsonb(NEW), v_user_id, v_metadata);
 						RETURN NEW;
 					END IF;
 				END;
@@ -400,10 +400,10 @@ export class PgHistory {
 			} else {
 				// Composite primary key: concatenate with '|' delimiter
 				const pkExpressionsNew = pkColumns
-					.map((col) => `COALESCE(NEW.${col}::text, '')`)
+					.map((col) => `COALESCE(NEW."${col}"::text, '')`)
 					.join(" || '|' || ")
 				const pkExpressionsOld = pkColumns
-					.map((col) => `COALESCE(OLD.${col}::text, '')`)
+					.map((col) => `COALESCE(OLD."${col}"::text, '')`)
 					.join(" || '|' || ")
 				functionBody = `
 				CREATE OR REPLACE FUNCTION "${funcName}"()
@@ -679,11 +679,9 @@ export class PgHistory {
 		const params: unknown[] = []
 		let paramIndex = 1
 
-		// Table filter - use parameterized array for safety
-		// Convert JS array to PostgreSQL array format
-		const pgArray = `{${tables.join(',')}}`
+		// Table filter - pass JS array directly, pg driver handles conversion
 		conditions.push(`table_name = ANY($${paramIndex}::text[])`)
-		params.push(pgArray)
+		params.push(tables)
 		paramIndex++
 
 		// Search on JSONB data

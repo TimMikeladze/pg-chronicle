@@ -178,6 +178,30 @@ export class PgHistoryArchiver {
 
 		const archivedCount = updateResult.rowCount || 0
 
+		// If no records were actually archived (concurrent process got them first),
+		// clean up the orphaned S3 file
+		if (archivedCount === 0) {
+			try {
+				const { DeleteObjectCommand } = await import('@aws-sdk/client-s3')
+				await this.s3Client.send(
+					new DeleteObjectCommand({
+						Bucket: this.config.s3.bucket,
+						Key: s3Path,
+					}),
+				)
+			} catch {
+				console.warn(
+					`[pg-history] Failed to clean up orphaned S3 file: ${s3Path}`,
+				)
+			}
+			return {
+				recordCount: 0,
+				fileSize: 0,
+				s3Path: '',
+				status: 'completed',
+			}
+		}
+
 		// Record metadata (idempotent with UNIQUE constraint)
 		const archiveDate = date.toISOString().split('T')[0]
 		await this.pool.query(
@@ -244,13 +268,17 @@ export class PgHistoryArchiver {
 		const gracePeriodDate = new Date()
 		gracePeriodDate.setDate(gracePeriodDate.getDate() - this.config.gracePeriod)
 
-		// Get records to delete with their S3 paths
+		// Get records to delete with their S3 paths.
+		// Only select records that have an s3_path (proof of backup).
+		// Records without s3_path should not have been soft-deleted,
+		// but if they were, we skip them to avoid data loss.
 		const checkResult = await this.pool.query(
 			`SELECT id, s3_path
       FROM audit_log
       WHERE table_name = $1
         AND soft_deleted_at IS NOT NULL
         AND soft_deleted_at < $2
+        AND s3_path IS NOT NULL
       LIMIT 1000`,
 			[tableName, gracePeriodDate],
 		)

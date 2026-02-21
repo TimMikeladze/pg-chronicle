@@ -35,34 +35,47 @@ export async function createServer(
 		await next()
 	})
 
-	// If archiver is enabled, run the orchestrator
+	// If archiver is enabled, set up schema synchronously (fast DDL),
+	// then run the orchestrator in the background so the server can start
+	// accepting requests immediately.
 	if (config.enableArchiver && config.archiverConfig) {
 		console.log('Setting up archiver schema...')
 		await setupArchiverSchema(config.pool)
 
-		console.log('Running archival process...')
-		const orchestrator = new Orchestrator(
-			config.archiverConfig.s3,
-			config.archiverConfig.retention,
-			config.archiverConfig.gracePeriod,
-			config.archiverConfig.batchSize,
-		)
+		const archiverConfig = config.archiverConfig
+		const runOptions = config.runOptions || {}
 
-		const stats = await orchestrator.run(config.pool, config.runOptions || {})
+		// Run archival in the background — don't block server startup
+		const archivalPromise = (async () => {
+			console.log('Running archival process in background...')
+			const orchestrator = new Orchestrator(
+				archiverConfig.s3,
+				archiverConfig.retention,
+				archiverConfig.gracePeriod,
+				archiverConfig.batchSize,
+			)
 
-		console.log('Archival complete', {
-			tables: stats.tables.length,
-			recordsArchived: stats.totalRecordsArchived,
-			recordsSoftDeleted: stats.totalRecordsSoftDeleted,
-			recordsHardDeleted: stats.totalRecordsHardDeleted,
-			errors: stats.errors.length,
-			durationMs: stats.durationMs,
+			const stats = await orchestrator.run(config.pool, runOptions)
+
+			console.log('Archival complete', {
+				tables: stats.tables.length,
+				recordsArchived: stats.totalRecordsArchived,
+				recordsSoftDeleted: stats.totalRecordsSoftDeleted,
+				recordsHardDeleted: stats.totalRecordsHardDeleted,
+				errors: stats.errors.length,
+				durationMs: stats.durationMs,
+			})
+
+			for (const error of stats.errors) {
+				console.error('Table processing error', error)
+			}
+		})().catch((err) => {
+			console.error('Background archival failed:', err)
 		})
 
-		// Log errors if any
-		for (const error of stats.errors) {
-			console.error('Table processing error', error)
-		}
+		// Attach to app for testing/awaiting if needed
+		;(app as unknown as Record<string, unknown>)._archivalPromise =
+			archivalPromise
 	}
 
 	// Conditionally apply JWT auth if PG_HISTORY_JWT_SECRET is set
@@ -108,7 +121,19 @@ export async function createServer(
 			const limitQuery = c.req.query('limit')
 			const limit = limitQuery ? Number.parseInt(limitQuery, 10) : undefined
 			const cursor = c.req.query('cursor') || undefined
-			const order = (c.req.query('order') as 'asc' | 'desc') || 'desc'
+			const orderQuery = c.req.query('order')
+
+			// Validate order parameter
+			if (orderQuery && orderQuery !== 'asc' && orderQuery !== 'desc') {
+				return c.json(
+					createErrorResponse(
+						'VALIDATION_ERROR',
+						'order must be "asc" or "desc"',
+					),
+					400,
+				)
+			}
+			const order = (orderQuery || 'desc') as 'asc' | 'desc'
 
 			try {
 				const result = await pgHistory.getHistory(table, recordId, {
@@ -137,7 +162,18 @@ export async function createServer(
 				)
 			}
 
-			const body = await c.req.json()
+			let body: Record<string, unknown>
+			try {
+				body = await c.req.json()
+			} catch {
+				return c.json(
+					createErrorResponse(
+						'VALIDATION_ERROR',
+						'Invalid JSON in request body',
+					),
+					400,
+				)
+			}
 
 			// Validate required fields
 			if (
@@ -156,14 +192,20 @@ export async function createServer(
 
 			try {
 				const result = await pgHistory.search({
-					tables: body.tables,
-					query: body.query,
-					operation: body.operation,
-					dateFrom: body.dateFrom ? new Date(body.dateFrom) : undefined,
-					dateTo: body.dateTo ? new Date(body.dateTo) : undefined,
-					changedBy: body.changedBy,
-					limit: body.limit,
-					cursor: body.cursor,
+					tables: body.tables as string[],
+					query: body.query as string | undefined,
+					operation: body.operation as
+						| 'INSERT'
+						| 'UPDATE'
+						| 'DELETE'
+						| undefined,
+					dateFrom: body.dateFrom
+						? new Date(body.dateFrom as string)
+						: undefined,
+					dateTo: body.dateTo ? new Date(body.dateTo as string) : undefined,
+					changedBy: body.changedBy as string | undefined,
+					limit: body.limit as number | undefined,
+					cursor: body.cursor as string | undefined,
 				})
 				return c.json(result)
 			} catch (error) {
@@ -175,6 +217,65 @@ export async function createServer(
 
 				if (message.includes('must be') || message.includes('invalid')) {
 					return c.json(createErrorResponse('VALIDATION_ERROR', message), 400)
+				}
+
+				return c.json(createErrorResponse('DATABASE_ERROR', message), 500)
+			}
+		})
+
+		app.post('/api/history/revert', async (c) => {
+			const pgHistory = c.get('pgHistory')
+			if (!pgHistory) {
+				return c.json(
+					createErrorResponse('NOT_CONFIGURED', 'PgHistory not initialized'),
+					500,
+				)
+			}
+
+			let body: Record<string, unknown>
+			try {
+				body = await c.req.json()
+			} catch {
+				return c.json(
+					createErrorResponse(
+						'VALIDATION_ERROR',
+						'Invalid JSON in request body',
+					),
+					400,
+				)
+			}
+
+			const { table, recordId, auditEntryId, userId, metadata } = body as {
+				table?: string
+				recordId?: string
+				auditEntryId?: string
+				userId?: string
+				metadata?: Record<string, unknown>
+			}
+
+			if (!table || !recordId || !auditEntryId) {
+				return c.json(
+					createErrorResponse(
+						'VALIDATION_ERROR',
+						'table, recordId, and auditEntryId are required',
+					),
+					400,
+				)
+			}
+
+			try {
+				const userContext = userId ? { userId, metadata } : undefined
+				await pgHistory.revert(table, recordId, auditEntryId, userContext)
+				return c.json({ success: true })
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error)
+
+				if (message.includes('not configured')) {
+					return c.json(createErrorResponse('INVALID_TABLE', message), 400)
+				}
+
+				if (message.includes('not found')) {
+					return c.json(createErrorResponse('NOT_FOUND', message), 404)
 				}
 
 				return c.json(createErrorResponse('DATABASE_ERROR', message), 500)

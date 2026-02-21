@@ -90,7 +90,9 @@ export class Orchestrator {
 			durationMs: 0,
 		}
 
-		// Acquire advisory lock to prevent concurrent processing of the same table
+		// Acquire advisory lock to prevent concurrent processing of the same table.
+		// The lock is session-level: it persists as long as lockClient stays connected.
+		// We keep lockClient alive (not released) throughout processing so the lock holds.
 		const lockClient = await pool.connect()
 		try {
 			const lockResult = await lockClient.query(
@@ -102,6 +104,7 @@ export class Orchestrator {
 				console.log(
 					`[pg-history] Skipping ${tableName} — another instance is processing it`,
 				)
+				lockClient.release()
 				stats.durationMs = Date.now() - startTime
 				return stats
 			}
@@ -116,7 +119,8 @@ export class Orchestrator {
 			gracePeriodDate.setDate(gracePeriodDate.getDate() - this.gracePeriod)
 
 			if (options.dryRun) {
-				const archiveCount = await pool.query(
+				// Use lockClient for dry-run queries to avoid extra pool checkouts
+				const archiveCount = await lockClient.query(
 					`SELECT COUNT(*) as count
 					FROM audit_log
 					WHERE table_name = $1
@@ -125,7 +129,7 @@ export class Orchestrator {
 					[tableName, cutoff],
 				)
 
-				const softDeleteCount = await pool.query(
+				const softDeleteCount = await lockClient.query(
 					`SELECT COUNT(*) as count
 					FROM audit_log
 					WHERE table_name = $1
@@ -136,7 +140,7 @@ export class Orchestrator {
 					[tableName, gracePeriodDate],
 				)
 
-				const hardDeleteCount = await pool.query(
+				const hardDeleteCount = await lockClient.query(
 					`SELECT COUNT(*) as count
 					FROM audit_log
 					WHERE table_name = $1
