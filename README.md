@@ -9,6 +9,7 @@ PostgreSQL audit trails with automated S3 archival.
 
 - [Quick Start](#quick-start)
 - [Installation](#installation)
+- [Examples](#examples)
 - [Architecture](#architecture)
 - [API Reference](#api-reference)
 - [Server & REST API](#server--rest-api)
@@ -43,6 +44,23 @@ bun add pg-history
 Peer dependency: `pg`.
 
 Requires PostgreSQL 12+, Node.js 18+ or Bun.
+
+## Examples
+
+Working examples in [`examples/`](./examples). Each creates a temporary database, runs against real PostgreSQL, and cleans up after itself.
+
+```bash
+docker compose up -d
+bun examples/basic-audit-trail.ts
+```
+
+| Example | What it shows |
+|---------|---------------|
+| [basic-audit-trail.ts](./examples/basic-audit-trail.ts) | Setup, INSERT/UPDATE/DELETE tracking, history retrieval |
+| [user-tracking.ts](./examples/user-tracking.ts) | `setUser()`, `withUser()`, metadata attribution, search by user |
+| [search-and-revert.ts](./examples/search-and-revert.ts) | JSONB containment search, text search, filtering, revert with audit trail |
+| [multi-table-tracking.ts](./examples/multi-table-tracking.ts) | Multiple related tables, composite primary keys, cross-table search |
+| [rest-api-server.ts](./examples/rest-api-server.ts) | Hono REST API server with history endpoints |
 
 ## Architecture
 
