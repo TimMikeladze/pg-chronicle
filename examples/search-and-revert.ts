@@ -3,7 +3,7 @@
  * Search & Revert
  *
  * Demonstrates: JSONB containment search, text search,
- * filtering by operation/date/user, and reverting a record
+ * filtering by operation/date, and reverting a record
  * to a previous state.
  *
  * Run:
@@ -42,34 +42,24 @@ async function main() {
 		await history.setup()
 
 		// ── Seed some data ───────────────────────────────────────
-		await history.withUser('system', undefined, async (client) => {
-			await client.query(
-				`INSERT INTO orders (customer, total, status) VALUES ($1, $2, $3)`,
-				['Alice', 150.0, 'pending'],
-			)
-			await client.query(
-				`INSERT INTO orders (customer, total, status) VALUES ($1, $2, $3)`,
-				['Bob', 89.5, 'pending'],
-			)
-		})
+		await pool.query(
+			`INSERT INTO orders (customer, total, status) VALUES ($1, $2, $3)`,
+			['Alice', 150.0, 'pending'],
+		)
+		await pool.query(
+			`INSERT INTO orders (customer, total, status) VALUES ($1, $2, $3)`,
+			['Bob', 89.5, 'pending'],
+		)
 
-		await history.withUser('fulfillment-worker', undefined, async (client) => {
-			await client.query(
-				`UPDATE orders SET status = 'shipped' WHERE customer = 'Alice'`,
-			)
-			await client.query(
-				`UPDATE orders SET status = 'shipped' WHERE customer = 'Bob'`,
-			)
-		})
+		await pool.query(
+			`UPDATE orders SET status = 'shipped' WHERE customer = 'Alice'`,
+		)
+		await pool.query(
+			`UPDATE orders SET status = 'shipped' WHERE customer = 'Bob'`,
+		)
 
-		await history.withUser(
-			'admin',
-			{ reason: 'customer complaint' },
-			async (client) => {
-				await client.query(
-					`UPDATE orders SET status = 'refunded', total = 0 WHERE customer = 'Alice'`,
-				)
-			},
+		await pool.query(
+			`UPDATE orders SET status = 'refunded', total = 0 WHERE customer = 'Alice'`,
 		)
 
 		console.log('=== JSONB containment search ===\n')
@@ -81,9 +71,7 @@ async function main() {
 		})
 		console.log(`Orders with status "refunded": ${refundedOrders.data.length}`)
 		for (const entry of refundedOrders.data) {
-			console.log(
-				`  ${entry.operation} order #${entry.recordId} by ${entry.changedBy}`,
-			)
+			console.log(`  ${entry.operation} order #${entry.recordId}`)
 		}
 
 		console.log('\n=== Text search ===\n')
@@ -102,14 +90,6 @@ async function main() {
 			operation: 'UPDATE',
 		})
 		console.log(`Total UPDATE entries: ${updates.data.length}`)
-
-		console.log('\n=== Filter by user ===\n')
-
-		const adminChanges = await history.search({
-			tables: ['orders'],
-			changedBy: 'admin',
-		})
-		console.log(`Changes by "admin": ${adminChanges.data.length}`)
 
 		// ── Revert Alice's order back to "shipped" state ─────────
 		console.log('\n=== Revert ===\n')
@@ -131,10 +111,7 @@ async function main() {
 			console.log(`  ${JSON.stringify(current.rows[0])}`)
 
 			console.log(`\nReverting order #1 to audit entry ${shippedEntry.id}...`)
-			await history.revert('orders', '1', shippedEntry.id, {
-				userId: 'support-agent',
-				metadata: { ticket: 'SUPPORT-1234' },
-			})
+			await history.revert('orders', '1', shippedEntry.id)
 
 			const after = await pool.query(`SELECT * FROM orders WHERE id = 1`)
 			console.log(`\nAfter revert:`)
@@ -146,8 +123,6 @@ async function main() {
 			if (revertEntry) {
 				console.log(`\nRevert audit entry:`)
 				console.log(`  operation: ${revertEntry.operation}`)
-				console.log(`  changedBy: ${revertEntry.changedBy}`)
-				console.log(`  metadata:  ${JSON.stringify(revertEntry.metadata)}`)
 			}
 		}
 

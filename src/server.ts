@@ -203,7 +203,6 @@ export async function createServer(
 						? new Date(body.dateFrom as string)
 						: undefined,
 					dateTo: body.dateTo ? new Date(body.dateTo as string) : undefined,
-					changedBy: body.changedBy as string | undefined,
 					limit: body.limit as number | undefined,
 					cursor: body.cursor as string | undefined,
 				})
@@ -245,12 +244,10 @@ export async function createServer(
 				)
 			}
 
-			const { table, recordId, auditEntryId, userId, metadata } = body as {
+			const { table, recordId, auditEntryId } = body as {
 				table?: string
 				recordId?: string
 				auditEntryId?: string
-				userId?: string
-				metadata?: Record<string, unknown>
 			}
 
 			if (!table || !recordId || !auditEntryId) {
@@ -264,8 +261,7 @@ export async function createServer(
 			}
 
 			try {
-				const userContext = userId ? { userId, metadata } : undefined
-				await pgHistory.revert(table, recordId, auditEntryId, userContext)
+				await pgHistory.revert(table, recordId, auditEntryId)
 				return c.json({ success: true })
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error)

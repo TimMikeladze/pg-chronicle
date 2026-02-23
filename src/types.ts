@@ -19,8 +19,6 @@ export interface AuditEntry {
 	changedAt: Date
 	oldData: Record<string, unknown> | null
 	newData: Record<string, unknown> | null
-	changedBy: string | null
-	metadata: Record<string, unknown> | null
 }
 
 export interface PaginatedResult<T> {
@@ -41,7 +39,6 @@ export interface SearchOptions {
 	operation?: 'INSERT' | 'UPDATE' | 'DELETE'
 	dateFrom?: Date
 	dateTo?: Date
-	changedBy?: string
 	limit?: number
 	cursor?: string
 }

@@ -117,9 +117,7 @@ export class PgHistoryArchiver {
         operation,
         changed_at,
         old_data,
-        new_data,
-        changed_by,
-        metadata
+        new_data
       FROM audit_log
       WHERE table_name = $1
         AND changed_at < $2

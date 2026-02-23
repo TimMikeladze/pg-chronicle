@@ -57,8 +57,7 @@ bun examples/basic-audit-trail.ts
 | Example | What it shows |
 |---------|---------------|
 | [basic-audit-trail.ts](./examples/basic-audit-trail.ts) | Setup, INSERT/UPDATE/DELETE tracking, history retrieval |
-| [user-tracking.ts](./examples/user-tracking.ts) | `setUser()`, `withUser()`, metadata attribution, search by user |
-| [search-and-revert.ts](./examples/search-and-revert.ts) | JSONB containment search, text search, filtering, revert with audit trail |
+| [search-and-revert.ts](./examples/search-and-revert.ts) | JSONB containment search, text search, filtering, revert |
 | [multi-table-tracking.ts](./examples/multi-table-tracking.ts) | Multiple related tables, composite primary keys, cross-table search |
 | [rest-api-server.ts](./examples/rest-api-server.ts) | Hono REST API server with history endpoints |
 
@@ -81,15 +80,12 @@ Your Table -> AFTER trigger -> audit_log (partitioned by table_name)
 | `changed_at` | `TIMESTAMPTZ` | Transaction timestamp |
 | `old_data` | `JSONB` | Previous row state |
 | `new_data` | `JSONB` | New row state |
-| `changed_by` | `TEXT` | User ID if set via `setUser()` |
-| `metadata` | `JSONB` | Custom metadata |
 
 ### Indexes
 
 - GIN on `old_data`, `new_data` for `@>` containment queries
 - B-tree on `(table_name, record_id, changed_at DESC)`
 - B-tree on `changed_at DESC`
-- B-tree on `changed_by`
 
 ### Primary Key Handling
 
@@ -129,44 +125,17 @@ Passing `connection` creates an internal Pool; `close()` ends it. Passing `pool`
 
 Creates `audit_log` table, partitions, indexes, and triggers. Idempotent.
 
-### `setUser(client: PoolClient, userId: string, metadata?: Record<string, unknown>): Promise<void>`
-
-Sets audit context on a client via `set_config(..., true)`. Scoped to the current transaction.
-
-```typescript
-const client = await pool.connect()
-await client.query('BEGIN')
-await history.setUser(client, 'user-123', { ip: '10.0.0.1' })
-await client.query('UPDATE users SET name = $1 WHERE id = $2', ['Bob', 1])
-await client.query('COMMIT')
-client.release()
-```
-
-### `clearUser(client: PoolClient): Promise<void>`
-
-Clears audit context on the client.
-
-### `withUser<T>(userId, metadata, fn): Promise<T>`
-
-Acquires a client, begins a transaction, sets user context, runs `fn`, commits or rolls back.
-
-```typescript
-await history.withUser('user-123', { ip: '10.0.0.1' }, async (client) => {
-  await client.query('UPDATE orders SET status = $1 WHERE id = $2', ['shipped', 42])
-})
-```
-
 ### `getHistory(tableName, recordId, options?): Promise<PaginatedResult<AuditEntry>>`
 
 Options: `limit` (default 50, max 1000), `cursor`, `order` (`'asc'` | `'desc'`).
 
 ### `search(options): Promise<PaginatedResult<AuditEntry>>`
 
-Options: `tables` (required), `query`, `operation`, `dateFrom`, `dateTo`, `changedBy`, `limit` (default 100, max 1000), `cursor`.
+Options: `tables` (required), `query`, `operation`, `dateFrom`, `dateTo`, `limit` (default 100, max 1000), `cursor`.
 
 If `query` looks like JSON (`{...}`), uses `@>` containment (GIN-indexed). Otherwise uses `ILIKE`.
 
-### `revert(tableName, recordId, auditEntryId, userContext?): Promise<void>`
+### `revert(tableName, recordId, auditEntryId): Promise<void>`
 
 Restores a record to the state in the given audit entry. Runs in a single transaction. Requires a primary key.
 
@@ -175,8 +144,6 @@ Restores a record to the state in the given audit entry. Runs in a single transa
 | `INSERT` | Deletes the row |
 | `DELETE` | Re-inserts from `old_data` |
 | `UPDATE` | Restores `old_data` values |
-
-The revert is itself audited with `metadata.revertedFrom`.
 
 ### `teardown(): Promise<void>`
 
@@ -197,8 +164,6 @@ interface AuditEntry {
   changedAt: Date
   oldData: Record<string, unknown> | null
   newData: Record<string, unknown> | null
-  changedBy: string | null
-  metadata: Record<string, unknown> | null
 }
 
 interface PaginatedResult<T> {
@@ -351,7 +316,6 @@ test/
   get-history.test.ts            Pagination
   search.test.ts                 Filtering
   revert.test.ts                 Revert ops
-  user-tracking.test.ts          setUser/withUser
   validation.test.ts             Input validation
   input-validation.test.ts       SQL injection
   security.test.ts               Security

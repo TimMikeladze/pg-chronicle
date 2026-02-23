@@ -136,32 +136,4 @@ describe('PgHistory.search', () => {
 
 		expect(page2.data.length).toBe(2)
 	})
-
-	test('should filter by changedBy', async () => {
-		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
-		await audit.setup()
-
-		await audit.withUser('user-123', { action: 'api' }, async (client) => {
-			await client.query(
-				`INSERT INTO users (name, email) VALUES ('Frank', 'frank@example.com')`,
-			)
-		})
-
-		await audit.withUser('user-456', { action: 'api' }, async (client) => {
-			await client.query(
-				`INSERT INTO users (name, email) VALUES ('Grace', 'grace@example.com')`,
-			)
-		})
-
-		await new Promise((resolve) => setTimeout(resolve, 100))
-
-		const result = await audit.search({
-			tables: ['users'],
-			changedBy: 'user-123',
-		})
-
-		expect(result.data.length).toBe(1)
-		expect(result.data[0]?.newData?.name).toBe('Frank')
-	})
 })

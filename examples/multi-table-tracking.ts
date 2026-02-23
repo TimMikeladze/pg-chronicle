@@ -64,43 +64,34 @@ async function main() {
 		console.log('Tracking: customers, invoices, customer_tags\n')
 
 		// ── Make changes across tables ───────────────────────────
-		await history.withUser('sales-rep', undefined, async (client) => {
-			await client.query(
-				`INSERT INTO customers (name, tier) VALUES ('Acme Corp', 'pro')`,
-			)
-			await client.query(
-				`INSERT INTO invoices (customer_id, amount) VALUES (1, 500.00)`,
-			)
-			await client.query(`INSERT INTO customer_tags VALUES (1, 'enterprise')`)
-			await client.query(`INSERT INTO customer_tags VALUES (1, 'priority')`)
-		})
-		console.log('sales-rep: created customer + invoice + 2 tags')
+		await pool.query(
+			`INSERT INTO customers (name, tier) VALUES ('Acme Corp', 'pro')`,
+		)
+		await pool.query(
+			`INSERT INTO invoices (customer_id, amount) VALUES (1, 500.00)`,
+		)
+		await pool.query(`INSERT INTO customer_tags VALUES (1, 'enterprise')`)
+		await pool.query(`INSERT INTO customer_tags VALUES (1, 'priority')`)
+		console.log('Created customer + invoice + 2 tags')
 
-		await history.withUser('billing', undefined, async (client) => {
-			await client.query(`UPDATE invoices SET status = 'sent' WHERE id = 1`)
-			await client.query(`UPDATE invoices SET status = 'paid' WHERE id = 1`)
-		})
-		console.log('billing: invoice sent → paid')
+		await pool.query(`UPDATE invoices SET status = 'sent' WHERE id = 1`)
+		await pool.query(`UPDATE invoices SET status = 'paid' WHERE id = 1`)
+		console.log('Invoice sent → paid')
 
-		await history.withUser('admin', undefined, async (client) => {
-			await client.query(
-				`DELETE FROM customer_tags WHERE customer_id = 1 AND tag = 'priority'`,
-			)
-			await client.query(
-				`UPDATE customers SET tier = 'enterprise' WHERE id = 1`,
-			)
-		})
-		console.log('admin: removed tag, upgraded tier\n')
+		await pool.query(
+			`DELETE FROM customer_tags WHERE customer_id = 1 AND tag = 'priority'`,
+		)
+		await pool.query(`UPDATE customers SET tier = 'enterprise' WHERE id = 1`)
+		console.log('Removed tag, upgraded tier\n')
 
 		// ── Cross-table search ───────────────────────────────────
-		console.log('=== Cross-table search: all changes by sales-rep ===\n')
+		console.log('=== Cross-table search: all changes ===\n')
 
-		const salesChanges = await history.search({
+		const allChanges = await history.search({
 			tables: ['customers', 'invoices', 'customer_tags'],
-			changedBy: 'sales-rep',
 		})
 
-		for (const entry of salesChanges.data) {
+		for (const entry of allChanges.data) {
 			console.log(
 				`  ${entry.tableName.padEnd(15)} ${entry.operation.padEnd(6)} record=${entry.recordId}`,
 			)

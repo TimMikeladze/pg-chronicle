@@ -51,18 +51,6 @@ export async function writeParquet(
 			),
 			type: 'STRING' as const,
 		},
-		{
-			name: 'changed_by',
-			data: records.map((r) => (r.changed_by as string | null) ?? null),
-			type: 'STRING' as const,
-		},
-		{
-			name: 'metadata',
-			data: records.map((r) =>
-				r.metadata ? JSON.stringify(r.metadata) : null,
-			),
-			type: 'STRING' as const,
-		},
 	]
 
 	await parquetWriteFile({
@@ -94,10 +82,6 @@ export async function readParquet(
 		new_data:
 			record.new_data && typeof record.new_data === 'string'
 				? JSON.parse(record.new_data)
-				: null,
-		metadata:
-			record.metadata && typeof record.metadata === 'string'
-				? JSON.parse(record.metadata)
 				: null,
 		changed_at: new Date(record.changed_at as number | string),
 	}))

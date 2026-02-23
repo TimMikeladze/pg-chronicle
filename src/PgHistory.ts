@@ -1,4 +1,4 @@
-import type { Pool, PoolClient } from 'pg'
+import type { Pool } from 'pg'
 import type {
 	AuditEntry,
 	GetHistoryOptions,
@@ -233,8 +233,6 @@ export class PgHistory {
 				changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 				old_data JSONB,
 				new_data JSONB,
-				changed_by TEXT,
-				metadata JSONB,
 				PRIMARY KEY (id, table_name)
 			) PARTITION BY LIST (table_name)
 		`)
@@ -290,11 +288,6 @@ export class PgHistory {
 			ON audit_log (table_name, record_id, changed_at DESC)
 		`)
 
-		await this.pool.query(`
-			CREATE INDEX IF NOT EXISTS idx_audit_changed_by
-			ON audit_log (changed_by)
-		`)
-
 		// Create triggers for each table with table-specific trigger functions
 		for (const tableName of this.tables) {
 			const triggerName = `audit_trigger_${tableName}`
@@ -325,34 +318,18 @@ export class PgHistory {
 				functionBody = `
 				CREATE OR REPLACE FUNCTION "${funcName}"()
 				RETURNS TRIGGER AS $$
-				DECLARE
-					v_user_id TEXT;
-					v_metadata JSONB;
 				BEGIN
-					-- Get user context from session variables if set
-					BEGIN
-						v_user_id := NULLIF(current_setting('audit.user_id', true), '');
-						IF current_setting('audit.user_metadata', true) != '' THEN
-							v_metadata := current_setting('audit.user_metadata', true)::jsonb;
-						ELSE
-							v_metadata := NULL;
-						END IF;
-					EXCEPTION WHEN OTHERS THEN
-						v_user_id := NULL;
-						v_metadata := NULL;
-					END;
-
 					IF (TG_OP = 'DELETE') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, old_data, changed_by, metadata)
-						VALUES (TG_TABLE_NAME, md5(row_to_json(OLD)::text), TG_OP, to_jsonb(OLD), v_user_id, v_metadata);
+						INSERT INTO audit_log (table_name, record_id, operation, old_data)
+						VALUES (TG_TABLE_NAME, md5(row_to_json(OLD)::text), TG_OP, to_jsonb(OLD));
 						RETURN OLD;
 					ELSIF (TG_OP = 'UPDATE') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, old_data, new_data, changed_by, metadata)
-						VALUES (TG_TABLE_NAME, md5(row_to_json(NEW)::text), TG_OP, to_jsonb(OLD), to_jsonb(NEW), v_user_id, v_metadata);
+						INSERT INTO audit_log (table_name, record_id, operation, old_data, new_data)
+						VALUES (TG_TABLE_NAME, md5(row_to_json(NEW)::text), TG_OP, to_jsonb(OLD), to_jsonb(NEW));
 						RETURN NEW;
 					ELSIF (TG_OP = 'INSERT') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, new_data, changed_by, metadata)
-						VALUES (TG_TABLE_NAME, md5(row_to_json(NEW)::text), TG_OP, to_jsonb(NEW), v_user_id, v_metadata);
+						INSERT INTO audit_log (table_name, record_id, operation, new_data)
+						VALUES (TG_TABLE_NAME, md5(row_to_json(NEW)::text), TG_OP, to_jsonb(NEW));
 						RETURN NEW;
 					END IF;
 				END;
@@ -364,34 +341,18 @@ export class PgHistory {
 				functionBody = `
 				CREATE OR REPLACE FUNCTION "${funcName}"()
 				RETURNS TRIGGER AS $$
-				DECLARE
-					v_user_id TEXT;
-					v_metadata JSONB;
 				BEGIN
-					-- Get user context from session variables if set
-					BEGIN
-						v_user_id := NULLIF(current_setting('audit.user_id', true), '');
-						IF current_setting('audit.user_metadata', true) != '' THEN
-							v_metadata := current_setting('audit.user_metadata', true)::jsonb;
-						ELSE
-							v_metadata := NULL;
-						END IF;
-					EXCEPTION WHEN OTHERS THEN
-						v_user_id := NULL;
-						v_metadata := NULL;
-					END;
-
 					IF (TG_OP = 'DELETE') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, old_data, changed_by, metadata)
-						VALUES (TG_TABLE_NAME, OLD."${pkCol}"::text, TG_OP, to_jsonb(OLD), v_user_id, v_metadata);
+						INSERT INTO audit_log (table_name, record_id, operation, old_data)
+						VALUES (TG_TABLE_NAME, OLD."${pkCol}"::text, TG_OP, to_jsonb(OLD));
 						RETURN OLD;
 					ELSIF (TG_OP = 'UPDATE') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, old_data, new_data, changed_by, metadata)
-						VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, to_jsonb(OLD), to_jsonb(NEW), v_user_id, v_metadata);
+						INSERT INTO audit_log (table_name, record_id, operation, old_data, new_data)
+						VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, to_jsonb(OLD), to_jsonb(NEW));
 						RETURN NEW;
 					ELSIF (TG_OP = 'INSERT') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, new_data, changed_by, metadata)
-						VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, to_jsonb(NEW), v_user_id, v_metadata);
+						INSERT INTO audit_log (table_name, record_id, operation, new_data)
+						VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, to_jsonb(NEW));
 						RETURN NEW;
 					END IF;
 				END;
@@ -408,34 +369,18 @@ export class PgHistory {
 				functionBody = `
 				CREATE OR REPLACE FUNCTION "${funcName}"()
 				RETURNS TRIGGER AS $$
-				DECLARE
-					v_user_id TEXT;
-					v_metadata JSONB;
 				BEGIN
-					-- Get user context from session variables if set
-					BEGIN
-						v_user_id := NULLIF(current_setting('audit.user_id', true), '');
-						IF current_setting('audit.user_metadata', true) != '' THEN
-							v_metadata := current_setting('audit.user_metadata', true)::jsonb;
-						ELSE
-							v_metadata := NULL;
-						END IF;
-					EXCEPTION WHEN OTHERS THEN
-						v_user_id := NULL;
-						v_metadata := NULL;
-					END;
-
 					IF (TG_OP = 'DELETE') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, old_data, changed_by, metadata)
-						VALUES (TG_TABLE_NAME, ${pkExpressionsOld}, TG_OP, to_jsonb(OLD), v_user_id, v_metadata);
+						INSERT INTO audit_log (table_name, record_id, operation, old_data)
+						VALUES (TG_TABLE_NAME, ${pkExpressionsOld}, TG_OP, to_jsonb(OLD));
 						RETURN OLD;
 					ELSIF (TG_OP = 'UPDATE') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, old_data, new_data, changed_by, metadata)
-						VALUES (TG_TABLE_NAME, ${pkExpressionsNew}, TG_OP, to_jsonb(OLD), to_jsonb(NEW), v_user_id, v_metadata);
+						INSERT INTO audit_log (table_name, record_id, operation, old_data, new_data)
+						VALUES (TG_TABLE_NAME, ${pkExpressionsNew}, TG_OP, to_jsonb(OLD), to_jsonb(NEW));
 						RETURN NEW;
 					ELSIF (TG_OP = 'INSERT') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, new_data, changed_by, metadata)
-						VALUES (TG_TABLE_NAME, ${pkExpressionsNew}, TG_OP, to_jsonb(NEW), v_user_id, v_metadata);
+						INSERT INTO audit_log (table_name, record_id, operation, new_data)
+						VALUES (TG_TABLE_NAME, ${pkExpressionsNew}, TG_OP, to_jsonb(NEW));
 						RETURN NEW;
 					END IF;
 				END;
@@ -468,75 +413,6 @@ export class PgHistory {
 					`[pg-history] Trigger ${triggerName} already exists, skipping`,
 				)
 			}
-		}
-	}
-
-	async setUser(
-		client: PoolClient,
-		userId: string,
-		metadata?: Record<string, unknown>,
-	): Promise<void> {
-		this.validateStringInput(userId, 'userId', 255)
-
-		// Transaction-local set_config (true) — scoped to this client's transaction
-		await client.query('SELECT set_config($1, $2, true)', [
-			'audit.user_id',
-			userId,
-		])
-
-		if (metadata) {
-			let metadataJson: string
-			try {
-				metadataJson = JSON.stringify(metadata)
-			} catch (error) {
-				throw new Error(
-					`Failed to serialize user metadata: ${error instanceof Error ? error.message : String(error)}`,
-				)
-			}
-
-			if (metadataJson.length > 10000) {
-				throw new Error(
-					'User metadata exceeds maximum size of 10000 characters',
-				)
-			}
-
-			await client.query('SELECT set_config($1, $2, true)', [
-				'audit.user_metadata',
-				metadataJson,
-			])
-		} else {
-			await client.query('SELECT set_config($1, $2, true)', [
-				'audit.user_metadata',
-				'',
-			])
-		}
-	}
-
-	async clearUser(client: PoolClient): Promise<void> {
-		await client.query('SELECT set_config($1, $2, true)', ['audit.user_id', ''])
-		await client.query('SELECT set_config($1, $2, true)', [
-			'audit.user_metadata',
-			'',
-		])
-	}
-
-	async withUser<T>(
-		userId: string,
-		metadata: Record<string, unknown> | undefined,
-		fn: (client: PoolClient) => Promise<T>,
-	): Promise<T> {
-		const client = await this.pool.connect()
-		try {
-			await client.query('BEGIN')
-			await this.setUser(client, userId, metadata)
-			const result = await fn(client)
-			await client.query('COMMIT')
-			return result
-		} catch (error) {
-			await client.query('ROLLBACK')
-			throw error
-		} finally {
-			client.release()
 		}
 	}
 
@@ -618,8 +494,6 @@ export class PgHistory {
 			changed_at: string
 			old_data: Record<string, unknown> | null
 			new_data: Record<string, unknown> | null
-			changed_by: string | null
-			metadata: Record<string, unknown> | null
 		}>
 		const hasMore = rows.length > limit
 		const data = rows.slice(0, limit)
@@ -632,8 +506,6 @@ export class PgHistory {
 			changedAt: new Date(row.changed_at),
 			oldData: row.old_data,
 			newData: row.new_data,
-			changedBy: row.changed_by,
-			metadata: row.metadata,
 		}))
 
 		const lastItem = data[data.length - 1]
@@ -667,11 +539,6 @@ export class PgHistory {
 		// Validate cursor if provided
 		if (options.cursor) {
 			this.validateStringInput(options.cursor, 'cursor', 100)
-		}
-
-		// Validate changedBy if provided
-		if (options.changedBy) {
-			this.validateStringInput(options.changedBy, 'changedBy', 255)
 		}
 
 		// Build WHERE conditions
@@ -740,13 +607,6 @@ export class PgHistory {
 			paramIndex++
 		}
 
-		// Changed by filter
-		if (options.changedBy) {
-			conditions.push(`changed_by = $${paramIndex}`)
-			params.push(options.changedBy)
-			paramIndex++
-		}
-
 		// Cursor filter
 		if (options.cursor) {
 			conditions.push(`id < $${paramIndex}`)
@@ -807,7 +667,6 @@ export class PgHistory {
 		tableName: string,
 		recordId: string,
 		auditEntryId: string,
-		userContext?: { userId: string; metadata?: Record<string, unknown> },
 	): Promise<void> {
 		if (!this.tables.includes(tableName)) {
 			throw new Error(
@@ -820,10 +679,6 @@ export class PgHistory {
 		const client = await this.pool.connect()
 		try {
 			await client.query('BEGIN')
-
-			if (userContext) {
-				await this.setUser(client, userContext.userId, userContext.metadata)
-			}
 
 			// Get the audit entry
 			const entryResult = await client.query(
@@ -948,32 +803,6 @@ export class PgHistory {
 						`Failed to revert record ${recordId} in table ${tableName} - no rows updated`,
 					)
 				}
-			}
-
-			// Mark the newly created audit entry as a revert
-			const markedRows = await client.query(
-				`UPDATE audit_log
-				SET metadata = jsonb_set(
-					COALESCE(metadata, '{}'::jsonb),
-					'{revertedFrom}',
-					to_jsonb($1::text)
-				)
-				WHERE id = (
-					SELECT id FROM audit_log
-					WHERE table_name = $2
-					AND record_id = $3
-					AND metadata->>'revertedFrom' IS NULL
-					ORDER BY id DESC
-					LIMIT 1
-				)
-				RETURNING id`,
-				[auditEntryId, tableName, recordId],
-			)
-
-			if (!markedRows.rows || markedRows.rows.length === 0) {
-				console.warn(
-					`[pg-history] Failed to mark audit entry as revert for ${tableName}:${recordId}`,
-				)
 			}
 
 			await client.query('COMMIT')
