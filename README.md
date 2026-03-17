@@ -13,8 +13,10 @@ PostgreSQL audit trails with automated S3 archival.
 - [Architecture](#architecture)
 - [API Reference](#api-reference)
 - [Server & REST API](#server--rest-api)
+- [Deployment](#deployment)
 - [Archiver](#archiver)
 - [Environment Variables](#environment-variables)
+- [Error Handling](#error-handling)
 - [Testing](#testing)
 - [Limitations](#limitations)
 
@@ -25,15 +27,37 @@ import { Pool } from 'pg'
 import { PgHistory } from 'pg-history'
 
 const pool = new Pool({ connectionString: 'postgres://localhost:5432/mydb' })
-const history = new PgHistory({ pool, tables: ['users', 'orders'] })
-
+const history = new PgHistory({ pool, tables: ['users'] })
 await history.setup()
 
-// Triggers now capture all INSERT/UPDATE/DELETE on tracked tables.
+// That's it. Every INSERT/UPDATE/DELETE on 'users' is now audited automatically.
 
+// Normal database operations — triggers capture everything
+await pool.query(`INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'alice@example.com')`)
+await pool.query(`UPDATE users SET name = 'Alice Smith' WHERE id = 1`)
+await pool.query(`UPDATE users SET email = 'alice.smith@example.com' WHERE id = 1`)
+
+// See the full history of changes
 const result = await history.getHistory('users', '1')
-await history.revert('users', '1', result.data[1].id)
+// [
+//   { operation: 'UPDATE', oldData: { name: 'Alice Smith', email: 'alice@example.com' }, ... },
+//   { operation: 'UPDATE', oldData: { name: 'Alice', ... }, newData: { name: 'Alice Smith', ... } },
+//   { operation: 'INSERT', newData: { id: 1, name: 'Alice', email: 'alice@example.com' } },
+// ]
+
+// Search across all audited data (GIN-indexed JSON containment)
+const found = await history.search({
+  tables: ['users'],
+  query: '{"email": "alice@example.com"}',
+})
+
+// Revert to a previous state
+await history.revert('users', '1', result.data[2].id) // back to original INSERT state
+
+await history.close()
 ```
+
+3 lines to set up, then query with `getHistory` / `search` / `revert`.
 
 ## Installation
 
@@ -61,13 +85,51 @@ bun examples/basic-audit-trail.ts
 | [multi-table-tracking.ts](./examples/multi-table-tracking.ts) | Multiple related tables, composite primary keys, cross-table search |
 | [rest-api-server.ts](./examples/rest-api-server.ts) | Hono REST API server with history endpoints |
 
+## How It Works
+
+pg-history uses PostgreSQL's own trigger system to capture every change. Nothing runs in your application — the database does all the work.
+
+### 1. Setup installs triggers
+
+When you call `history.setup()`, pg-history creates:
+- A partitioned `audit_log` table (one partition per tracked table for fast queries)
+- An `AFTER` trigger on each tracked table
+- GIN indexes on the JSONB columns for fast search
+
+The triggers run inside PostgreSQL. Once installed, **every write is audited regardless of what connects** — your app, a migration script, `psql`, another microservice, or a serverless function. If it touches the table, it gets logged.
+
+### 2. Triggers capture changes in the same transaction
+
+When a row is inserted, updated, or deleted, the trigger fires and writes to `audit_log` within the **same transaction**. If the write fails, the audit entry is rolled back too. If the audit insert fails, the original write is rolled back. This guarantees no operation succeeds without being recorded.
+
+```
+BEGIN
+  UPDATE users SET name = 'Bob' WHERE id = 1;    -- your write
+  INSERT INTO audit_log (...);                     -- trigger fires automatically
+COMMIT                                             -- both succeed or both fail
+```
+
+### 3. Query and revert through the library
+
+The `PgHistory` class provides methods to read back the audit trail:
+- **`getHistory(table, recordId)`** — full change history for one record, cursor-paginated
+- **`search({ tables, query, ... })`** — search across tables by JSON fields or text, with date and operation filters
+- **`revert(table, recordId, auditEntryId)`** — restore a record to any previous state in a single transaction
+
+### 4. Archival lifecycle (optional)
+
+For tables that accumulate millions of audit records, the archiver moves old data to S3 as compressed Parquet files:
+
+```
+Day 0    Record written to audit_log
+Day 90   Upload to S3 as Parquet → mark archived_at
+Day 90   Soft delete (only if S3 backup confirmed)
+Day 97   Hard delete (only after verifying S3 file exists)
+```
+
+Advisory locks prevent concurrent archival of the same table. Each step verifies the previous one succeeded before proceeding — no data is deleted without a confirmed backup.
+
 ## Architecture
-
-`AFTER` triggers on tracked tables write to a partitioned `audit_log` table within the same transaction.
-
-```
-Your Table -> AFTER trigger -> audit_log (partitioned by table_name)
-```
 
 ### audit_log Schema
 
@@ -105,7 +167,9 @@ src/
   server.ts             Hono REST API
   schema.ts             Archiver DDL
   parquet.ts            Parquet read/write (hyparquet, Snappy)
+  errors.ts             Typed error classes
   types.ts              TypeScript interfaces
+  vercel.ts             Vercel serverless entry point
 ```
 
 ## API Reference
@@ -123,7 +187,9 @@ Passing `connection` creates an internal Pool; `close()` ends it. Passing `pool`
 
 ### `setup(): Promise<void>`
 
-Creates `audit_log` table, partitions, indexes, and triggers. Idempotent.
+Creates `audit_log` table, partitions, indexes, and triggers. Idempotent — safe to call on every app startup.
+
+**Important:** Must be called before `getHistory()`, `search()`, or `revert()`. These methods throw `SetupRequiredError` if `setup()` hasn't been called.
 
 ### `getHistory(tableName, recordId, options?): Promise<PaginatedResult<AuditEntry>>`
 
@@ -133,7 +199,7 @@ Options: `limit` (default 50, max 1000), `cursor`, `order` (`'asc'` | `'desc'`).
 
 Options: `tables` (required), `query`, `operation`, `dateFrom`, `dateTo`, `limit` (default 100, max 1000), `cursor`.
 
-If `query` looks like JSON (`{...}`), uses `@>` containment (GIN-indexed). Otherwise uses `ILIKE`.
+If `query` looks like JSON (`{...}`), uses `@>` containment (GIN-indexed). Otherwise falls back to `ILIKE` text search with a 5-second statement timeout to prevent runaway queries on large tables.
 
 ### `revert(tableName, recordId, auditEntryId): Promise<void>`
 
@@ -196,19 +262,165 @@ Bun.serve({ port: 3001, fetch: app.fetch })
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/health` | No | `{ status: "ok" }` |
+| `GET` | `/health` | No | Health check with archival status |
 | `GET` | `/openapi` | No | OpenAPI spec |
 | `GET` | `/api/stats` | JWT | Archival stats (requires `enableArchiver`) |
 | `GET` | `/api/history/:table/:recordId` | JWT | Record history |
 | `POST` | `/api/history/search` | JWT | Search history |
 | `POST` | `/api/history/revert` | JWT | Revert a record |
+| `POST` | `/api/archive` | Cron secret | Trigger archival on demand |
 
 Set `PG_HISTORY_JWT_SECRET` to enable JWT auth on `/api/*`. Public routes (`/health`, `/openapi`) are unprotected.
+
+The `/api/archive` endpoint is authenticated separately via `CRON_SECRET` or `archiveCronSecret` config (see [Vercel Cron](#vercel-cron)).
+
+### Health Check
+
+The `/health` endpoint returns archival status when the archiver is enabled:
+
+```json
+{
+  "status": "ok",
+  "archival": {
+    "status": "completed",
+    "lastError": null,
+    "attempts": 1,
+    "lastCompletedAt": "2026-03-17T..."
+  }
+}
+```
+
+`status` is `"degraded"` if archival has failed.
 
 ### Standalone
 
 ```bash
 PG_HISTORY_DATABASE_URL=postgres://localhost:5432/mydb bun run src/server.ts
+```
+
+## Deployment
+
+### Fly.io
+
+A `Dockerfile` and `fly.toml` are included. The server runs as a long-lived process with background archival.
+
+```bash
+fly secrets set PG_HISTORY_DATABASE_URL=postgres://...
+fly secrets set PG_HISTORY_JWT_SECRET=your-secret
+fly secrets set PG_HISTORY_S3_BUCKET=audit-archives
+fly secrets set PG_HISTORY_S3_ENDPOINT=https://...
+fly secrets set PG_HISTORY_S3_ACCESS_KEY_ID=...
+fly secrets set PG_HISTORY_S3_SECRET_ACCESS_KEY=...
+fly deploy
+```
+
+The `fly.toml` is configured with:
+- `min_machines_running = 1` — ensures archival always runs
+- `kill_timeout = 30s` — gives in-flight archival time to finish on deploys
+- `PORT = 8080` — matches Fly's internal port expectation
+
+Archival runs immediately on startup and then on a periodic interval (default: every hour, configurable via `PG_HISTORY_ARCHIVAL_INTERVAL_MS`).
+
+### Vercel (Serverless)
+
+pg-history works in serverless environments. The audit triggers live in PostgreSQL, so auditing works regardless of runtime.
+
+**Option A: Use the library directly in your API routes**
+
+```typescript
+// app/api/history/route.ts
+import { Pool } from 'pg'
+import { PgHistory } from 'pg-history'
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 })
+const history = new PgHistory({ pool, tables: ['users', 'orders'] })
+const setupDone = history.setup()
+
+export async function GET(req: Request) {
+  await setupDone
+  const url = new URL(req.url)
+  const table = url.searchParams.get('table')!
+  const recordId = url.searchParams.get('recordId')!
+  const result = await history.getHistory(table, recordId)
+  return Response.json(result)
+}
+```
+
+**Option B: Deploy the full REST API**
+
+```typescript
+// api/[[...route]].ts
+export { GET, POST } from 'pg-history/vercel'
+```
+
+Set environment variables in Vercel:
+
+```
+PG_HISTORY_DATABASE_URL=postgres://...
+PG_HISTORY_TABLES=users,orders
+PG_HISTORY_JWT_SECRET=your-secret
+```
+
+The Vercel entry point automatically enables `serverless: true`, which:
+- Skips background archival (use [Vercel Cron](#vercel-cron) instead)
+- Skips in-memory rate limiting (handle at API gateway / Vercel Firewall level)
+- Uses a small pool size (default 3) to stay within connection limits
+
+#### Vercel Cron
+
+Since there's no persistent process in serverless, archival needs an external trigger. Add to `vercel.json`:
+
+```json
+{
+  "crons": [
+    {
+      "path": "/api/archive",
+      "schedule": "0 */6 * * *"
+    }
+  ]
+}
+```
+
+This calls `POST /api/archive` every 6 hours. Set `CRON_SECRET` in your Vercel environment variables — Vercel automatically sends it as `Authorization: Bearer <secret>` on cron requests.
+
+Also set the S3 variables to enable archival:
+
+```
+PG_HISTORY_S3_BUCKET=audit-archives
+PG_HISTORY_S3_ENDPOINT=https://...
+PG_HISTORY_S3_ACCESS_KEY_ID=...
+PG_HISTORY_S3_SECRET_ACCESS_KEY=...
+CRON_SECRET=your-cron-secret
+```
+
+**Vercel plan limits:**
+- **Hobby:** Cron minimum interval 24h, function timeout 10s
+- **Pro:** Cron minimum interval 1h, function timeout 60s
+
+If archival takes longer than the function timeout, it will be interrupted. The design is retry-safe — unfinished records stay unarchived and get picked up on the next run. Set `PG_HISTORY_BATCH_SIZE` to a lower value (1000-2000) to keep individual runs within timeout limits.
+
+### Serverless Considerations
+
+| Concern | Impact | Mitigation |
+|---------|--------|------------|
+| Connection pooling | Each invocation may create a pool | Use an external pooler (PgBouncer, Neon, Supabase, RDS Proxy). Set `PG_HISTORY_POOL_MAX` low (2-3). |
+| No background process | Archival doesn't run automatically | Use cron triggers (`POST /api/archive`) via Vercel Cron, AWS EventBridge, etc. |
+| Cold starts | `setup()` runs ~10 idempotent DDL queries | ~5ms overhead. Cache the setup promise at module level. |
+| Rate limiting | In-memory rate limiter resets per invocation | Use platform-level rate limiting (API Gateway, Vercel Firewall, Cloudflare). |
+
+### Other Platforms
+
+The Hono app returned by `createServer()` works with any platform Hono supports:
+
+```typescript
+// AWS Lambda
+import { handle } from 'hono/aws-lambda'
+const app = await createServer({ pool, serverless: true, ... })
+export const handler = handle(app)
+
+// Cloudflare Workers
+const app = await createServer({ pool, serverless: true, ... })
+export default app
 ```
 
 ## Archiver
@@ -273,13 +485,43 @@ const stats = await orchestrator.run(pool, { dryRun: true })
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `PG_HISTORY_DATABASE_URL` | Standalone server | PostgreSQL connection string |
-| `PG_HISTORY_PORT` | No | Server port (default `3001`) |
+| `PG_HISTORY_PORT` | No | Server port (also reads `PORT`, default `3001`) |
+| `PG_HISTORY_POOL_MAX` | No | Max pool connections (default `5`, use `2-3` for serverless) |
 | `PG_HISTORY_JWT_SECRET` | No | JWT auth on `/api/*` |
+| `PG_HISTORY_TABLES` | Vercel entry point | Comma-separated table names |
 | `PG_HISTORY_S3_ENDPOINT` | Archival | S3 endpoint |
 | `PG_HISTORY_S3_ACCESS_KEY_ID` | Archival | S3 access key |
 | `PG_HISTORY_S3_SECRET_ACCESS_KEY` | Archival | S3 secret key |
 | `PG_HISTORY_S3_REGION` | Archival | S3 region (default `us-east-1`) |
 | `PG_HISTORY_S3_BUCKET` | Archival | S3 bucket |
+| `PG_HISTORY_ARCHIVAL_INTERVAL_MS` | No | Background archival interval (default `3600000` / 1 hour) |
+| `PG_HISTORY_RETENTION_DAYS` | No | Default retention period (default `90`) |
+| `PG_HISTORY_GRACE_PERIOD_DAYS` | No | Grace period before hard delete (default `7`) |
+| `PG_HISTORY_BATCH_SIZE` | No | Archival batch size (default `10000`) |
+| `CRON_SECRET` | Vercel cron | Protects `POST /api/archive` endpoint |
+
+## Error Handling
+
+pg-history exports typed error classes for programmatic error handling:
+
+```typescript
+import {
+  PgHistoryError,          // Base class for all pg-history errors
+  TableNotConfiguredError,  // Table not in configured tables list
+  SetupRequiredError,       // setup() not called before query
+  AuditEntryNotFoundError,  // Audit entry not found for revert
+  ValidationError,          // Input validation failure
+  RevertError,              // Revert operation failure
+} from 'pg-history'
+
+try {
+  await history.getHistory('unknown_table', '1')
+} catch (error) {
+  if (error instanceof TableNotConfiguredError) {
+    // handle specifically
+  }
+}
+```
 
 ## Testing
 
@@ -339,6 +581,7 @@ test/
 - **Revert requires a primary key.**
 - **PK changes require re-setup.** Call `teardown()` then `setup()`.
 - **Column changes are fine.** JSONB adapts automatically.
+- **Text search (ILIKE) is slow on large tables.** Use JSON containment queries (`{"key": "value"}`) for indexed search. Text search has a 5-second timeout.
 
 ## License
 

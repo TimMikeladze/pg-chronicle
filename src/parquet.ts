@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises'
 import { parquetWriteFile } from 'hyparquet-writer'
 
 export async function writeParquet(
@@ -59,9 +60,9 @@ export async function writeParquet(
 		codec: 'SNAPPY',
 	})
 
-	// Get file size
-	const file = Bun.file(filePath)
-	return file.size
+	// Get file size (use fs.stat for Node.js compatibility)
+	const fileStats = await stat(filePath)
+	return fileStats.size
 }
 
 export async function readParquet(
@@ -73,16 +74,31 @@ export async function readParquet(
 	const data = await parquetReadObjects({ file })
 
 	// Parse JSON strings back to objects
-	return data.map((record) => ({
-		...record,
-		old_data:
-			record.old_data && typeof record.old_data === 'string'
-				? JSON.parse(record.old_data)
-				: null,
-		new_data:
-			record.new_data && typeof record.new_data === 'string'
-				? JSON.parse(record.new_data)
-				: null,
-		changed_at: new Date(record.changed_at as number | string),
-	}))
+	return data.map((record) => {
+		let oldData = null
+		let newData = null
+
+		if (record.old_data && typeof record.old_data === 'string') {
+			try {
+				oldData = JSON.parse(record.old_data)
+			} catch {
+				oldData = { _raw: record.old_data, _parseError: true }
+			}
+		}
+
+		if (record.new_data && typeof record.new_data === 'string') {
+			try {
+				newData = JSON.parse(record.new_data)
+			} catch {
+				newData = { _raw: record.new_data, _parseError: true }
+			}
+		}
+
+		return {
+			...record,
+			old_data: oldData,
+			new_data: newData,
+			changed_at: new Date(record.changed_at as number | string),
+		}
+	})
 }

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFile, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,10 +8,13 @@ import { writeParquet } from './parquet'
 import type { ArchiverConfig } from './types'
 
 export class PgHistoryArchiver {
-	private pool: Pool
+	private pool!: Pool
 	private ownConnection: boolean
 	private config: ArchiverConfig
 	private s3Client: S3Client
+	private pendingConnection: string | undefined
+	private schemaPrefix: string = '"public"'
+	private schemaDetected: boolean = false
 
 	constructor(config: ArchiverConfig) {
 		this.config = config
@@ -20,9 +23,7 @@ export class PgHistoryArchiver {
 			this.pool = config.pool
 			this.ownConnection = false
 		} else if (config.connection) {
-			const pkg = require('pg')
-			const { Pool } = pkg
-			this.pool = new Pool({ connectionString: config.connection })
+			this.pendingConnection = config.connection
 			this.ownConnection = true
 		} else {
 			throw new Error('PgHistoryArchiver: No connection configuration provided')
@@ -41,6 +42,31 @@ export class PgHistoryArchiver {
 					: undefined,
 			forcePathStyle: true, // Required for MinIO and S3-compatible services
 		})
+	}
+
+	private async ensurePool(): Promise<void> {
+		if (!this.pool && this.pendingConnection) {
+			const pg = await import('pg')
+			this.pool = new pg.default.Pool({
+				connectionString: this.pendingConnection,
+			})
+			this.pendingConnection = undefined
+		}
+		// Detect schema on first pool use
+		if (!this.schemaDetected && this.pool) {
+			const result = await this.pool.query('SELECT current_schema() as schema')
+			const schema = result.rows[0]?.schema || 'public'
+			this.schemaPrefix = `"${schema}"`
+			this.schemaDetected = true
+		}
+	}
+
+	private get auditTable(): string {
+		return `${this.schemaPrefix}."audit_log"`
+	}
+
+	private get metadataTable(): string {
+		return `${this.schemaPrefix}."audit_archive_metadata"`
 	}
 
 	/**
@@ -64,7 +90,7 @@ export class PgHistoryArchiver {
 		date: Date,
 	): Promise<string> {
 		// Write to temporary file
-		const tmpFile = join(tmpdir(), `archive-${Date.now()}.parquet`)
+		const tmpFile = join(tmpdir(), `archive-${randomUUID()}.parquet`)
 
 		try {
 			await writeParquet(records, tmpFile)
@@ -72,13 +98,16 @@ export class PgHistoryArchiver {
 			// Generate S3 path
 			const s3Path = this.generateS3Path(tableName, date)
 
-			// Read file and upload to S3
+			// Read file and compute SHA-256 checksum for integrity verification
 			const fileContent = await readFile(tmpFile)
+			const checksum = createHash('sha256').update(fileContent).digest('base64')
 
 			const command = new PutObjectCommand({
 				Bucket: this.config.s3.bucket,
 				Key: s3Path,
 				Body: fileContent,
+				ContentLength: fileContent.length,
+				ChecksumSHA256: checksum,
 			})
 
 			await this.s3Client.send(command)
@@ -106,9 +135,41 @@ export class PgHistoryArchiver {
 		tableName: string,
 		cutoffDate: Date,
 	): Promise<BatchResult> {
+		await this.ensurePool()
 		const batchSize = this.config.batchSize || 10000
 
-		// Step 1: Query records (read-only, no locks)
+		// Step 1: Find the earliest unarchived date for this table
+		const peekResult = await this.pool.query(
+			`SELECT changed_at
+      FROM ${this.auditTable}
+      WHERE table_name = $1
+        AND changed_at < $2
+        AND archived_at IS NULL
+      ORDER BY changed_at ASC
+      LIMIT 1`,
+			[tableName, cutoffDate],
+		)
+
+		if (peekResult.rows.length === 0) {
+			return {
+				recordCount: 0,
+				fileSize: 0,
+				s3Path: '',
+				status: 'completed',
+			}
+		}
+
+		const date = new Date(peekResult.rows[0].changed_at as Date)
+		// Compute next day boundary so each file covers exactly one day
+		const dayStart = new Date(
+			date.getFullYear(),
+			date.getMonth(),
+			date.getDate(),
+		)
+		const dayEnd = new Date(dayStart)
+		dayEnd.setDate(dayEnd.getDate() + 1)
+
+		// Query records for this single day only
 		const result = await this.pool.query(
 			`SELECT
         id,
@@ -118,13 +179,14 @@ export class PgHistoryArchiver {
         changed_at,
         old_data,
         new_data
-      FROM audit_log
+      FROM ${this.auditTable}
       WHERE table_name = $1
-        AND changed_at < $2
+        AND changed_at >= $2
+        AND changed_at < $3
         AND archived_at IS NULL
       ORDER BY changed_at ASC
-      LIMIT $3`,
-			[tableName, cutoffDate, batchSize],
+      LIMIT $4`,
+			[tableName, dayStart, dayEnd, batchSize],
 		)
 
 		const records = result.rows as Array<Record<string, unknown>>
@@ -137,13 +199,6 @@ export class PgHistoryArchiver {
 				status: 'completed',
 			}
 		}
-
-		// Get date from first record for partitioning
-		const firstRecord = records[0]
-		if (!firstRecord) {
-			throw new Error('No records found in batch')
-		}
-		const date = new Date(firstRecord.changed_at as Date)
 
 		// Step 2: Upload to S3 (outside transaction - idempotent)
 		const s3Path = await this.uploadBatchToS3(records, tableName, date)
@@ -165,7 +220,7 @@ export class PgHistoryArchiver {
 		// Only updates records that are still unarchived (handles concurrent runs)
 		const recordIds = records.map((r) => r.id as bigint)
 		const updateResult = await this.pool.query(
-			`UPDATE audit_log
+			`UPDATE ${this.auditTable}
        SET archived_at = NOW(),
            s3_path = $2
        WHERE id = ANY($1)
@@ -203,7 +258,7 @@ export class PgHistoryArchiver {
 		// Record metadata (idempotent with UNIQUE constraint)
 		const archiveDate = date.toISOString().split('T')[0]
 		await this.pool.query(
-			`INSERT INTO audit_archive_metadata (
+			`INSERT INTO ${this.metadataTable} (
         table_name, archive_date, s3_path, record_count, file_size
       ) VALUES ($1, $2, $3, $4, $5)
       ON CONFLICT (s3_path) DO NOTHING`,
@@ -236,23 +291,31 @@ export class PgHistoryArchiver {
 	}
 
 	/**
-	 * Soft delete archived records past grace period
-	 * ONLY if s3_path is set (proof of backup)
+	 * Soft delete archived records past grace period in batches.
+	 * ONLY if s3_path is set (proof of backup).
+	 * Uses a subquery with LIMIT to avoid locking millions of rows at once.
 	 */
 	async softDeleteArchived(tableName: string): Promise<number> {
+		await this.ensurePool()
+		const batchSize = this.config.batchSize || 10000
 		const gracePeriodDate = new Date()
 		gracePeriodDate.setDate(gracePeriodDate.getDate() - this.config.gracePeriod)
 
 		// Only soft delete records that have been backed up to S3
+		// Use subquery with LIMIT to batch the update
 		const result = await this.pool.query(
-			`UPDATE audit_log
+			`UPDATE ${this.auditTable}
       SET soft_deleted_at = NOW()
-      WHERE table_name = $1
-        AND archived_at IS NOT NULL
-        AND archived_at < $2
-        AND soft_deleted_at IS NULL
-        AND s3_path IS NOT NULL`,
-			[tableName, gracePeriodDate],
+      WHERE id IN (
+        SELECT id FROM ${this.auditTable}
+        WHERE table_name = $1
+          AND archived_at IS NOT NULL
+          AND archived_at < $2
+          AND soft_deleted_at IS NULL
+          AND s3_path IS NOT NULL
+        LIMIT $3
+      )`,
+			[tableName, gracePeriodDate, batchSize],
 		)
 
 		return result.rowCount || 0
@@ -263,6 +326,7 @@ export class PgHistoryArchiver {
 	 * Verifies S3 backup exists before permanent deletion
 	 */
 	async hardDeletePurged(tableName: string): Promise<number> {
+		await this.ensurePool()
 		const gracePeriodDate = new Date()
 		gracePeriodDate.setDate(gracePeriodDate.getDate() - this.config.gracePeriod)
 
@@ -270,15 +334,16 @@ export class PgHistoryArchiver {
 		// Only select records that have an s3_path (proof of backup).
 		// Records without s3_path should not have been soft-deleted,
 		// but if they were, we skip them to avoid data loss.
+		const batchSize = this.config.batchSize || 10000
 		const checkResult = await this.pool.query(
 			`SELECT id, s3_path
-      FROM audit_log
+      FROM ${this.auditTable}
       WHERE table_name = $1
         AND soft_deleted_at IS NOT NULL
         AND soft_deleted_at < $2
         AND s3_path IS NOT NULL
-      LIMIT 1000`,
-			[tableName, gracePeriodDate],
+      LIMIT $3`,
+			[tableName, gracePeriodDate, batchSize],
 		)
 
 		if (checkResult.rows.length === 0) {
@@ -294,22 +359,30 @@ export class PgHistoryArchiver {
 		}
 
 		const verifiedPaths = new Set<string>()
-		const missingPaths = new Set<string>()
 
-		for (const s3Path of s3Paths) {
-			if (s3Path.startsWith('test://')) {
-				verifiedPaths.add(s3Path)
-				continue
-			}
+		// Verify S3 paths in parallel (bounded concurrency)
+		const CONCURRENCY = 10
+		const pathArray = [...s3Paths]
 
-			const exists = await this.verifyS3File(s3Path)
-			if (exists) {
-				verifiedPaths.add(s3Path)
-			} else {
-				missingPaths.add(s3Path)
-				console.warn(
-					`[pg-history] S3 file missing: ${s3Path}. Skipping records with this path.`,
-				)
+		for (let i = 0; i < pathArray.length; i += CONCURRENCY) {
+			const batch = pathArray.slice(i, i + CONCURRENCY)
+			const results = await Promise.all(
+				batch.map(async (s3Path) => {
+					// Skip S3 verification for test paths (used in test suites)
+					if (s3Path.startsWith('test://')) return { s3Path, exists: true }
+					const exists = await this.verifyS3File(s3Path)
+					return { s3Path, exists }
+				}),
+			)
+
+			for (const { s3Path, exists } of results) {
+				if (exists) {
+					verifiedPaths.add(s3Path)
+				} else {
+					console.warn(
+						`[pg-history] S3 file missing: ${s3Path}. Skipping records with this path.`,
+					)
+				}
 			}
 		}
 
@@ -323,7 +396,7 @@ export class PgHistoryArchiver {
 		}
 
 		const result = await this.pool.query(
-			`DELETE FROM audit_log
+			`DELETE FROM ${this.auditTable}
       WHERE id = ANY($1)`,
 			[verifiedIds],
 		)

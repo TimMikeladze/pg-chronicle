@@ -1,4 +1,9 @@
 import type { Pool } from 'pg'
+import {
+	AuditEntryNotFoundError,
+	SetupRequiredError,
+	TableNotConfiguredError,
+} from './errors'
 import type {
 	AuditEntry,
 	GetHistoryOptions,
@@ -8,11 +13,13 @@ import type {
 } from './types'
 
 export class PgHistory {
-	private pool: Pool
+	private pool!: Pool
 	private tables: string[]
 	private ownConnection: boolean
 	private schema: string = 'public'
 	private primaryKeyCache: Map<string, string[]> = new Map()
+	private pendingConnection: string | undefined
+	private setupComplete: boolean = false
 
 	constructor(config: PgHistoryConfig) {
 		this.tables = config.tables
@@ -26,11 +33,20 @@ export class PgHistory {
 			this.pool = config.pool
 			this.ownConnection = false
 		} else if (config.connection) {
-			const { Pool } = require('pg')
-			this.pool = new Pool({ connectionString: config.connection })
+			this.pendingConnection = config.connection
 			this.ownConnection = true
 		} else {
 			throw new Error('PgHistory: No connection configuration provided')
+		}
+	}
+
+	private async ensurePool(): Promise<void> {
+		if (!this.pool && this.pendingConnection) {
+			const pg = await import('pg')
+			this.pool = new pg.default.Pool({
+				connectionString: this.pendingConnection,
+			})
+			this.pendingConnection = undefined
 		}
 	}
 
@@ -197,12 +213,15 @@ export class PgHistory {
 	 * @throws Error if setup fails for any table
 	 */
 	async setup(): Promise<void> {
+		await this.ensurePool()
+
 		if (this.tables.length === 0) {
 			throw new Error('PgHistory: No tables configured for history tracking')
 		}
 
 		try {
 			await this.setupInternal()
+			this.setupComplete = true
 		} catch (error) {
 			// Add context to error
 			const errorMessage =
@@ -225,7 +244,7 @@ export class PgHistory {
 
 		// Create partitioned audit_log table
 		await this.pool.query(`
-			CREATE TABLE IF NOT EXISTS audit_log (
+			CREATE TABLE IF NOT EXISTS ${this.auditTable} (
 				id BIGSERIAL,
 				table_name TEXT NOT NULL,
 				record_id TEXT NOT NULL,
@@ -250,8 +269,8 @@ export class PgHistory {
 			if (exists.rows.length === 0) {
 				try {
 					await this.pool.query(`
-						CREATE TABLE "${partitionName}"
-						PARTITION OF audit_log
+						CREATE TABLE "${this.schema}"."${partitionName}"
+						PARTITION OF ${this.auditTable}
 						FOR VALUES IN ('${tableName}')
 					`)
 				} catch (error) {
@@ -270,22 +289,22 @@ export class PgHistory {
 		// Create indexes (IF NOT EXISTS will skip if they exist)
 		await this.pool.query(`
 			CREATE INDEX IF NOT EXISTS idx_audit_old_data_gin
-			ON audit_log USING GIN (old_data jsonb_path_ops)
+			ON ${this.auditTable} USING GIN (old_data jsonb_path_ops)
 		`)
 
 		await this.pool.query(`
 			CREATE INDEX IF NOT EXISTS idx_audit_new_data_gin
-			ON audit_log USING GIN (new_data jsonb_path_ops)
+			ON ${this.auditTable} USING GIN (new_data jsonb_path_ops)
 		`)
 
 		await this.pool.query(`
 			CREATE INDEX IF NOT EXISTS idx_audit_changed_at
-			ON audit_log (changed_at DESC)
+			ON ${this.auditTable} (changed_at DESC)
 		`)
 
 		await this.pool.query(`
 			CREATE INDEX IF NOT EXISTS idx_audit_record_id
-			ON audit_log (table_name, record_id, changed_at DESC)
+			ON ${this.auditTable} (table_name, record_id, changed_at DESC)
 		`)
 
 		// Create triggers for each table with table-specific trigger functions
@@ -320,15 +339,15 @@ export class PgHistory {
 				RETURNS TRIGGER AS $$
 				BEGIN
 					IF (TG_OP = 'DELETE') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, old_data)
+						INSERT INTO ${this.auditTable} (table_name, record_id, operation, old_data)
 						VALUES (TG_TABLE_NAME, md5(row_to_json(OLD)::text), TG_OP, to_jsonb(OLD));
 						RETURN OLD;
 					ELSIF (TG_OP = 'UPDATE') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, old_data, new_data)
+						INSERT INTO ${this.auditTable} (table_name, record_id, operation, old_data, new_data)
 						VALUES (TG_TABLE_NAME, md5(row_to_json(NEW)::text), TG_OP, to_jsonb(OLD), to_jsonb(NEW));
 						RETURN NEW;
 					ELSIF (TG_OP = 'INSERT') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, new_data)
+						INSERT INTO ${this.auditTable} (table_name, record_id, operation, new_data)
 						VALUES (TG_TABLE_NAME, md5(row_to_json(NEW)::text), TG_OP, to_jsonb(NEW));
 						RETURN NEW;
 					END IF;
@@ -343,15 +362,15 @@ export class PgHistory {
 				RETURNS TRIGGER AS $$
 				BEGIN
 					IF (TG_OP = 'DELETE') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, old_data)
+						INSERT INTO ${this.auditTable} (table_name, record_id, operation, old_data)
 						VALUES (TG_TABLE_NAME, OLD."${pkCol}"::text, TG_OP, to_jsonb(OLD));
 						RETURN OLD;
 					ELSIF (TG_OP = 'UPDATE') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, old_data, new_data)
+						INSERT INTO ${this.auditTable} (table_name, record_id, operation, old_data, new_data)
 						VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, to_jsonb(OLD), to_jsonb(NEW));
 						RETURN NEW;
 					ELSIF (TG_OP = 'INSERT') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, new_data)
+						INSERT INTO ${this.auditTable} (table_name, record_id, operation, new_data)
 						VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, to_jsonb(NEW));
 						RETURN NEW;
 					END IF;
@@ -371,15 +390,15 @@ export class PgHistory {
 				RETURNS TRIGGER AS $$
 				BEGIN
 					IF (TG_OP = 'DELETE') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, old_data)
+						INSERT INTO ${this.auditTable} (table_name, record_id, operation, old_data)
 						VALUES (TG_TABLE_NAME, ${pkExpressionsOld}, TG_OP, to_jsonb(OLD));
 						RETURN OLD;
 					ELSIF (TG_OP = 'UPDATE') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, old_data, new_data)
+						INSERT INTO ${this.auditTable} (table_name, record_id, operation, old_data, new_data)
 						VALUES (TG_TABLE_NAME, ${pkExpressionsNew}, TG_OP, to_jsonb(OLD), to_jsonb(NEW));
 						RETURN NEW;
 					ELSIF (TG_OP = 'INSERT') THEN
-						INSERT INTO audit_log (table_name, record_id, operation, new_data)
+						INSERT INTO ${this.auditTable} (table_name, record_id, operation, new_data)
 						VALUES (TG_TABLE_NAME, ${pkExpressionsNew}, TG_OP, to_jsonb(NEW));
 						RETURN NEW;
 					END IF;
@@ -416,15 +435,26 @@ export class PgHistory {
 		}
 	}
 
+	/** Returns schema-qualified audit_log table name */
+	private get auditTable(): string {
+		return `"${this.schema}"."audit_log"`
+	}
+
+	private ensureSetup(): void {
+		if (!this.setupComplete) {
+			throw new SetupRequiredError()
+		}
+	}
+
 	async getHistory(
 		tableName: string,
 		recordId: string,
 		options: GetHistoryOptions = {},
 	): Promise<PaginatedResult<AuditEntry>> {
+		this.ensureSetup()
+
 		if (!this.tables.includes(tableName)) {
-			throw new Error(
-				`PgHistory: Table "${tableName}" is not configured for history tracking`,
-			)
+			throw new TableNotConfiguredError(tableName)
 		}
 
 		// Validate recordId to prevent DOS attacks
@@ -444,7 +474,7 @@ export class PgHistory {
 			// Cursor-based pagination
 			if (order === 'desc') {
 				queryResult = await this.pool.query(
-					`SELECT * FROM audit_log
+					`SELECT * FROM ${this.auditTable}
 					WHERE table_name = $1
 					AND record_id = $2
 					AND id < $3
@@ -454,7 +484,7 @@ export class PgHistory {
 				)
 			} else {
 				queryResult = await this.pool.query(
-					`SELECT * FROM audit_log
+					`SELECT * FROM ${this.auditTable}
 					WHERE table_name = $1
 					AND record_id = $2
 					AND id > $3
@@ -467,7 +497,7 @@ export class PgHistory {
 			// First page
 			if (order === 'desc') {
 				queryResult = await this.pool.query(
-					`SELECT * FROM audit_log
+					`SELECT * FROM ${this.auditTable}
 					WHERE table_name = $1
 					AND record_id = $2
 					ORDER BY id DESC
@@ -476,7 +506,7 @@ export class PgHistory {
 				)
 			} else {
 				queryResult = await this.pool.query(
-					`SELECT * FROM audit_log
+					`SELECT * FROM ${this.auditTable}
 					WHERE table_name = $1
 					AND record_id = $2
 					ORDER BY id ASC
@@ -519,6 +549,8 @@ export class PgHistory {
 	}
 
 	async search(options: SearchOptions): Promise<PaginatedResult<AuditEntry>> {
+		this.ensureSetup()
+
 		if (options.tables.length === 0) {
 			throw new Error(
 				'PgHistory: At least one table must be specified for search',
@@ -527,9 +559,7 @@ export class PgHistory {
 
 		const invalidTables = options.tables.filter((t) => !this.tables.includes(t))
 		if (invalidTables.length > 0) {
-			throw new Error(
-				`PgHistory: Tables not configured for history tracking: ${invalidTables.join(', ')}`,
-			)
+			throw new TableNotConfiguredError(invalidTables.join(', '))
 		}
 
 		// Validate and cap limit to prevent memory exhaustion (max 1000)
@@ -545,6 +575,7 @@ export class PgHistory {
 		const conditions: string[] = []
 		const params: unknown[] = []
 		let paramIndex = 1
+		let usesIlike = false // eslint-disable-line prefer-const
 
 		// Table filter - pass JS array directly, pg driver handles conversion
 		conditions.push(`table_name = ANY($${paramIndex}::text[])`)
@@ -573,7 +604,8 @@ export class PgHistory {
 				params.push(jsonStr)
 				paramIndex++
 			} else {
-				// Plain text query — ILIKE fallback
+				// Plain text query — ILIKE fallback (unindexed, uses statement timeout)
+				usesIlike = true
 				const escapedQuery = options.query
 					.replace(/\\/g, '\\\\')
 					.replace(/%/g, '\\%')
@@ -589,6 +621,12 @@ export class PgHistory {
 
 		// Operation filter
 		if (options.operation) {
+			const validOperations = ['INSERT', 'UPDATE', 'DELETE'] as const
+			if (!validOperations.includes(options.operation)) {
+				throw new Error(
+					`PgHistory: Invalid operation "${options.operation}". Must be one of: INSERT, UPDATE, DELETE`,
+				)
+			}
 			conditions.push(`operation = $${paramIndex}`)
 			params.push(options.operation)
 			paramIndex++
@@ -618,14 +656,39 @@ export class PgHistory {
 
 		// Execute query
 		const query = `
-			SELECT * FROM audit_log
+			SELECT * FROM ${this.auditTable}
 			WHERE ${whereClause}
 			ORDER BY id DESC
 			LIMIT $${paramIndex}
 		`
 		params.push(limit + 1)
 
-		const queryResult = await this.pool.query(query, params)
+		// ILIKE queries are unindexed full scans — use a dedicated client
+		// with a statement timeout to prevent runaway queries
+		let queryResult: { rows: unknown[] }
+		if (usesIlike) {
+			const client = await this.pool.connect()
+			try {
+				await client.query('SET statement_timeout = 5000') // 5s max
+				queryResult = await client.query(query, params)
+			} catch (error) {
+				if (
+					error instanceof Error &&
+					error.message.includes('statement timeout')
+				) {
+					throw new Error(
+						'PgHistory: Text search query timed out. Use JSON containment search (pass a JSON object as query) for better performance on large tables.',
+					)
+				}
+				throw error
+			} finally {
+				await client.query('RESET statement_timeout').catch(() => {})
+				client.release()
+			}
+		} else {
+			queryResult = await this.pool.query(query, params)
+		}
+
 		const rows = queryResult.rows as Array<{
 			id: number
 			table_name: string
@@ -634,8 +697,6 @@ export class PgHistory {
 			changed_at: string
 			old_data: Record<string, unknown> | null
 			new_data: Record<string, unknown> | null
-			changed_by: string | null
-			metadata: Record<string, unknown> | null
 		}>
 
 		const hasMore = rows.length > limit
@@ -649,8 +710,6 @@ export class PgHistory {
 			changedAt: new Date(row.changed_at),
 			oldData: row.old_data,
 			newData: row.new_data,
-			changedBy: row.changed_by,
-			metadata: row.metadata,
 		}))
 
 		const lastItem = data[data.length - 1]
@@ -668,10 +727,10 @@ export class PgHistory {
 		recordId: string,
 		auditEntryId: string,
 	): Promise<void> {
+		this.ensureSetup()
+
 		if (!this.tables.includes(tableName)) {
-			throw new Error(
-				`PgHistory: Table "${tableName}" is not configured for history tracking`,
-			)
+			throw new TableNotConfiguredError(tableName)
 		}
 
 		// Wrap entire revert operation in a transaction for consistency
@@ -682,7 +741,7 @@ export class PgHistory {
 
 			// Get the audit entry
 			const entryResult = await client.query(
-				`SELECT * FROM audit_log
+				`SELECT * FROM ${this.auditTable}
 				WHERE id = $1
 				AND table_name = $2
 				AND record_id = $3`,
@@ -698,9 +757,7 @@ export class PgHistory {
 			}>
 
 			if (!entry) {
-				throw new Error(
-					`Audit entry ${auditEntryId} not found for ${tableName}:${recordId}`,
-				)
+				throw new AuditEntryNotFoundError(auditEntryId, tableName, recordId)
 			}
 
 			// Get primary key columns
@@ -815,6 +872,8 @@ export class PgHistory {
 	}
 
 	async teardown(): Promise<void> {
+		await this.ensurePool()
+
 		// Drop triggers for each table
 		for (const tableName of this.tables) {
 			const triggerName = `audit_trigger_${tableName}`
@@ -835,7 +894,7 @@ export class PgHistory {
 
 		// Drop audit_log table (cascades to partitions)
 		await this.pool.query(`
-			DROP TABLE IF EXISTS audit_log CASCADE
+			DROP TABLE IF EXISTS ${this.auditTable} CASCADE
 		`)
 	}
 

@@ -8,6 +8,9 @@ import type {
 	TableStats,
 } from './types'
 
+// Fixed namespace for advisory locks to avoid collisions with other lock users
+const ADVISORY_LOCK_NAMESPACE = 73_616_468 // arbitrary stable int32
+
 export class Orchestrator {
 	constructor(
 		private s3Config: S3Config,
@@ -96,8 +99,8 @@ export class Orchestrator {
 		const lockClient = await pool.connect()
 		try {
 			const lockResult = await lockClient.query(
-				`SELECT pg_try_advisory_lock(hashtext($1))`,
-				[`pg_history_archive_${tableName}`],
+				`SELECT pg_try_advisory_lock($1, hashtext($2))`,
+				[ADVISORY_LOCK_NAMESPACE, tableName],
 			)
 			const acquired = lockResult.rows[0]?.pg_try_advisory_lock === true
 			if (!acquired) {
@@ -114,6 +117,13 @@ export class Orchestrator {
 		}
 
 		try {
+			// Detect schema for qualified table references
+			const schemaResult = await lockClient.query(
+				'SELECT current_schema() as schema',
+			)
+			const schema = schemaResult.rows[0]?.schema || 'public'
+			const auditTable = `"${schema}"."audit_log"`
+
 			const cutoff = this.getRetentionCutoff(tableName)
 			const gracePeriodDate = new Date()
 			gracePeriodDate.setDate(gracePeriodDate.getDate() - this.gracePeriod)
@@ -122,7 +132,7 @@ export class Orchestrator {
 				// Use lockClient for dry-run queries to avoid extra pool checkouts
 				const archiveCount = await lockClient.query(
 					`SELECT COUNT(*) as count
-					FROM audit_log
+					FROM ${auditTable}
 					WHERE table_name = $1
 						AND changed_at < $2
 						AND archived_at IS NULL`,
@@ -131,7 +141,7 @@ export class Orchestrator {
 
 				const softDeleteCount = await lockClient.query(
 					`SELECT COUNT(*) as count
-					FROM audit_log
+					FROM ${auditTable}
 					WHERE table_name = $1
 						AND archived_at IS NOT NULL
 						AND archived_at < $2
@@ -142,7 +152,7 @@ export class Orchestrator {
 
 				const hardDeleteCount = await lockClient.query(
 					`SELECT COUNT(*) as count
-					FROM audit_log
+					FROM ${auditTable}
 					WHERE table_name = $1
 						AND soft_deleted_at IS NOT NULL
 						AND soft_deleted_at < $2`,
@@ -201,13 +211,23 @@ export class Orchestrator {
 				}
 			}
 
-			// Soft delete archived records past grace period
+			// Soft delete archived records past grace period (in batches)
 			console.log(`  Soft deleting records past grace period...`)
-			const softDeleted = await archiver.softDeleteArchived(tableName)
-			stats.recordsSoftDeleted = softDeleted
-			if (softDeleted > 0) {
-				console.log(`  Soft deleted ${softDeleted} records`)
+			let totalSoftDeleted = 0
+			let softDeleteHasMore = true
+
+			while (softDeleteHasMore) {
+				const softDeleted = await archiver.softDeleteArchived(tableName)
+				totalSoftDeleted += softDeleted
+
+				if (softDeleted === 0) {
+					softDeleteHasMore = false
+				} else {
+					console.log(`  Soft deleted ${softDeleted} records`)
+				}
 			}
+
+			stats.recordsSoftDeleted = totalSoftDeleted
 
 			// Hard delete soft-deleted records past grace period
 			console.log(`  Hard deleting soft-deleted records...`)
@@ -241,8 +261,9 @@ export class Orchestrator {
 		} finally {
 			// Release the advisory lock and return connection to pool
 			await lockClient
-				.query(`SELECT pg_advisory_unlock(hashtext($1))`, [
-					`pg_history_archive_${tableName}`,
+				.query(`SELECT pg_advisory_unlock($1, hashtext($2))`, [
+					ADVISORY_LOCK_NAMESPACE,
+					tableName,
 				])
 				.catch(() => {})
 			lockClient.release()

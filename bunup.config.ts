@@ -1,6 +1,6 @@
 import { defineConfig } from 'bunup'
 
 export default defineConfig({
-	entry: ['src/index.ts', 'src/cli.ts', 'src/server.ts'],
+	entry: ['src/index.ts', 'src/server.ts', 'src/vercel.ts'],
 	target: 'node',
 })

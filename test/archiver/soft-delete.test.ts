@@ -52,9 +52,18 @@ describe('PgHistoryArchiver - Soft Delete', () => {
 		expect(updatedCount).toBeGreaterThan(0)
 
 		// Soft delete archived records older than grace period (7 days)
-		const count = await archiver.softDeleteArchived('users')
+		// softDeleteArchived is batched, so loop until all are processed
+		let totalSoftDeleted = 0
+		let batchCount = 0
+		while (true) {
+			const count = await archiver.softDeleteArchived('users')
+			totalSoftDeleted += count
+			if (count === 0) break
+			batchCount++
+		}
 
-		expect(count).toBe(updatedCount)
+		expect(totalSoftDeleted).toBe(updatedCount)
+		expect(batchCount).toBeGreaterThan(0)
 
 		// Verify soft_deleted_at is set
 		const softDeleted = await pool.query(`

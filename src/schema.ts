@@ -1,48 +1,59 @@
 import type { Pool } from 'pg'
 
+async function getSchemaPrefix(pool: Pool): Promise<string> {
+	const result = await pool.query('SELECT current_schema() as schema')
+	const schema = result.rows[0]?.schema || 'public'
+	return `"${schema}"`
+}
+
 export async function setupArchiverSchema(pool: Pool): Promise<void> {
+	const s = await getSchemaPrefix(pool)
+	const auditTable = `${s}."audit_log"`
+	const metadataTable = `${s}."audit_archive_metadata"`
+	const statsTable = `${s}."audit_archival_stats"`
+
 	// Add archived_at column to audit_log
 	await pool.query(`
-    ALTER TABLE audit_log
+    ALTER TABLE ${auditTable}
       ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ
   `)
 
 	// Add s3_path to track where record is backed up
 	await pool.query(`
-    ALTER TABLE audit_log
+    ALTER TABLE ${auditTable}
       ADD COLUMN IF NOT EXISTS s3_path TEXT
   `)
 
 	// Add soft_deleted_at column
 	await pool.query(`
-    ALTER TABLE audit_log
+    ALTER TABLE ${auditTable}
       ADD COLUMN IF NOT EXISTS soft_deleted_at TIMESTAMPTZ
   `)
 
 	// Create composite index for archival queries
 	await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_audit_log_archival
-      ON audit_log(table_name, changed_at)
+      ON ${auditTable}(table_name, changed_at)
       WHERE archived_at IS NULL
   `)
 
 	// Create index for soft delete queries
 	await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_audit_log_soft_delete
-      ON audit_log(archived_at)
+      ON ${auditTable}(archived_at)
       WHERE archived_at IS NOT NULL AND soft_deleted_at IS NULL
   `)
 
 	// Create index for hard delete queries
 	await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_audit_log_hard_delete
-      ON audit_log(soft_deleted_at)
+      ON ${auditTable}(soft_deleted_at)
       WHERE soft_deleted_at IS NOT NULL
   `)
 
 	// Create metadata tracking table
 	await pool.query(`
-    CREATE TABLE IF NOT EXISTS audit_archive_metadata (
+    CREATE TABLE IF NOT EXISTS ${metadataTable} (
       id SERIAL PRIMARY KEY,
       table_name TEXT NOT NULL,
       archive_date DATE NOT NULL,
@@ -57,12 +68,12 @@ export async function setupArchiverSchema(pool: Pool): Promise<void> {
 	// Create indexes on metadata table
 	await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_archive_metadata_table_date
-      ON audit_archive_metadata(table_name, archive_date)
+      ON ${metadataTable}(table_name, archive_date)
   `)
 
 	// Create lightweight stats table to avoid scanning audit_log
 	await pool.query(`
-    CREATE TABLE IF NOT EXISTS audit_archival_stats (
+    CREATE TABLE IF NOT EXISTS ${statsTable} (
       table_name TEXT PRIMARY KEY,
       records_pending_archive BIGINT NOT NULL DEFAULT 0,
       records_pending_soft_delete BIGINT NOT NULL DEFAULT 0,
@@ -75,7 +86,7 @@ export async function setupArchiverSchema(pool: Pool): Promise<void> {
 	// Create index for stat queries
 	await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_archival_stats_updated
-      ON audit_archival_stats(last_updated)
+      ON ${statsTable}(last_updated)
   `)
 }
 
@@ -95,6 +106,10 @@ export async function updateArchivalStats(
 	const gracePeriodCutoff = new Date()
 	gracePeriodCutoff.setDate(gracePeriodCutoff.getDate() - gracePeriodDays)
 
+	const s = await getSchemaPrefix(pool)
+	const auditTable = `${s}."audit_log"`
+	const statsTable = `${s}."audit_archival_stats"`
+
 	// Get counts in a single query using FILTER
 	const result = await pool.query(
 		`SELECT
@@ -102,7 +117,7 @@ export async function updateArchivalStats(
       COUNT(*) FILTER (WHERE archived_at IS NOT NULL AND archived_at < $3 AND soft_deleted_at IS NULL AND s3_path IS NOT NULL) as pending_soft_delete,
       COUNT(*) FILTER (WHERE soft_deleted_at IS NOT NULL AND soft_deleted_at < $3) as pending_hard_delete,
       MIN(changed_at) FILTER (WHERE archived_at IS NULL) as oldest_unarchived
-    FROM audit_log
+    FROM ${auditTable}
     WHERE table_name = $1
       AND (
         (archived_at IS NULL AND changed_at < $2)
@@ -116,7 +131,7 @@ export async function updateArchivalStats(
 
 	// Upsert stats
 	await pool.query(
-		`INSERT INTO audit_archival_stats (
+		`INSERT INTO ${statsTable} (
       table_name,
       records_pending_archive,
       records_pending_soft_delete,
@@ -154,6 +169,9 @@ export async function getArchivalStats(pool: Pool): Promise<
 		lastUpdated: Date
 	}>
 > {
+	const s = await getSchemaPrefix(pool)
+	const statsTable = `${s}."audit_archival_stats"`
+
 	const result = await pool.query(`
     SELECT
       table_name,
@@ -162,7 +180,7 @@ export async function getArchivalStats(pool: Pool): Promise<
       records_pending_hard_delete,
       oldest_unarchived_record,
       last_updated
-    FROM audit_archival_stats
+    FROM ${statsTable}
     ORDER BY records_pending_archive DESC
   `)
 
@@ -183,24 +201,29 @@ export async function getArchivalStats(pool: Pool): Promise<
 }
 
 export async function teardownArchiverSchema(pool: Pool): Promise<void> {
+	const s = await getSchemaPrefix(pool)
+	const auditTable = `${s}."audit_log"`
+	const statsTable = `${s}."audit_archival_stats"`
+	const metadataTable = `${s}."audit_archive_metadata"`
+
 	// Drop stats table
-	await pool.query('DROP TABLE IF EXISTS audit_archival_stats CASCADE')
+	await pool.query(`DROP TABLE IF EXISTS ${statsTable} CASCADE`)
 
 	// Drop metadata table
-	await pool.query('DROP TABLE IF EXISTS audit_archive_metadata CASCADE')
+	await pool.query(`DROP TABLE IF EXISTS ${metadataTable} CASCADE`)
 
 	// Remove archived_at column (optional - might want to keep)
 	await pool.query(
-		'ALTER TABLE audit_log DROP COLUMN IF EXISTS archived_at CASCADE',
+		`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS archived_at CASCADE`,
 	)
 
 	// Remove s3_path column
 	await pool.query(
-		'ALTER TABLE audit_log DROP COLUMN IF EXISTS s3_path CASCADE',
+		`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS s3_path CASCADE`,
 	)
 
 	// Remove soft_deleted_at column
 	await pool.query(
-		'ALTER TABLE audit_log DROP COLUMN IF EXISTS soft_deleted_at CASCADE',
+		`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS soft_deleted_at CASCADE`,
 	)
 }

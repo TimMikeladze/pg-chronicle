@@ -79,44 +79,6 @@ export interface RetentionConfig {
 	tables?: Record<string, number>
 }
 
-export interface ArchiveMetadata {
-	id: number
-	tableName: string
-	archiveDate: Date
-	s3Path: string
-	recordCount: number
-	fileSize: number
-	archivedAt: Date
-	status: 'completed' | 'failed' | 'in_progress'
-	errorMessage: string | null
-}
-
-export interface ArchiveBatch {
-	tableName: string
-	records: Array<Record<string, unknown>>
-	startDate: Date
-	endDate: Date
-}
-
-export interface ArchiveResult {
-	status: 'completed' | 'failed' | 'partial'
-	summary: ArchiveSummary
-	duration: number
-}
-
-export interface ArchiveSummary {
-	totalRecords: number
-	archivedRecords: number
-	failedRecords: number
-	tables: Record<string, TableArchiveSummary>
-}
-
-export interface TableArchiveSummary {
-	records: number
-	files: number
-	size: number
-}
-
 export interface ServerConfig {
 	/** PostgreSQL connection pool */
 	pool: Pool
@@ -145,6 +107,16 @@ export interface ServerConfig {
 	historyConfig?: {
 		tables: string[]
 	}
+
+	/**
+	 * Serverless mode. When true:
+	 * - Skips background archival (use POST /api/archive or external cron instead)
+	 * - Skips in-memory rate limiting (handle at API gateway level)
+	 */
+	serverless?: boolean
+
+	/** Secret for authenticating cron/archive triggers (POST /api/archive) */
+	archiveCronSecret?: string
 }
 
 export interface OrchestratorStats {
@@ -173,12 +145,6 @@ export interface ErrorResponse {
 		code: string
 		message: string
 		details?: unknown
-	}
-}
-
-export interface HistoryApiContext {
-	Variables: {
-		pgHistory?: import('./PgHistory').PgHistory
 	}
 }
 
