@@ -84,6 +84,10 @@ bun examples/basic-audit-trail.ts
 | [search-and-revert.ts](./examples/search-and-revert.ts) | JSONB containment search, text search, filtering, revert |
 | [multi-table-tracking.ts](./examples/multi-table-tracking.ts) | Multiple related tables, composite primary keys, cross-table search |
 | [rest-api-server.ts](./examples/rest-api-server.ts) | Hono REST API server with history endpoints |
+| [cron-archival.ts](./examples/cron-archival.ts) | POST /api/archive endpoint, cron secret auth, health status |
+| [archival-lifecycle.ts](./examples/archival-lifecycle.ts) | Full S3 archival pipeline: archive, soft delete, hard delete |
+| [error-handling.ts](./examples/error-handling.ts) | Typed error classes, catching specific errors |
+| [vercel/](./examples/vercel) | Deployable Vercel project: serverless API + cron archival + local test |
 
 ## How It Works
 
@@ -368,7 +372,15 @@ The Vercel entry point automatically enables `serverless: true`, which:
 
 #### Vercel Cron
 
-Since there's no persistent process in serverless, archival needs an external trigger. Add to `vercel.json`:
+Since there's no persistent process in serverless, archival needs an external trigger. A complete working example is in [`examples/vercel/`](./examples/vercel). The setup is three files:
+
+**`api/[[...route]].ts`** — one-line catch-all route:
+
+```typescript
+export { GET, POST } from 'pg-history/vercel'
+```
+
+**`vercel.json`** — cron schedule:
 
 ```json
 {
@@ -381,17 +393,24 @@ Since there's no persistent process in serverless, archival needs an external tr
 }
 ```
 
-This calls `POST /api/archive` every 6 hours. Set `CRON_SECRET` in your Vercel environment variables — Vercel automatically sends it as `Authorization: Bearer <secret>` on cron requests.
-
-Also set the S3 variables to enable archival:
+**Environment variables** (set in Vercel dashboard):
 
 ```
+PG_HISTORY_DATABASE_URL=postgres://...
+PG_HISTORY_TABLES=users,orders
+PG_HISTORY_JWT_SECRET=your-secret
+CRON_SECRET=your-cron-secret
 PG_HISTORY_S3_BUCKET=audit-archives
 PG_HISTORY_S3_ENDPOINT=https://...
 PG_HISTORY_S3_ACCESS_KEY_ID=...
 PG_HISTORY_S3_SECRET_ACCESS_KEY=...
-CRON_SECRET=your-cron-secret
 ```
+
+How it works:
+1. Vercel Cron calls `POST /api/archive` every 6 hours
+2. Vercel automatically sends `Authorization: Bearer <CRON_SECRET>` — the endpoint verifies it
+3. The archiver runs: archive old records to S3 as Parquet, soft delete, hard delete
+4. The response includes archival stats; `/health` reflects the archival status
 
 **Vercel plan limits:**
 - **Hobby:** Cron minimum interval 24h, function timeout 10s
