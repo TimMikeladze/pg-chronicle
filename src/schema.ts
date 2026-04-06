@@ -91,8 +91,11 @@ export async function setupArchiverSchema(pool: Pool): Promise<void> {
 }
 
 /**
- * Update archival stats for a table
- * Call this periodically to keep stats fresh without scanning full audit_log
+ * Update archival stats for a table.
+ * Scans audit_log rows matching the table with FILTER aggregates. On large tables
+ * this can be expensive — call after archival runs, not on every request. The partial
+ * indexes (idx_audit_log_archival, idx_audit_log_soft_delete, idx_audit_log_hard_delete)
+ * help but don't eliminate the scan cost.
  */
 export async function updateArchivalStats(
 	pool: Pool,

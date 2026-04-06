@@ -566,33 +566,6 @@ bun test
 | `bun run tsc` | Type check |
 | `bun run check` | Lint + tsc + test |
 
-### Test Files
-
-```
-test/
-  PgHistory.test.ts              Setup/lifecycle
-  setup.test.ts                  Idempotency
-  teardown.test.ts               Cleanup
-  triggers.test.ts               INSERT/UPDATE/DELETE
-  get-history.test.ts            Pagination
-  search.test.ts                 Filtering
-  revert.test.ts                 Revert ops
-  validation.test.ts             Input validation
-  input-validation.test.ts       SQL injection
-  security.test.ts               Security
-  server-api.test.ts             REST API
-  read-only-integration.test.ts  Integration
-  archiver/
-    PgHistoryArchiver.test.ts    S3 batches
-    orchestrator.test.ts         Discovery
-    orchestrator-integration.test.ts  Full archival
-    schema.test.ts               DDL
-    parquet.test.ts              Read/write
-    soft-delete.test.ts          Soft delete
-    hard-delete.test.ts          Hard delete
-    stats.test.ts                Stats
-```
-
 ## Limitations
 
 - **TRUNCATE not audited.** Use `DELETE` if audit trail needed.

@@ -26,7 +26,10 @@ function getApp(): Promise<Hono> {
 			max: poolMax,
 		})
 
-		const tables = process.env.PG_HISTORY_TABLES?.split(',') || []
+		const tables =
+			process.env.PG_HISTORY_TABLES?.split(',')
+				.map((t) => t.trim())
+				.filter(Boolean) || []
 		if (tables.length === 0) {
 			throw new Error(
 				'PG_HISTORY_TABLES environment variable is required (comma-separated table names)',
@@ -68,19 +71,40 @@ function getApp(): Promise<Hono> {
 
 		cachedApp = app as unknown as Hono
 		return cachedApp
-	})()
+	})().catch((err) => {
+		// Reset so the next request retries instead of returning the cached rejection
+		initPromise = null
+		throw err
+	})
 
 	return initPromise
 }
 
 // Vercel expects named exports per HTTP method
 // Initialize on first request, then reuse cached app
+function errorResponse(error: unknown): Response {
+	const message =
+		error instanceof Error ? error.message : 'Internal server error'
+	return new Response(
+		JSON.stringify({ error: { code: 'INIT_ERROR', message } }),
+		{ status: 500, headers: { 'Content-Type': 'application/json' } },
+	)
+}
+
 export const GET = async (req: Request): Promise<Response> => {
-	const app = await getApp()
-	return handle(app)(req)
+	try {
+		const app = await getApp()
+		return handle(app)(req)
+	} catch (error) {
+		return errorResponse(error)
+	}
 }
 
 export const POST = async (req: Request): Promise<Response> => {
-	const app = await getApp()
-	return handle(app)(req)
+	try {
+		const app = await getApp()
+		return handle(app)(req)
+	} catch (error) {
+		return errorResponse(error)
+	}
 }

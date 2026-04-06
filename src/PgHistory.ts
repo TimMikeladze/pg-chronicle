@@ -3,6 +3,7 @@ import {
 	AuditEntryNotFoundError,
 	SetupRequiredError,
 	TableNotConfiguredError,
+	ValidationError,
 } from './errors'
 import type {
 	AuditEntry,
@@ -19,6 +20,7 @@ export class PgHistory {
 	private schema: string = 'public'
 	private primaryKeyCache: Map<string, string[]> = new Map()
 	private pendingConnection: string | undefined
+	private poolPromise: Promise<void> | null = null
 	private setupComplete: boolean = false
 
 	constructor(config: PgHistoryConfig) {
@@ -41,13 +43,18 @@ export class PgHistory {
 	}
 
 	private async ensurePool(): Promise<void> {
-		if (!this.pool && this.pendingConnection) {
-			const pg = await import('pg')
-			this.pool = new pg.default.Pool({
-				connectionString: this.pendingConnection,
-			})
-			this.pendingConnection = undefined
+		if (this.pool) return
+		if (!this.poolPromise) {
+			this.poolPromise = (async () => {
+				if (!this.pendingConnection) return
+				const pg = await import('pg')
+				this.pool = new pg.default.Pool({
+					connectionString: this.pendingConnection,
+				})
+				this.pendingConnection = undefined
+			})()
 		}
+		await this.poolPromise
 	}
 
 	/**
@@ -268,11 +275,16 @@ export class PgHistory {
 
 			if (exists.rows.length === 0) {
 				try {
-					await this.pool.query(`
-						CREATE TABLE "${this.schema}"."${partitionName}"
-						PARTITION OF ${this.auditTable}
-						FOR VALUES IN ('${tableName}')
-					`)
+					// Use format() with %I/%L to safely interpolate identifiers/literals
+					// Explicit ::text casts required so PG can infer parameter types
+					const ddlResult = await this.pool.query(
+						`SELECT format(
+							'CREATE TABLE %I.%I PARTITION OF %I.%I FOR VALUES IN (%L)',
+							$1::text, $2::text, $1::text, $3::text, $4::text
+						) AS ddl`,
+						[this.schema, partitionName, 'audit_log', tableName],
+					)
+					await this.pool.query(ddlResult.rows[0].ddl)
 				} catch (error) {
 					// I4: Add error context
 					throw new Error(
@@ -329,7 +341,16 @@ export class PgHistory {
 			const pkColumns = await this.getPrimaryKeyColumns(tableName)
 
 			// Create table-specific trigger function (idempotent)
-			// Build the function body based on primary key configuration
+			// Build the function body based on primary key configuration.
+			// Defense-in-depth: re-validate all identifiers immediately before
+			// interpolation into PL/pgSQL, even though they were validated earlier.
+			// The regex ensures only [a-zA-Z0-9_] chars, making SQL injection
+			// through double-quoted identifiers impossible.
+			this.validateTableName(tableName)
+			this.validateColumnName(funcName.replace(/^audit_trigger_func_/, ''))
+			for (const col of pkColumns) {
+				this.validateColumnName(col)
+			}
 			let functionBody: string
 
 			if (pkColumns.length === 0) {
@@ -417,11 +438,15 @@ export class PgHistory {
 
 			if (triggerExists.rows.length === 0) {
 				try {
-					await this.pool.query(`
-						CREATE TRIGGER "${triggerName}"
-						AFTER INSERT OR UPDATE OR DELETE ON "${tableName}"
-						FOR EACH ROW EXECUTE FUNCTION "${funcName}"()
-					`)
+					// Use format() for trigger DDL to safely interpolate identifiers
+					const triggerDdl = await this.pool.query(
+						`SELECT format(
+							'CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION %I()',
+							$1::text, $2::text, $3::text
+						) AS ddl`,
+						[triggerName, tableName, funcName],
+					)
+					await this.pool.query(triggerDdl.rows[0].ddl)
 				} catch (error) {
 					throw new Error(
 						`Failed to create trigger for table "${tableName}": ${error instanceof Error ? error.message : String(error)}`,
@@ -464,9 +489,12 @@ export class PgHistory {
 		const limit = this.validateLimit(options.limit, 50)
 		const order = options.order || 'desc'
 
-		// Validate cursor if provided
+		// Validate cursor if provided — must be a numeric ID
 		if (options.cursor) {
 			this.validateStringInput(options.cursor, 'cursor', 100)
+			if (!/^\d+$/.test(options.cursor)) {
+				throw new ValidationError('cursor must be a numeric ID')
+			}
 		}
 
 		let queryResult: { rows: unknown[] }
@@ -566,9 +594,12 @@ export class PgHistory {
 		const limit = this.validateLimit(options.limit, 100)
 		const tables = options.tables
 
-		// Validate cursor if provided
+		// Validate cursor if provided — must be a numeric ID
 		if (options.cursor) {
 			this.validateStringInput(options.cursor, 'cursor', 100)
+			if (!/^\d+$/.test(options.cursor)) {
+				throw new ValidationError('cursor must be a numeric ID')
+			}
 		}
 
 		// Build WHERE conditions
@@ -771,6 +802,27 @@ export class PgHistory {
 			// Validate PK columns
 			this.validateColumnNames(pkColumns)
 
+			// Cross-check revert data columns against actual table columns
+			// to prevent writing to unintended columns via crafted audit_log entries
+			const revertData = entry.old_data || entry.new_data || {}
+			const dataColumns = Object.keys(revertData)
+			if (dataColumns.length > 0) {
+				const colResult = await client.query(
+					`SELECT column_name FROM information_schema.columns
+					WHERE table_schema = $1 AND table_name = $2`,
+					[this.schema, tableName],
+				)
+				const realColumns = new Set(
+					colResult.rows.map((r: { column_name: string }) => r.column_name),
+				)
+				const unknownColumns = dataColumns.filter((c) => !realColumns.has(c))
+				if (unknownColumns.length > 0) {
+					throw new Error(
+						`Revert data contains columns not in table "${tableName}": ${unknownColumns.join(', ')}`,
+					)
+				}
+			}
+
 			// Branch on operation type
 			if (entry.operation === 'INSERT') {
 				// Undo INSERT = DELETE the row
@@ -874,22 +926,24 @@ export class PgHistory {
 	async teardown(): Promise<void> {
 		await this.ensurePool()
 
-		// Drop triggers for each table
+		// Drop triggers for each table using format() for safe identifier interpolation
 		for (const tableName of this.tables) {
 			const triggerName = `audit_trigger_${tableName}`
-
-			await this.pool.query(`
-				DROP TRIGGER IF EXISTS "${triggerName}" ON "${tableName}"
-			`)
+			const ddl = await this.pool.query(
+				`SELECT format('DROP TRIGGER IF EXISTS %I ON %I', $1::text, $2::text) AS ddl`,
+				[triggerName, tableName],
+			)
+			await this.pool.query(ddl.rows[0].ddl)
 		}
 
 		// Drop all table-specific trigger functions
 		for (const tableName of this.tables) {
 			const funcName = `audit_trigger_func_${tableName}`
-
-			await this.pool.query(`
-				DROP FUNCTION IF EXISTS "${funcName}"() CASCADE
-			`)
+			const ddl = await this.pool.query(
+				`SELECT format('DROP FUNCTION IF EXISTS %I() CASCADE', $1::text) AS ddl`,
+				[funcName],
+			)
+			await this.pool.query(ddl.rows[0].ddl)
 		}
 
 		// Drop audit_log table (cascades to partitions)

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile, unlink } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
@@ -13,6 +13,7 @@ export class PgHistoryArchiver {
 	private config: ArchiverConfig
 	private s3Client: S3Client
 	private pendingConnection: string | undefined
+	private poolPromise: Promise<void> | null = null
 	private schemaPrefix: string = '"public"'
 	private schemaDetected: boolean = false
 
@@ -30,6 +31,8 @@ export class PgHistoryArchiver {
 		}
 
 		// Initialize S3 client
+		// Only use path-style when a custom endpoint is set (MinIO, localstack, etc.)
+		// AWS S3 deprecated path-style for new buckets after Sep 2020
 		this.s3Client = new S3Client({
 			region: config.s3.region || 'us-east-1',
 			endpoint: config.s3.endpoint,
@@ -40,17 +43,23 @@ export class PgHistoryArchiver {
 							secretAccessKey: config.s3.secretAccessKey,
 						}
 					: undefined,
-			forcePathStyle: true, // Required for MinIO and S3-compatible services
+			forcePathStyle: !!config.s3.endpoint,
 		})
 	}
 
 	private async ensurePool(): Promise<void> {
-		if (!this.pool && this.pendingConnection) {
-			const pg = await import('pg')
-			this.pool = new pg.default.Pool({
-				connectionString: this.pendingConnection,
-			})
-			this.pendingConnection = undefined
+		if (!this.pool) {
+			if (!this.poolPromise) {
+				this.poolPromise = (async () => {
+					if (!this.pendingConnection) return
+					const pg = await import('pg')
+					this.pool = new pg.default.Pool({
+						connectionString: this.pendingConnection,
+					})
+					this.pendingConnection = undefined
+				})()
+			}
+			await this.poolPromise
 		}
 		// Detect schema on first pool use
 		if (!this.schemaDetected && this.pool) {
@@ -89,8 +98,10 @@ export class PgHistoryArchiver {
 		tableName: string,
 		date: Date,
 	): Promise<string> {
-		// Write to temporary file
-		const tmpFile = join(tmpdir(), `archive-${randomUUID()}.parquet`)
+		// Write to a restricted temp directory to prevent data exposure on shared hosts
+		const tmpDir = await mkdtemp(join(tmpdir(), 'pg-history-'))
+		await chmod(tmpDir, 0o700)
+		const tmpFile = join(tmpDir, 'data.parquet')
 
 		try {
 			await writeParquet(records, tmpFile)
@@ -114,9 +125,9 @@ export class PgHistoryArchiver {
 
 			return s3Path
 		} finally {
-			// Cleanup temp file
+			// Cleanup temp directory and file
 			try {
-				await unlink(tmpFile)
+				await rm(tmpDir, { recursive: true })
 			} catch {}
 		}
 	}
@@ -128,7 +139,10 @@ export class PgHistoryArchiver {
 	 * 3. Mark as archived with s3_path (atomic update)
 	 *
 	 * If crash happens:
-	 * - Before step 3: Records still unarchived, will retry ✓
+	 * - Before step 3: Records still unarchived, will retry. The S3 file from step 2
+	 *   becomes an orphan (not referenced by any record). Over time these accumulate.
+	 *   Consider a periodic cleanup job that deletes S3 files not referenced in
+	 *   audit_archive_metadata.
 	 * - After step 3: Records marked archived, won't retry ✓
 	 */
 	async processBatch(
@@ -160,14 +174,12 @@ export class PgHistoryArchiver {
 		}
 
 		const date = new Date(peekResult.rows[0].changed_at as Date)
-		// Compute next day boundary so each file covers exactly one day
+		// Compute next day boundary in UTC so each file covers exactly one calendar day
 		const dayStart = new Date(
-			date.getFullYear(),
-			date.getMonth(),
-			date.getDate(),
+			Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
 		)
 		const dayEnd = new Date(dayStart)
-		dayEnd.setDate(dayEnd.getDate() + 1)
+		dayEnd.setUTCDate(dayEnd.getUTCDate() + 1)
 
 		// Query records for this single day only
 		const result = await this.pool.query(
@@ -368,8 +380,6 @@ export class PgHistoryArchiver {
 			const batch = pathArray.slice(i, i + CONCURRENCY)
 			const results = await Promise.all(
 				batch.map(async (s3Path) => {
-					// Skip S3 verification for test paths (used in test suites)
-					if (s3Path.startsWith('test://')) return { s3Path, exists: true }
 					const exists = await this.verifyS3File(s3Path)
 					return { s3Path, exists }
 				}),

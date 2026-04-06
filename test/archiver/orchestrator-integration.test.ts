@@ -3,7 +3,7 @@ import type { Pool } from 'pg'
 import { Orchestrator } from '../../src/orchestrator'
 import { setupArchiverSchema } from '../../src/schema'
 import { cleanupTestData, getTestConnection, setupTestData } from './helpers/db'
-import { ensureTestBucket } from './helpers/s3'
+import { ensureTestBucket, putTestS3Object } from './helpers/s3'
 
 describe('Orchestrator Integration', () => {
 	let pool: Pool
@@ -111,17 +111,21 @@ describe('Orchestrator Integration', () => {
 	})
 
 	test('should hard delete soft-deleted records past grace period', async () => {
+		const testS3Key = 'test-archive/orchestrator-hard-delete.parquet'
+		await putTestS3Object('test-bucket', testS3Key)
+
 		// Create soft-deleted records past grace period with s3_path
-		await pool.query(`
-      UPDATE audit_log
+		await pool.query(
+			`UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '20 days',
           soft_deleted_at = NOW() - INTERVAL '10 days',
-          s3_path = 'test://fake-s3-path'
+          s3_path = $1
       WHERE table_name = 'users'
         AND id IN (
           SELECT id FROM audit_log WHERE table_name = 'users' LIMIT 30
-        )
-    `)
+        )`,
+			[testS3Key],
+		)
 
 		const initialCount = await pool.query(`
       SELECT COUNT(*) as count FROM audit_log WHERE table_name = 'users'

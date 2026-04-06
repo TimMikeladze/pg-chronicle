@@ -20,12 +20,15 @@ export class Orchestrator {
 	) {}
 
 	async discoverTables(pool: Pool): Promise<string[]> {
-		// Query pg_trigger to find tables with audit triggers
-		// This is much faster than scanning audit_log table
+		// Query pg_trigger to find tables with audit triggers.
+		// Use relname (unqualified) instead of ::regclass::text (which produces
+		// schema-qualified names like "public"."users") so that returned names
+		// match retentionConfig.tables keys and validateTableName expectations.
 		const result = await pool.query(`
       SELECT DISTINCT
-        t.tgrelid::regclass::text AS table_name
+        c.relname AS table_name
       FROM pg_trigger t
+      JOIN pg_class c ON c.oid = t.tgrelid
       WHERE t.tgname LIKE 'audit_trigger_%'
       ORDER BY table_name
     `)
@@ -96,6 +99,9 @@ export class Orchestrator {
 		// Acquire advisory lock to prevent concurrent processing of the same table.
 		// The lock is session-level: it persists as long as lockClient stays connected.
 		// We keep lockClient alive (not released) throughout processing so the lock holds.
+		// NOTE: This holds a pool connection for the entire duration of table processing
+		// (archive + soft delete + hard delete). Ensure the pool max is at least 2
+		// (1 for the lock + 1 for queries). Tables are processed sequentially.
 		const lockClient = await pool.connect()
 		try {
 			const lockResult = await lockClient.query(

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import type { JwtVariables } from 'hono/jwt'
@@ -19,6 +20,10 @@ type Variables = JwtVariables & {
 	pgHistory?: PgHistory
 }
 
+// Module-level archival state for graceful shutdown coordination
+let currentArchivalPromise: Promise<void> | null = null
+let archivalInterval: ReturnType<typeof setInterval> | undefined
+
 export async function createServer(
 	config: ServerConfig,
 ): Promise<Hono<{ Variables: Variables }>> {
@@ -27,7 +32,10 @@ export async function createServer(
 	// Limit request body size to 1MB to prevent memory exhaustion
 	app.use('/api/*', bodyLimit({ maxSize: 1024 * 1024 }))
 
-	// In-memory rate limiter — only useful in long-running processes, skip in serverless
+	// In-memory rate limiter — only useful in long-running processes, skip in serverless.
+	// NOTE: x-forwarded-for is client-spoofable. This rate limiter only works correctly
+	// behind a trusted reverse proxy that overwrites the header. For production, use
+	// API gateway-level rate limiting or ensure your proxy strips client-provided headers.
 	if (!config.serverless) {
 		const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
 		const RATE_LIMIT_WINDOW_MS = 60_000 // 1 minute
@@ -179,9 +187,6 @@ export async function createServer(
 
 		// In long-running mode: run immediately + schedule periodic runs
 		if (!config.serverless) {
-			// Track the currently running archival for graceful shutdown
-			let currentArchivalPromise: Promise<void> | null = null
-
 			const trackAndRun = (): Promise<void> => {
 				const p = runArchival()
 				currentArchivalPromise = p
@@ -194,21 +199,20 @@ export async function createServer(
 			console.log('Running archival process in background...')
 			trackAndRun()
 
-			const intervalMs =
+			const MIN_INTERVAL_MS = 60_000 // 1 minute minimum to prevent tight loops
+			const intervalMs = Math.max(
+				MIN_INTERVAL_MS,
 				Number.parseInt(
 					process.env.PG_HISTORY_ARCHIVAL_INTERVAL_MS || '3600000',
 					10,
-				) || 3_600_000
-			const archivalInterval = setInterval(() => {
+				) || 3_600_000,
+			)
+			archivalInterval = setInterval(() => {
 				console.log('Running scheduled archival...')
 				trackAndRun().catch((err) => {
 					console.error('Scheduled archival failed:', err)
 				})
 			}, intervalMs)
-
-			const appState = app as unknown as Record<string, unknown>
-			appState._archivalPromise = () => currentArchivalPromise
-			appState._archivalInterval = archivalInterval
 		}
 	}
 
@@ -223,13 +227,29 @@ export async function createServer(
 			})
 			return jwtMiddleware(c, next)
 		})
+	} else if (config.enableHistory) {
+		console.warn(
+			'[pg-history] WARNING: API endpoints are unauthenticated. Set PG_HISTORY_JWT_SECRET for production use.',
+		)
 	}
 
+	// Security headers for all responses
+	app.use('*', async (c, next) => {
+		await next()
+		c.header('X-Content-Type-Options', 'nosniff')
+		c.header('X-Frame-Options', 'DENY')
+	})
+
 	// Health check endpoint (no auth required)
+	// Only expose safe status fields — never internal error messages
 	app.get('/health', (c) => {
 		const health: Record<string, unknown> = { status: 'ok' }
 		if (config.enableArchiver) {
-			health.archival = archivalHealth
+			health.archival = {
+				status: archivalHealth.status,
+				attempts: archivalHealth.attempts,
+				lastCompletedAt: archivalHealth.lastCompletedAt,
+			}
 			if (archivalHealth.status === 'failed') {
 				health.status = 'degraded'
 			}
@@ -237,8 +257,8 @@ export async function createServer(
 		return c.json(health)
 	})
 
-	// Archival stats endpoint (fast - no audit_log scan)
-	// Only available if archiver is enabled
+	// Archival stats endpoint — protected by JWT (registered above)
+	// Moved after JWT middleware so it's auth-gated when JWT is configured
 	if (config.enableArchiver) {
 		app.get('/api/stats', async (c) => {
 			const stats = await getArchivalStats(config.pool)
@@ -250,12 +270,20 @@ export async function createServer(
 	// Authenticated via archiveCronSecret config or CRON_SECRET env var (Vercel convention)
 	if (config.enableArchiver && runArchival) {
 		const cronSecret = config.archiveCronSecret || process.env.CRON_SECRET
+		if (!cronSecret) {
+			console.warn(
+				'[pg-history] WARNING: /api/archive endpoint has no authentication. Set archiveCronSecret or CRON_SECRET env var.',
+			)
+		}
 
 		app.post('/api/archive', async (c) => {
-			// Verify cron secret if configured
+			// Verify cron secret using timing-safe comparison to prevent timing attacks
 			if (cronSecret) {
-				const authHeader = c.req.header('authorization')
-				if (authHeader !== `Bearer ${cronSecret}`) {
+				const authHeader = c.req.header('authorization') ?? ''
+				const expected = `Bearer ${cronSecret}`
+				const a = Buffer.from(authHeader)
+				const b = Buffer.from(expected)
+				if (a.length !== b.length || !timingSafeEqual(a, b)) {
 					return c.json(
 						createErrorResponse('UNAUTHORIZED', 'Invalid cron secret'),
 						401,
@@ -270,8 +298,11 @@ export async function createServer(
 					archival: archivalHealth,
 				})
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error)
-				return c.json(createErrorResponse('ARCHIVAL_ERROR', message), 500)
+				console.error('[pg-history] archival error', error)
+				return c.json(
+					createErrorResponse('ARCHIVAL_ERROR', 'An internal error occurred'),
+					500,
+				)
 			}
 		})
 	}
@@ -326,8 +357,11 @@ export async function createServer(
 						500,
 					)
 				}
-				const message = error instanceof Error ? error.message : String(error)
-				return c.json(createErrorResponse('DATABASE_ERROR', message), 500)
+				console.error('[pg-history] getHistory error', error)
+				return c.json(
+					createErrorResponse('DATABASE_ERROR', 'An internal error occurred'),
+					500,
+				)
 			}
 		})
 
@@ -398,8 +432,11 @@ export async function createServer(
 						400,
 					)
 				}
-				const message = error instanceof Error ? error.message : String(error)
-				return c.json(createErrorResponse('DATABASE_ERROR', message), 500)
+				console.error('[pg-history] search error', error)
+				return c.json(
+					createErrorResponse('DATABASE_ERROR', 'An internal error occurred'),
+					500,
+				)
 			}
 		})
 
@@ -454,8 +491,11 @@ export async function createServer(
 				if (error instanceof AuditEntryNotFoundError) {
 					return c.json(createErrorResponse('NOT_FOUND', error.message), 404)
 				}
-				const message = error instanceof Error ? error.message : String(error)
-				return c.json(createErrorResponse('DATABASE_ERROR', message), 500)
+				console.error('[pg-history] revert error', error)
+				return c.json(
+					createErrorResponse('DATABASE_ERROR', 'An internal error occurred'),
+					500,
+				)
 			}
 		})
 	}
@@ -515,22 +555,13 @@ if (import.meta.main) {
 		})
 
 		// Graceful shutdown
-		const appState = app as unknown as Record<string, unknown>
-		const getArchivalPromise = appState._archivalPromise as
-			| (() => Promise<void> | null)
-			| undefined
-		const archivalInterval = appState._archivalInterval as
-			| ReturnType<typeof setInterval>
-			| undefined
-
 		const shutdown = async (signal: string) => {
 			console.log(`Received ${signal}, shutting down gracefully...`)
 			server.stop()
 			if (archivalInterval) clearInterval(archivalInterval)
-			const currentPromise = getArchivalPromise?.()
-			if (currentPromise) {
+			if (currentArchivalPromise) {
 				console.log('Waiting for background archival to complete...')
-				await currentPromise.catch(() => {})
+				await currentArchivalPromise.catch(() => {})
 			}
 			await pool.end()
 			process.exit(0)

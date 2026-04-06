@@ -1,6 +1,7 @@
 import {
 	CreateBucketCommand,
 	HeadBucketCommand,
+	PutObjectCommand,
 	S3Client,
 } from '@aws-sdk/client-s3'
 
@@ -54,6 +55,32 @@ export async function ensureTestBucket(bucketName: string): Promise<void> {
 			)
 		}
 	}
+}
+
+/**
+ * Upload a dummy object to S3 so that verifyS3File finds it during tests.
+ */
+export async function putTestS3Object(
+	bucketName: string,
+	key: string,
+): Promise<void> {
+	const client = new S3Client({
+		endpoint: process.env.PG_HISTORY_S3_ENDPOINT || 'http://localhost:9000',
+		region: process.env.PG_HISTORY_S3_REGION || 'us-east-1',
+		credentials: {
+			accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID || 'root',
+			secretAccessKey:
+				process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY || 'password',
+		},
+		forcePathStyle: true,
+	})
+	await client.send(
+		new PutObjectCommand({
+			Bucket: bucketName,
+			Key: key,
+			Body: Buffer.from('test-data'),
+		}),
+	)
 }
 
 /**

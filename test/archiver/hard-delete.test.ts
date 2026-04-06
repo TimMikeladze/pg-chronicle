@@ -3,7 +3,7 @@ import type { Pool } from 'pg'
 import { PgHistoryArchiver } from '../../src/PgHistoryArchiver'
 import { setupArchiverSchema } from '../../src/schema'
 import { cleanupTestData, getTestConnection, setupTestData } from './helpers/db'
-import { ensureTestBucket, isS3Configured } from './helpers/s3'
+import { ensureTestBucket, isS3Configured, putTestS3Object } from './helpers/s3'
 
 describe('PgHistoryArchiver - Hard Delete', () => {
 	let pool: Pool
@@ -40,14 +40,18 @@ describe('PgHistoryArchiver - Hard Delete', () => {
 	})
 
 	test('should permanently delete soft-deleted records past grace period', async () => {
+		const testS3Key = 'test-archive/hard-delete-test.parquet'
+		await putTestS3Object('test-bucket', testS3Key)
+
 		// Create soft-deleted records past grace period with s3_path set
-		await pool.query(`
-      UPDATE audit_log
+		await pool.query(
+			`UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '20 days',
           soft_deleted_at = NOW() - INTERVAL '10 days',
-          s3_path = 'test://archive/' || id || '.parquet'
-      WHERE table_name = 'users' AND id LIKE 'old-%'
-    `)
+          s3_path = $1
+      WHERE table_name = 'users' AND id LIKE 'old-%'`,
+			[testS3Key],
+		)
 
 		const initialCount = await pool.query(`
       SELECT COUNT(*) as count FROM audit_log WHERE table_name = 'users'
