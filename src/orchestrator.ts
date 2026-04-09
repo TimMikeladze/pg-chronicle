@@ -1,6 +1,8 @@
 import type { Pool } from 'pg'
+import { consoleLogger, type Logger } from './logger'
 import { updateArchivalStats } from './schema'
 import type {
+	OrchestratorConfig,
 	OrchestratorStats,
 	RetentionConfig,
 	RunOptions,
@@ -8,28 +10,77 @@ import type {
 	TableStats,
 } from './types'
 
-// Fixed namespace for advisory locks to avoid collisions with other lock users
+// Fixed namespace for advisory locks to avoid collisions with other lock users.
+// We prefix the table name with 'pg-history:' before hashing so two different
+// applications using hashtext() on raw table names cannot collide with us.
 const ADVISORY_LOCK_NAMESPACE = 73_616_468 // arbitrary stable int32
+const ADVISORY_LOCK_KEY_PREFIX = 'pg-history:'
 
 export class Orchestrator {
+	private s3Config: S3Config
+	private retentionConfig: RetentionConfig
+	private gracePeriod: number
+	private batchSize: number
+	private logger: Logger
+
+	/**
+	 * Construct an Orchestrator.
+	 *
+	 * Prefers the config-object form to avoid positional argument mix-ups.
+	 * The legacy 4-positional form is still accepted for backwards compatibility.
+	 */
+	constructor(config: OrchestratorConfig)
 	constructor(
-		private s3Config: S3Config,
-		private retentionConfig: RetentionConfig,
-		private gracePeriod: number,
-		private batchSize: number,
-	) {}
+		s3Config: S3Config,
+		retentionConfig: RetentionConfig,
+		gracePeriod: number,
+		batchSize: number,
+	)
+	constructor(
+		configOrS3: OrchestratorConfig | S3Config,
+		retentionConfig?: RetentionConfig,
+		gracePeriod?: number,
+		batchSize?: number,
+	) {
+		if (
+			'retention' in configOrS3 &&
+			'gracePeriod' in configOrS3 &&
+			'batchSize' in configOrS3
+		) {
+			// Config-object form
+			const cfg = configOrS3 as OrchestratorConfig
+			this.s3Config = cfg.s3
+			this.retentionConfig = cfg.retention
+			this.gracePeriod = cfg.gracePeriod
+			this.batchSize = cfg.batchSize
+			this.logger = cfg.logger ?? consoleLogger
+		} else {
+			// Legacy 4-positional form
+			this.s3Config = configOrS3 as S3Config
+			this.retentionConfig = retentionConfig as RetentionConfig
+			this.gracePeriod = gracePeriod as number
+			this.batchSize = batchSize as number
+			this.logger = consoleLogger
+		}
+	}
 
 	async discoverTables(pool: Pool): Promise<string[]> {
-		// Query pg_trigger to find tables with audit triggers.
-		// Use relname (unqualified) instead of ::regclass::text (which produces
-		// schema-qualified names like "public"."users") so that returned names
-		// match retentionConfig.tables keys and validateTableName expectations.
+		// Query pg_trigger to find tables with pg-history audit triggers.
+		// We require BOTH:
+		//   1. The trigger name matches 'audit_trigger_%'
+		//   2. The trigger's function name matches 'audit_trigger_func_%'
+		// to avoid picking up unrelated triggers that happen to share our prefix.
+		// Use relname (unqualified) so returned names match retentionConfig.tables
+		// keys and validateTableName expectations.
 		const result = await pool.query(`
       SELECT DISTINCT
         c.relname AS table_name
       FROM pg_trigger t
       JOIN pg_class c ON c.oid = t.tgrelid
+      JOIN pg_proc p ON p.oid = t.tgfoid
       WHERE t.tgname LIKE 'audit_trigger_%'
+        AND p.proname LIKE 'audit_trigger_func_%'
+        AND NOT t.tgisinternal
       ORDER BY table_name
     `)
 
@@ -69,6 +120,30 @@ export class Orchestrator {
 				stats.totalRecordsArchived += tableStats.recordsArchived
 				stats.totalRecordsSoftDeleted += tableStats.recordsSoftDeleted
 				stats.totalRecordsHardDeleted += tableStats.recordsHardDeleted
+
+				// Update archival stats OUTSIDE the advisory lock (held by processTable).
+				// updateArchivalStats scans audit_log with FILTER aggregates which can be
+				// expensive on large tables — we don't want to hold the lock for it.
+				// Also skip in dry-run mode since nothing actually changed.
+				if (!options.dryRun) {
+					try {
+						const retentionDays =
+							this.retentionConfig.tables?.[table] ||
+							this.retentionConfig.default
+						await updateArchivalStats(
+							pool,
+							table,
+							retentionDays,
+							this.gracePeriod,
+						)
+					} catch (error) {
+						stats.errors.push({
+							table,
+							operation: 'update_stats',
+							error: error instanceof Error ? error.message : String(error),
+						})
+					}
+				}
 			} catch (error) {
 				stats.errors.push({
 					table,
@@ -102,17 +177,18 @@ export class Orchestrator {
 		// NOTE: This holds a pool connection for the entire duration of table processing
 		// (archive + soft delete + hard delete). Ensure the pool max is at least 2
 		// (1 for the lock + 1 for queries). Tables are processed sequentially.
+		const lockKey = `${ADVISORY_LOCK_KEY_PREFIX}${tableName}`
 		const lockClient = await pool.connect()
 		try {
 			const lockResult = await lockClient.query(
 				`SELECT pg_try_advisory_lock($1, hashtext($2))`,
-				[ADVISORY_LOCK_NAMESPACE, tableName],
+				[ADVISORY_LOCK_NAMESPACE, lockKey],
 			)
 			const acquired = lockResult.rows[0]?.pg_try_advisory_lock === true
 			if (!acquired) {
-				console.log(
-					`[pg-history] Skipping ${tableName} — another instance is processing it`,
-				)
+				this.logger.info('Skipping table — another instance is processing it', {
+					table: tableName,
+				})
 				lockClient.release()
 				stats.durationMs = Date.now() - startTime
 				return stats
@@ -165,16 +241,12 @@ export class Orchestrator {
 					[tableName, gracePeriodDate],
 				)
 
-				console.log(`[DRY RUN] ${tableName}:`)
-				console.log(
-					`  Would archive: ${archiveCount.rows[0]?.count || 0} records`,
-				)
-				console.log(
-					`  Would soft delete: ${softDeleteCount.rows[0]?.count || 0} records`,
-				)
-				console.log(
-					`  Would hard delete: ${hardDeleteCount.rows[0]?.count || 0} records`,
-				)
+				this.logger.info('DRY RUN', {
+					table: tableName,
+					wouldArchive: Number(archiveCount.rows[0]?.count || 0),
+					wouldSoftDelete: Number(softDeleteCount.rows[0]?.count || 0),
+					wouldHardDelete: Number(hardDeleteCount.rows[0]?.count || 0),
+				})
 
 				stats.durationMs = Date.now() - startTime
 				return stats
@@ -188,6 +260,7 @@ export class Orchestrator {
 				retention: this.retentionConfig,
 				gracePeriod: this.gracePeriod,
 				batchSize: this.batchSize,
+				logger: this.logger,
 			})
 
 			// Archive old records in batches
@@ -205,20 +278,27 @@ export class Orchestrator {
 					if (batchResult.recordCount === 0) {
 						hasMore = false
 					} else {
-						console.log(
-							`  Batch ${batchNumber}: Archived ${batchResult.recordCount} records to ${batchResult.s3Path}`,
-						)
+						this.logger.info('Batch archived', {
+							table: tableName,
+							batch: batchNumber,
+							records: batchResult.recordCount,
+							s3Path: batchResult.s3Path,
+						})
 					}
 				} catch (error) {
-					console.error(
-						`  Batch ${batchNumber} failed: ${error instanceof Error ? error.message : String(error)}`,
-					)
+					this.logger.error('Batch failed', {
+						table: tableName,
+						batch: batchNumber,
+						err: error,
+					})
 					throw error
 				}
 			}
 
 			// Soft delete archived records past grace period (in batches)
-			console.log(`  Soft deleting records past grace period...`)
+			this.logger.info('Soft deleting records past grace period', {
+				table: tableName,
+			})
 			let totalSoftDeleted = 0
 			let softDeleteHasMore = true
 
@@ -229,14 +309,19 @@ export class Orchestrator {
 				if (softDeleted === 0) {
 					softDeleteHasMore = false
 				} else {
-					console.log(`  Soft deleted ${softDeleted} records`)
+					this.logger.info('Soft deleted batch', {
+						table: tableName,
+						records: softDeleted,
+					})
 				}
 			}
 
 			stats.recordsSoftDeleted = totalSoftDeleted
 
 			// Hard delete soft-deleted records past grace period
-			console.log(`  Hard deleting soft-deleted records...`)
+			this.logger.info('Hard deleting soft-deleted records', {
+				table: tableName,
+			})
 			let totalHardDeleted = 0
 			let hardDeleteHasMore = true
 
@@ -247,20 +332,14 @@ export class Orchestrator {
 				if (hardDeleted === 0) {
 					hardDeleteHasMore = false
 				} else {
-					console.log(`  Hard deleted ${hardDeleted} records`)
+					this.logger.info('Hard deleted batch', {
+						table: tableName,
+						records: hardDeleted,
+					})
 				}
 			}
 
 			stats.recordsHardDeleted = totalHardDeleted
-
-			const retentionDays =
-				this.retentionConfig.tables?.[tableName] || this.retentionConfig.default
-			await updateArchivalStats(
-				pool,
-				tableName,
-				retentionDays,
-				this.gracePeriod,
-			)
 
 			stats.durationMs = Date.now() - startTime
 			return stats
@@ -269,7 +348,7 @@ export class Orchestrator {
 			await lockClient
 				.query(`SELECT pg_advisory_unlock($1, hashtext($2))`, [
 					ADVISORY_LOCK_NAMESPACE,
-					tableName,
+					lockKey,
 				])
 				.catch(() => {})
 			lockClient.release()

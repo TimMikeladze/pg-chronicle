@@ -43,13 +43,15 @@ describe('PgHistoryArchiver - Hard Delete', () => {
 		const testS3Key = 'test-archive/hard-delete-test.parquet'
 		await putTestS3Object('test-bucket', testS3Key)
 
-		// Create soft-deleted records past grace period with s3_path set
+		// Create soft-deleted records past grace period with s3_path set.
+		// Target "old" rows by their original changed_at (2024-01-15) instead
+		// of id prefix — the helper now uses BIGSERIAL ids.
 		await pool.query(
 			`UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '20 days',
           soft_deleted_at = NOW() - INTERVAL '10 days',
           s3_path = $1
-      WHERE table_name = 'users' AND id LIKE 'old-%'`,
+      WHERE table_name = 'users' AND changed_at < '2025-01-01'`,
 			[testS3Key],
 		)
 
@@ -71,12 +73,12 @@ describe('PgHistoryArchiver - Hard Delete', () => {
 	})
 
 	test('should not delete recently soft-deleted records', async () => {
-		// Create soft-deleted records within grace period
+		// Create soft-deleted records within grace period (target old rows by date)
 		await pool.query(`
       UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '15 days',
           soft_deleted_at = NOW() - INTERVAL '3 days'
-      WHERE table_name = 'users' AND id LIKE 'old-%'
+      WHERE table_name = 'users' AND changed_at < '2025-01-01'
     `)
 
 		const deleted = await archiver.hardDeletePurged('users')
@@ -102,5 +104,23 @@ describe('PgHistoryArchiver - Hard Delete', () => {
 		expect(Number(finalCount.rows[0].count)).toBe(
 			Number(initialCount.rows[0].count),
 		)
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #18: hardDeletePurged closes TOCTOU window with row locks
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #18: hardDeletePurged uses row locks', () => {
+	test('hardDeletePurged wraps delete in a transaction with FOR UPDATE', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+
+		const region = source.slice(source.indexOf('async hardDeletePurged'))
+		// The implementation must use BEGIN, SELECT FOR UPDATE, and commit/rollback
+		expect(region).toContain('BEGIN')
+		expect(region).toContain('FOR UPDATE')
+		expect(region).toContain('COMMIT')
+		expect(region).toContain('ROLLBACK')
 	})
 })

@@ -84,14 +84,16 @@ export async function getTestConnection(): Promise<Pool> {
 }
 
 export async function setupTestData(pool: Pool): Promise<void> {
-	// Create audit_log table for testing
+	// Create audit_log table matching the PRODUCTION schema shape created by
+	// PgHistory.setup() — id is BIGSERIAL so parquet INT64 storage works.
+	// Note: real PgHistory uses partitioning; tests skip that for simplicity.
 	await pool.query(`
     CREATE TABLE IF NOT EXISTS audit_log (
-      id TEXT PRIMARY KEY,
+      id BIGSERIAL PRIMARY KEY,
       table_name TEXT NOT NULL,
       record_id TEXT NOT NULL,
       operation TEXT NOT NULL,
-      changed_at TIMESTAMP NOT NULL,
+      changed_at TIMESTAMPTZ NOT NULL,
       old_data JSONB,
       new_data JSONB,
       changed_by TEXT,
@@ -99,18 +101,17 @@ export async function setupTestData(pool: Pool): Promise<void> {
     )
   `)
 
-	// Insert test records
+	// Insert test records (let BIGSERIAL assign ids)
 	const oldDate = new Date('2024-01-15')
 	const recentDate = new Date()
 
 	for (let i = 0; i < 100; i++) {
 		await pool.query(
 			`
-      INSERT INTO audit_log (id, table_name, record_id, operation, changed_at, new_data, changed_by)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO audit_log (table_name, record_id, operation, changed_at, new_data, changed_by)
+      VALUES ($1, $2, $3, $4, $5, $6)
     `,
 			[
-				`old-${i}`,
 				'users',
 				`user-${i}`,
 				'INSERT',
@@ -124,11 +125,10 @@ export async function setupTestData(pool: Pool): Promise<void> {
 	for (let i = 0; i < 50; i++) {
 		await pool.query(
 			`
-      INSERT INTO audit_log (id, table_name, record_id, operation, changed_at, new_data, changed_by)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO audit_log (table_name, record_id, operation, changed_at, new_data, changed_by)
+      VALUES ($1, $2, $3, $4, $5, $6)
     `,
 			[
-				`recent-${i}`,
 				'users',
 				`user-${i + 100}`,
 				'INSERT',

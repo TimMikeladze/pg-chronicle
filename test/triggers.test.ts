@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { PgHistory } from '../src'
+import { buildTriggerFunctionSql } from '../src/pg-history-triggers'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()
@@ -212,5 +213,46 @@ describe('PgHistory triggers', () => {
 		// record_id should be a MD5 hash (32 character hex string)
 		expect(logs.rows[0]?.record_id).toMatch(/^[a-f0-9]{32}$/)
 		expect(logs.rows[0]?.new_data?.message).toBe('Test message')
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// buildTriggerFunctionSql — pure function extracted for unit testing
+// ─────────────────────────────────────────────────────────
+
+describe('buildTriggerFunctionSql', () => {
+	test('generates function for single-column primary key', () => {
+		const sql = buildTriggerFunctionSql({
+			funcName: 'audit_trigger_func_users',
+			pkColumns: ['id'],
+			auditTable: '"public"."audit_log"',
+		})
+		expect(sql).toContain(
+			'CREATE OR REPLACE FUNCTION "audit_trigger_func_users"()',
+		)
+		expect(sql).toContain('OLD."id"::text')
+		expect(sql).toContain('NEW."id"::text')
+		expect(sql).toContain('"public"."audit_log"')
+	})
+
+	test('generates function for composite primary key', () => {
+		const sql = buildTriggerFunctionSql({
+			funcName: 'audit_trigger_func_order_items',
+			pkColumns: ['order_id', 'item_id'],
+			auditTable: '"public"."audit_log"',
+		})
+		expect(sql).toContain('COALESCE(NEW."order_id"::text')
+		expect(sql).toContain('COALESCE(NEW."item_id"::text')
+		expect(sql).toContain("|| '|' ||")
+	})
+
+	test('generates function for no primary key (md5 hash)', () => {
+		const sql = buildTriggerFunctionSql({
+			funcName: 'audit_trigger_func_logs',
+			pkColumns: [],
+			auditTable: '"public"."audit_log"',
+		})
+		expect(sql).toContain('md5(row_to_json(OLD)::text)')
+		expect(sql).toContain('md5(row_to_json(NEW)::text)')
 	})
 })

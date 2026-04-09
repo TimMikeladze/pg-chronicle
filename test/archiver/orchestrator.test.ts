@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Pool } from 'pg'
+import { silentLogger } from '../../src/logger'
 import { Orchestrator } from '../../src/orchestrator'
 import { setupArchiverSchema } from '../../src/schema'
 import { cleanupTestData, getTestConnection, setupTestData } from './helpers/db'
@@ -113,5 +114,91 @@ describe('Orchestrator', () => {
       WHERE archived_at IS NOT NULL
     `)
 		expect(Number(archived.rows[0].count)).toBe(0)
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #10: advisory lock key prefixed with pg-history:
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #10: advisory lock uses prefixed key', () => {
+	test('orchestrator.ts uses ADVISORY_LOCK_KEY_PREFIX for lock key', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/orchestrator.ts', 'utf-8')
+
+		expect(source).toContain('pg-history:')
+		expect(source).toContain('ADVISORY_LOCK_KEY_PREFIX')
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #23: updateArchivalStats runs outside advisory lock
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #23: updateArchivalStats runs outside advisory lock', () => {
+	test('run() calls updateArchivalStats from run loop, not inside processTable', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/orchestrator.ts', 'utf-8')
+
+		// The run() method should contain the updateArchivalStats call
+		const runRegion = source.slice(
+			source.indexOf('async run('),
+			source.indexOf('private async processTable('),
+		)
+		expect(runRegion).toContain('updateArchivalStats')
+
+		// processTable should NOT contain updateArchivalStats anymore
+		const processTableRegion = source.slice(
+			source.indexOf('private async processTable('),
+		)
+		expect(processTableRegion).not.toContain('updateArchivalStats(')
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #24: discoverTables uses specific trigger+function match
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #24: discoverTables uses specific trigger+function match', () => {
+	test('SQL joins pg_proc to match audit_trigger_func_', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/orchestrator.ts', 'utf-8')
+
+		expect(source).toContain('audit_trigger_func_')
+		expect(source).toContain('JOIN pg_proc p ON p.oid = t.tgfoid')
+		expect(source).toContain('NOT t.tgisinternal')
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #32: Orchestrator accepts a config object
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #32: Orchestrator accepts a config object', () => {
+	test('Orchestrator exposes a single-config-object constructor overload', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/orchestrator.ts', 'utf-8')
+
+		expect(source).toContain('OrchestratorConfig')
+		expect(source).toMatch(/constructor\(config: OrchestratorConfig\)/)
+	})
+
+	test('backwards-compatible 4-positional constructor still works', () => {
+		const legacy = new Orchestrator(
+			{ bucket: 'test' },
+			{ default: 90 },
+			7,
+			1000,
+		)
+		expect(legacy).toBeDefined()
+
+		const modern = new Orchestrator({
+			s3: { bucket: 'test' },
+			retention: { default: 90 },
+			gracePeriod: 7,
+			batchSize: 1000,
+			logger: silentLogger,
+		})
+		expect(modern).toBeDefined()
 	})
 })

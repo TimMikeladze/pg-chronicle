@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import type { Logger } from './logger'
 
 export interface PgHistoryConfig {
 	/** List of tables to track history */
@@ -9,6 +10,12 @@ export interface PgHistoryConfig {
 
 	/** Or provide an existing Pool connection instance */
 	pool?: Pool
+
+	/**
+	 * Optional logger for operational messages. Defaults to console-based logger.
+	 * Pass silentLogger (from './logger') in tests to suppress output.
+	 */
+	logger?: Logger
 }
 
 export interface AuditEntry {
@@ -61,6 +68,24 @@ export interface ArchiverConfig {
 
 	/** Batch size for processing (default: 10000) */
 	batchSize?: number
+
+	/**
+	 * Optional logger for operational messages. Defaults to console-based logger.
+	 * Pass silentLogger (from './logger') in tests to suppress output.
+	 */
+	logger?: Logger
+}
+
+/**
+ * Orchestrator configuration — replaces the positional constructor arguments
+ * to avoid easy swap-order bugs.
+ */
+export interface OrchestratorConfig {
+	s3: S3Config
+	retention: RetentionConfig
+	gracePeriod: number
+	batchSize: number
+	logger?: Logger
 }
 
 export interface S3Config {
@@ -94,7 +119,8 @@ export interface ServerConfig {
 		s3: S3Config
 		retention: RetentionConfig
 		gracePeriod: number
-		batchSize: number
+		/** Batch size for processing (default: 10000) — now optional for consistency with ArchiverConfig */
+		batchSize?: number
 	}
 
 	/** Run options for archiver (only used if enableArchiver is true) */
@@ -117,6 +143,16 @@ export interface ServerConfig {
 
 	/** Secret for authenticating cron/archive triggers (POST /api/archive) */
 	archiveCronSecret?: string
+
+	/** Optional injectable logger (defaults to consoleLogger) */
+	logger?: Logger
+
+	/**
+	 * Expose /openapi endpoint unauthenticated (default: false).
+	 * When false, the OpenAPI schema requires the same JWT as /api/* routes
+	 * to prevent leaking the API shape to unauthenticated callers.
+	 */
+	publicOpenApi?: boolean
 }
 
 export interface OrchestratorStats {

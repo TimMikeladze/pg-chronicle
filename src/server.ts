@@ -10,11 +10,14 @@ import {
 	PgHistoryError,
 	SetupRequiredError,
 	TableNotConfiguredError,
+	ValidationError,
 } from './errors'
+import { consoleLogger, type Logger } from './logger'
 import { Orchestrator } from './orchestrator'
 import { PgHistory } from './PgHistory'
 import { getArchivalStats, setupArchiverSchema } from './schema'
 import type { ServerConfig } from './types'
+import { parseRevertBody, parseSearchBody } from './validation'
 
 type Variables = JwtVariables & {
 	pgHistory?: PgHistory
@@ -23,14 +26,47 @@ type Variables = JwtVariables & {
 // Module-level archival state for graceful shutdown coordination
 let currentArchivalPromise: Promise<void> | null = null
 let archivalInterval: ReturnType<typeof setInterval> | undefined
+let rateLimitCleanupInterval: ReturnType<typeof setInterval> | undefined
+// In-flight request count — used by graceful shutdown to wait for drain
+let inFlightRequests = 0
+const inFlightWaiters: Array<() => void> = []
+
+async function waitForInFlightRequests(timeoutMs: number): Promise<void> {
+	if (inFlightRequests === 0) return
+	await new Promise<void>((resolve) => {
+		const timer = setTimeout(() => {
+			const idx = inFlightWaiters.indexOf(resolve)
+			if (idx >= 0) inFlightWaiters.splice(idx, 1)
+			resolve()
+		}, timeoutMs)
+		inFlightWaiters.push(() => {
+			clearTimeout(timer)
+			resolve()
+		})
+	})
+}
 
 export async function createServer(
 	config: ServerConfig,
 ): Promise<Hono<{ Variables: Variables }>> {
 	const app = new Hono<{ Variables: Variables }>()
+	const logger: Logger = config.logger ?? consoleLogger
 
 	// Limit request body size to 1MB to prevent memory exhaustion
 	app.use('/api/*', bodyLimit({ maxSize: 1024 * 1024 }))
+
+	// Track in-flight requests so graceful shutdown can drain
+	app.use('*', async (_c, next) => {
+		inFlightRequests++
+		try {
+			await next()
+		} finally {
+			inFlightRequests--
+			if (inFlightRequests === 0) {
+				for (const waiter of inFlightWaiters.splice(0)) waiter()
+			}
+		}
+	})
 
 	// In-memory rate limiter — only useful in long-running processes, skip in serverless.
 	// NOTE: x-forwarded-for is client-spoofable. This rate limiter only works correctly
@@ -40,6 +76,25 @@ export async function createServer(
 		const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
 		const RATE_LIMIT_WINDOW_MS = 60_000 // 1 minute
 		const RATE_LIMIT_MAX = 100 // requests per window
+		const RATE_LIMIT_CLEANUP_INTERVAL_MS = 30_000 // sweep every 30s
+
+		// Periodically sweep expired entries on a timer instead of in the
+		// request path. Bounded at ~2x MAX entries in the worst case until the
+		// next sweep.
+		rateLimitCleanupInterval = setInterval(() => {
+			const cleanupNow = Date.now()
+			for (const [key, val] of rateLimitMap) {
+				if (cleanupNow > val.resetAt) rateLimitMap.delete(key)
+			}
+		}, RATE_LIMIT_CLEANUP_INTERVAL_MS)
+		// Don't hold the event loop open just for cleanup
+		if (
+			typeof rateLimitCleanupInterval === 'object' &&
+			rateLimitCleanupInterval &&
+			'unref' in rateLimitCleanupInterval
+		) {
+			;(rateLimitCleanupInterval as unknown as { unref: () => void }).unref()
+		}
 
 		app.use('/api/*', async (c, next) => {
 			const ip =
@@ -68,13 +123,6 @@ export async function createServer(
 				}
 			}
 
-			// Periodically clean up expired entries
-			if (rateLimitMap.size > 10_000) {
-				for (const [key, val] of rateLimitMap) {
-					if (now > val.resetAt) rateLimitMap.delete(key)
-				}
-			}
-
 			await next()
 		})
 	}
@@ -82,12 +130,18 @@ export async function createServer(
 	// Initialize PgHistory if enabled
 	let pgHistory: PgHistory | undefined
 	if (config.enableHistory && config.historyConfig) {
-		console.log('Initializing PgHistory API...')
+		logger.info('Initializing PgHistory API')
 		pgHistory = new PgHistory({
 			tables: config.historyConfig.tables,
 			pool: config.pool,
+			logger,
 		})
 		await pgHistory.setup()
+		// After PgHistory setup, also run archiver schema setup below so the
+		// soft_deleted_at column exists. Invalidate the cached column check.
+		if (config.enableArchiver) {
+			pgHistory.invalidateSoftDeleteColumnCache()
+		}
 	}
 
 	// Store in context for route handlers
@@ -115,8 +169,10 @@ export async function createServer(
 	let runArchival: () => Promise<void> = () => Promise.resolve()
 
 	if (config.enableArchiver && config.archiverConfig) {
-		console.log('Setting up archiver schema...')
+		logger.info('Setting up archiver schema')
 		await setupArchiverSchema(config.pool)
+		// If PgHistory is also enabled, the soft-delete column now exists
+		if (pgHistory) pgHistory.invalidateSoftDeleteColumnCache()
 
 		const archiverConfig = config.archiverConfig
 		const runOptions = config.runOptions || {}
@@ -134,16 +190,17 @@ export async function createServer(
 						archivalHealth.status = 'running'
 						archivalHealth.attempts++
 
-						const orchestrator = new Orchestrator(
-							archiverConfig.s3,
-							archiverConfig.retention,
-							archiverConfig.gracePeriod,
-							archiverConfig.batchSize,
-						)
+						const orchestrator = new Orchestrator({
+							s3: archiverConfig.s3,
+							retention: archiverConfig.retention,
+							gracePeriod: archiverConfig.gracePeriod,
+							batchSize: archiverConfig.batchSize ?? 10_000,
+							logger,
+						})
 
 						const stats = await orchestrator.run(config.pool, runOptions)
 
-						console.log('Archival complete', {
+						logger.info('Archival complete', {
 							tables: stats.tables.length,
 							recordsArchived: stats.totalRecordsArchived,
 							recordsSoftDeleted: stats.totalRecordsSoftDeleted,
@@ -153,7 +210,7 @@ export async function createServer(
 						})
 
 						for (const error of stats.errors) {
-							console.error('Table processing error', error)
+							logger.error('Table processing error', { err: error })
 						}
 
 						archivalHealth.status = 'completed'
@@ -167,16 +224,18 @@ export async function createServer(
 
 						if (attempt < MAX_RETRIES) {
 							const delay = RETRY_DELAYS[attempt] || 60_000
-							console.error(
-								`Background archival failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}), retrying in ${delay / 1000}s:`,
+							logger.error('Background archival failed, retrying', {
+								attempt: attempt + 1,
+								maxAttempts: MAX_RETRIES + 1,
+								delayMs: delay,
 								message,
-							)
+							})
 							await new Promise((r) => setTimeout(r, delay))
 						} else {
-							console.error(
-								`Background archival failed after ${MAX_RETRIES + 1} attempts:`,
+							logger.error('Background archival failed after all attempts', {
+								attempts: MAX_RETRIES + 1,
 								message,
-							)
+							})
 						}
 					}
 				}
@@ -196,7 +255,7 @@ export async function createServer(
 				return p
 			}
 
-			console.log('Running archival process in background...')
+			logger.info('Running archival process in background')
 			trackAndRun()
 
 			const MIN_INTERVAL_MS = 60_000 // 1 minute minimum to prevent tight loops
@@ -208,28 +267,28 @@ export async function createServer(
 				) || 3_600_000,
 			)
 			archivalInterval = setInterval(() => {
-				console.log('Running scheduled archival...')
+				logger.info('Running scheduled archival')
 				trackAndRun().catch((err) => {
-					console.error('Scheduled archival failed:', err)
+					logger.error('Scheduled archival failed', { err })
 				})
 			}, intervalMs)
 		}
 	}
 
-	// Conditionally apply JWT auth if PG_HISTORY_JWT_SECRET is set
+	// Conditionally apply JWT auth if PG_HISTORY_JWT_SECRET is set.
+	// When set, we also gate the /openapi endpoint by default unless the
+	// consumer explicitly opts into publicOpenApi.
 	const jwtSecret = process.env.PG_HISTORY_JWT_SECRET
 	if (jwtSecret) {
-		console.log('JWT authentication enabled')
-		app.use('/api/*', (c, next) => {
-			const jwtMiddleware = jwt({
-				secret: jwtSecret,
-				alg: 'HS256',
-			})
-			return jwtMiddleware(c, next)
-		})
+		logger.info('JWT authentication enabled')
+		const jwtMiddleware = jwt({ secret: jwtSecret, alg: 'HS256' })
+		app.use('/api/*', (c, next) => jwtMiddleware(c, next))
+		if (!config.publicOpenApi) {
+			app.use('/openapi', (c, next) => jwtMiddleware(c, next))
+		}
 	} else if (config.enableHistory) {
-		console.warn(
-			'[pg-history] WARNING: API endpoints are unauthenticated. Set PG_HISTORY_JWT_SECRET for production use.',
+		logger.warn(
+			'API endpoints are unauthenticated. Set PG_HISTORY_JWT_SECRET for production use.',
 		)
 	}
 
@@ -271,8 +330,8 @@ export async function createServer(
 	if (config.enableArchiver && runArchival) {
 		const cronSecret = config.archiveCronSecret || process.env.CRON_SECRET
 		if (!cronSecret) {
-			console.warn(
-				'[pg-history] WARNING: /api/archive endpoint has no authentication. Set archiveCronSecret or CRON_SECRET env var.',
+			logger.warn(
+				'/api/archive endpoint has no authentication. Set archiveCronSecret or CRON_SECRET env var.',
 			)
 		}
 
@@ -298,7 +357,7 @@ export async function createServer(
 					archival: archivalHealth,
 				})
 			} catch (error) {
-				console.error('[pg-history] archival error', error)
+				logger.error('archival error', { err: error })
 				return c.json(
 					createErrorResponse('ARCHIVAL_ERROR', 'An internal error occurred'),
 					500,
@@ -321,9 +380,25 @@ export async function createServer(
 			const table = c.req.param('table')
 			const recordId = c.req.param('recordId')
 			const limitQuery = c.req.query('limit')
-			const limit = limitQuery ? Number.parseInt(limitQuery, 10) : undefined
 			const cursor = c.req.query('cursor') || undefined
 			const orderQuery = c.req.query('order')
+
+			// Parse limit — reject non-numeric strings with 400 instead of
+			// handing NaN to validateLimit and getting a 500.
+			let limit: number | undefined
+			if (limitQuery !== undefined) {
+				const parsed = Number.parseInt(limitQuery, 10)
+				if (!Number.isFinite(parsed) || String(parsed) !== limitQuery) {
+					return c.json(
+						createErrorResponse(
+							'VALIDATION_ERROR',
+							'limit must be a positive integer',
+						),
+						400,
+					)
+				}
+				limit = parsed
+			}
 
 			// Validate order parameter
 			if (orderQuery && orderQuery !== 'asc' && orderQuery !== 'desc') {
@@ -351,13 +426,19 @@ export async function createServer(
 						400,
 					)
 				}
+				if (error instanceof ValidationError) {
+					return c.json(
+						createErrorResponse('VALIDATION_ERROR', error.message),
+						400,
+					)
+				}
 				if (error instanceof SetupRequiredError) {
 					return c.json(
 						createErrorResponse('NOT_CONFIGURED', error.message),
 						500,
 					)
 				}
-				console.error('[pg-history] getHistory error', error)
+				logger.error('getHistory error', { err: error })
 				return c.json(
 					createErrorResponse('DATABASE_ERROR', 'An internal error occurred'),
 					500,
@@ -374,9 +455,9 @@ export async function createServer(
 				)
 			}
 
-			let body: Record<string, unknown>
+			let rawBody: unknown
 			try {
-				body = await c.req.json()
+				rawBody = await c.req.json()
 			} catch {
 				return c.json(
 					createErrorResponse(
@@ -387,37 +468,21 @@ export async function createServer(
 				)
 			}
 
-			// Validate required fields
-			if (
-				!body.tables ||
-				!Array.isArray(body.tables) ||
-				body.tables.length === 0
-			) {
-				return c.json(
-					createErrorResponse(
-						'VALIDATION_ERROR',
-						'tables array is required and must not be empty',
-					),
-					400,
-				)
+			let options: ReturnType<typeof parseSearchBody>
+			try {
+				options = parseSearchBody(rawBody)
+			} catch (error) {
+				if (error instanceof ValidationError) {
+					return c.json(
+						createErrorResponse('VALIDATION_ERROR', error.message),
+						400,
+					)
+				}
+				throw error
 			}
 
 			try {
-				const result = await pgHistory.search({
-					tables: body.tables as string[],
-					query: body.query as string | undefined,
-					operation: body.operation as
-						| 'INSERT'
-						| 'UPDATE'
-						| 'DELETE'
-						| undefined,
-					dateFrom: body.dateFrom
-						? new Date(body.dateFrom as string)
-						: undefined,
-					dateTo: body.dateTo ? new Date(body.dateTo as string) : undefined,
-					limit: body.limit as number | undefined,
-					cursor: body.cursor as string | undefined,
-				})
+				const result = await pgHistory.search(options)
 				return c.json(result)
 			} catch (error) {
 				if (error instanceof TableNotConfiguredError) {
@@ -432,7 +497,7 @@ export async function createServer(
 						400,
 					)
 				}
-				console.error('[pg-history] search error', error)
+				logger.error('search error', { err: error })
 				return c.json(
 					createErrorResponse('DATABASE_ERROR', 'An internal error occurred'),
 					500,
@@ -449,9 +514,9 @@ export async function createServer(
 				)
 			}
 
-			let body: Record<string, unknown>
+			let rawBody: unknown
 			try {
-				body = await c.req.json()
+				rawBody = await c.req.json()
 			} catch {
 				return c.json(
 					createErrorResponse(
@@ -462,24 +527,25 @@ export async function createServer(
 				)
 			}
 
-			const { table, recordId, auditEntryId } = body as {
-				table?: string
-				recordId?: string
-				auditEntryId?: string
-			}
-
-			if (!table || !recordId || !auditEntryId) {
-				return c.json(
-					createErrorResponse(
-						'VALIDATION_ERROR',
-						'table, recordId, and auditEntryId are required',
-					),
-					400,
-				)
+			let parsed: { table: string; recordId: string; auditEntryId: string }
+			try {
+				parsed = parseRevertBody(rawBody)
+			} catch (error) {
+				if (error instanceof ValidationError) {
+					return c.json(
+						createErrorResponse('VALIDATION_ERROR', error.message),
+						400,
+					)
+				}
+				throw error
 			}
 
 			try {
-				await pgHistory.revert(table, recordId, auditEntryId)
+				await pgHistory.revert(
+					parsed.table,
+					parsed.recordId,
+					parsed.auditEntryId,
+				)
 				return c.json({ success: true })
 			} catch (error) {
 				if (error instanceof TableNotConfiguredError) {
@@ -491,7 +557,13 @@ export async function createServer(
 				if (error instanceof AuditEntryNotFoundError) {
 					return c.json(createErrorResponse('NOT_FOUND', error.message), 404)
 				}
-				console.error('[pg-history] revert error', error)
+				if (error instanceof ValidationError) {
+					return c.json(
+						createErrorResponse('VALIDATION_ERROR', error.message),
+						400,
+					)
+				}
+				logger.error('revert error', { err: error })
 				return c.json(
 					createErrorResponse('DATABASE_ERROR', 'An internal error occurred'),
 					500,
@@ -523,10 +595,23 @@ export async function createServer(
 	return app
 }
 
-// If this file is run directly (e.g. `bun server.ts`), create and start the server
-if (import.meta.main) {
+// If this file is run directly under Bun (e.g. `bun server.ts`), create and
+// start the server. Gated on `typeof Bun !== 'undefined'` so importing this
+// module from a Node.js or Vercel environment doesn't reference `Bun` globally.
+interface BunServer {
+	stop(): void
+}
+interface BunRuntime {
+	serve(config: {
+		port: number
+		fetch: (req: Request) => Response | Promise<Response>
+	}): BunServer
+}
+declare const Bun: BunRuntime | undefined
+if (typeof Bun !== 'undefined' && import.meta.main) {
 	;(async () => {
 		const { Pool } = await import('pg')
+		const startupLogger = consoleLogger
 
 		const databaseUrl = process.env.PG_HISTORY_DATABASE_URL
 		if (!databaseUrl) {
@@ -546,21 +631,30 @@ if (import.meta.main) {
 			10,
 		)
 
-		const app = await createServer({ pool, port })
+		const app = await createServer({ pool, port, logger: startupLogger })
 
-		console.log(`Starting server on port ${port}`)
+		startupLogger.info('Starting server', { port })
 		const server = Bun.serve({
 			port,
 			fetch: app.fetch,
 		})
 
-		// Graceful shutdown
-		const shutdown = async (signal: string) => {
-			console.log(`Received ${signal}, shutting down gracefully...`)
+		// Graceful shutdown — stop accepting new requests, wait for in-flight
+		// handlers to finish (with a bounded timeout), drain archival, then
+		// close the pool.
+		const SHUTDOWN_DRAIN_TIMEOUT_MS = 15_000
+		const shutdown = async (signal: string): Promise<void> => {
+			startupLogger.info('Received signal, shutting down gracefully', {
+				signal,
+			})
+			// Stop accepting new connections
 			server.stop()
+			// Drain in-flight requests before cleanup
+			await waitForInFlightRequests(SHUTDOWN_DRAIN_TIMEOUT_MS)
 			if (archivalInterval) clearInterval(archivalInterval)
+			if (rateLimitCleanupInterval) clearInterval(rateLimitCleanupInterval)
 			if (currentArchivalPromise) {
-				console.log('Waiting for background archival to complete...')
+				startupLogger.info('Waiting for background archival to complete')
 				await currentArchivalPromise.catch(() => {})
 			}
 			await pool.end()
@@ -569,5 +663,8 @@ if (import.meta.main) {
 
 		process.on('SIGTERM', () => shutdown('SIGTERM'))
 		process.on('SIGINT', () => shutdown('SIGINT'))
-	})().catch(console.error)
+	})().catch((err) => {
+		consoleLogger.error('Fatal error starting server', { err })
+		process.exit(1)
+	})
 }

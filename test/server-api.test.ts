@@ -178,3 +178,58 @@ describe('POST /api/history/search', () => {
 		expect(json.error.code).toBe('VALIDATION_ERROR')
 	})
 })
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #14: OpenAPI endpoint can be auth-gated
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #14: OpenAPI endpoint can be auth-gated', () => {
+	test('server accepts publicOpenApi config option', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/server.ts', 'utf-8')
+
+		expect(source).toContain('publicOpenApi')
+		expect(source).toContain("app.use('/openapi'")
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #15: rate limiter cleanup runs on a timer
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #15: rate limiter cleanup runs on a timer', () => {
+	test('server uses setInterval for rate limit cleanup', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/server.ts', 'utf-8')
+
+		expect(source).toContain('rateLimitCleanupInterval')
+		expect(source).toContain('RATE_LIMIT_CLEANUP_INTERVAL_MS')
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #20: Bun.serve gated behind typeof Bun !== undefined
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #20: Bun.serve is gated', () => {
+	test('server.ts guards the runtime entry point', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/server.ts', 'utf-8')
+
+		expect(source).toContain("typeof Bun !== 'undefined'")
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #21: graceful shutdown waits for in-flight requests
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #21: graceful shutdown waits for in-flight requests', () => {
+	test('server.ts tracks in-flight requests and drains on shutdown', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/server.ts', 'utf-8')
+
+		expect(source).toContain('inFlightRequests')
+		expect(source).toContain('waitForInFlightRequests')
+	})
+})

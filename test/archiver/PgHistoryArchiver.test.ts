@@ -92,9 +92,10 @@ describe('PgHistoryArchiver - Batch Query', () => {
 	})
 
 	test('should upload Parquet file to S3', async () => {
+		// id values are BIGSERIAL ids from PG — numeric-string is correct.
 		const records = [
 			{
-				id: 'test-1',
+				id: '1',
 				table_name: 'users',
 				record_id: 'user-1',
 				operation: 'INSERT',
@@ -108,7 +109,7 @@ describe('PgHistoryArchiver - Batch Query', () => {
 
 		// Check if MinIO is available and properly configured
 		try {
-			const s3Path = await archiver.uploadBatchToS3(
+			const { s3Path, sha256 } = await archiver.uploadBatchToS3(
 				records,
 				'users',
 				new Date('2025-01-15'),
@@ -116,6 +117,7 @@ describe('PgHistoryArchiver - Batch Query', () => {
 
 			expect(s3Path).toContain('users/year=2025/month=01/day=15')
 			expect(s3Path).toMatch(/data-[0-9a-f-]{36}\.parquet$/)
+			expect(sha256).toMatch(/^[A-Za-z0-9+/=]+$/)
 		} catch (error) {
 			// Skip test if S3 is not properly configured (bucket missing, wrong credentials, etc)
 			console.error(error)

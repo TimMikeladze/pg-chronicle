@@ -45,7 +45,7 @@ describe('PgHistoryArchiver - Soft Delete', () => {
       UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '10 days',
           s3_path = 'test://fake-s3-path'
-      WHERE table_name = 'users' AND id LIKE 'old-%'
+      WHERE table_name = 'users' AND changed_at < '2025-01-01'
     `)
 
 		const updatedCount = result.rowCount || 0
@@ -82,7 +82,7 @@ describe('PgHistoryArchiver - Soft Delete', () => {
       UPDATE audit_log
       SET archived_at = NOW() - INTERVAL '3 days',
           s3_path = 'test://fake-s3-path'
-      WHERE table_name = 'users' AND id LIKE 'old-%'
+      WHERE table_name = 'users' AND changed_at < '2025-01-01'
     `)
 
 		const count = await archiver.softDeleteArchived('users')
@@ -98,7 +98,7 @@ describe('PgHistoryArchiver - Soft Delete', () => {
       SET archived_at = NOW() - INTERVAL '10 days',
           soft_deleted_at = NOW() - INTERVAL '5 days',
           s3_path = 'test://fake-s3-path'
-      WHERE table_name = 'users' AND id LIKE 'old-%'
+      WHERE table_name = 'users' AND changed_at < '2025-01-01'
     `)
 
 		const count = await archiver.softDeleteArchived('users')

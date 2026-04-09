@@ -1,10 +1,18 @@
 import type { Pool } from 'pg'
 import {
-	AuditEntryNotFoundError,
 	SetupRequiredError,
 	TableNotConfiguredError,
 	ValidationError,
 } from './errors'
+import { consoleLogger, type Logger } from './logger'
+import { executeRevert } from './pg-history-revert'
+import { buildTriggerFunctionSql } from './pg-history-triggers'
+import {
+	validateColumnNames as extValidateColumnNames,
+	validateLimit as extValidateLimit,
+	validateStringInput as extValidateStringInput,
+	validateIdentifier,
+} from './pg-history-validators'
 import type {
 	AuditEntry,
 	GetHistoryOptions,
@@ -22,9 +30,12 @@ export class PgHistory {
 	private pendingConnection: string | undefined
 	private poolPromise: Promise<void> | null = null
 	private setupComplete: boolean = false
+	private softDeleteColumnExists: boolean | undefined
+	private logger: Logger
 
 	constructor(config: PgHistoryConfig) {
 		this.tables = config.tables
+		this.logger = config.logger ?? consoleLogger
 
 		// Validate all table names before storing them (C1, I2)
 		for (const tableName of this.tables) {
@@ -52,113 +63,39 @@ export class PgHistory {
 					connectionString: this.pendingConnection,
 				})
 				this.pendingConnection = undefined
-			})()
+			})().catch((err) => {
+				// Reset so the next call retries instead of re-awaiting the rejection
+				this.poolPromise = null
+				throw err
+			})
 		}
 		await this.poolPromise
 	}
 
-	/**
-	 * Validates table names to prevent SQL injection.
-	 * PostgreSQL identifiers must start with a letter or underscore,
-	 * and can contain only alphanumeric characters and underscores.
-	 * Maximum length is 63 characters.
-	 */
+	// Instance-level wrappers around the pure validators.
+	// These exist because the rest of the class uses `this.validateX(...)`
+	// rather than importing the standalone functions everywhere.
 	private validateTableName(name: string): void {
-		if (!/^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/.test(name)) {
-			throw new Error(
-				`Invalid table name: "${name}". Table names must start with a letter or underscore and contain only alphanumeric characters and underscores.`,
-			)
-		}
+		validateIdentifier(name, 'table')
 	}
-
-	/**
-	 * Validates column names to prevent SQL injection.
-	 * Uses the same rules as table names - must start with letter/underscore,
-	 * contain only alphanumeric and underscores, max 63 chars.
-	 */
 	private validateColumnName(name: string): void {
-		if (!/^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/.test(name)) {
-			throw new Error(
-				`Invalid column name: "${name}". Column names must start with a letter or underscore and contain only alphanumeric characters and underscores.`,
-			)
-		}
+		validateIdentifier(name, 'column')
 	}
-
-	/**
-	 * Validates an array of column names.
-	 */
 	private validateColumnNames(names: string[]): void {
-		for (const name of names) {
-			this.validateColumnName(name)
-		}
+		extValidateColumnNames(names)
 	}
-
-	/**
-	 * Validates user-provided string inputs to prevent DOS attacks
-	 * and ensure reasonable string lengths.
-	 */
 	private validateStringInput(
 		value: string,
 		fieldName: string,
-		maxLength: number = 1000,
+		maxLength = 1000,
 	): void {
-		if (typeof value !== 'string') {
-			throw new Error(`${fieldName} must be a string`)
-		}
-
-		if (value.length === 0) {
-			throw new Error(`${fieldName} cannot be empty`)
-		}
-
-		if (value.length > maxLength) {
-			throw new Error(
-				`${fieldName} exceeds maximum length of ${maxLength} characters`,
-			)
-		}
-
-		// Check for null bytes which can cause issues
-		if (value.includes('\0')) {
-			throw new Error(`${fieldName} cannot contain null bytes`)
-		}
+		extValidateStringInput(value, fieldName, maxLength)
 	}
-
-	/**
-	 * Validates pagination limit to prevent memory exhaustion attacks.
-	 * Caps all limits at a maximum of 1000 records per request.
-	 */
 	private validateLimit(
 		limit: number | undefined,
 		defaultLimit: number,
 	): number {
-		const MAX_LIMIT = 1000 // Absolute maximum to prevent memory exhaustion
-
-		if (limit === undefined) {
-			return defaultLimit
-		}
-
-		if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) {
-			throw new Error('Limit must be a positive integer')
-		}
-
-		// Cap at maximum to prevent memory exhaustion
-		return Math.min(limit, MAX_LIMIT)
-	}
-
-	private buildPkWhereClause(
-		pkColumns: string[],
-		data: Record<string, unknown>,
-		paramOffset: number,
-	): { whereClause: string; values: unknown[] } {
-		const values: unknown[] = []
-		const clauses = pkColumns.map((col) => {
-			const value = data[col]
-			if (value === undefined) {
-				throw new Error(`Primary key column "${col}" not found in audit data`)
-			}
-			values.push(value)
-			return `"${col}" = $${paramOffset + values.length}`
-		})
-		return { whereClause: clauses.join(' AND '), values }
+		return extValidateLimit(limit, defaultLimit)
 	}
 
 	/**
@@ -249,7 +186,13 @@ export class PgHistory {
 		)
 		this.schema = schemaResult.rows[0]?.schema || 'public'
 
-		// Create partitioned audit_log table
+		// Phase 1: Create the partitioned parent table.
+		// DDL auto-commits in PG, so partial failures leave the table created
+		// but subsequent partitions/triggers pending. Each phase logs progress
+		// so pipeline operators can see where things stopped on failure.
+		this.logger.info('Setup phase: audit_log parent table', {
+			schema: this.schema,
+		})
 		await this.pool.query(`
 			CREATE TABLE IF NOT EXISTS ${this.auditTable} (
 				id BIGSERIAL,
@@ -263,7 +206,8 @@ export class PgHistory {
 			) PARTITION BY LIST (table_name)
 		`)
 
-		// Create partitions for each table
+		// Phase 2: Create partitions for each table.
+		this.logger.info('Setup phase: partitions', { count: this.tables.length })
 		for (const tableName of this.tables) {
 			const partitionName = `audit_log_${tableName}`
 
@@ -292,13 +236,14 @@ export class PgHistory {
 					)
 				}
 			} else {
-				console.warn(
-					`[pg-history] Partition ${partitionName} already exists, skipping`,
-				)
+				this.logger.debug('Partition already exists, skipping', {
+					partition: partitionName,
+				})
 			}
 		}
 
-		// Create indexes (IF NOT EXISTS will skip if they exist)
+		// Phase 3: Create indexes (IF NOT EXISTS will skip if they exist)
+		this.logger.info('Setup phase: indexes')
 		await this.pool.query(`
 			CREATE INDEX IF NOT EXISTS idx_audit_old_data_gin
 			ON ${this.auditTable} USING GIN (old_data jsonb_path_ops)
@@ -319,7 +264,8 @@ export class PgHistory {
 			ON ${this.auditTable} (table_name, record_id, changed_at DESC)
 		`)
 
-		// Create triggers for each table with table-specific trigger functions
+		// Phase 4: Create triggers for each table with table-specific functions
+		this.logger.info('Setup phase: triggers', { count: this.tables.length })
 		for (const tableName of this.tables) {
 			const triggerName = `audit_trigger_${tableName}`
 			const funcName = `audit_trigger_func_${tableName}`
@@ -331,17 +277,15 @@ export class PgHistory {
 			)
 
 			if (tableExists.rows.length === 0) {
-				console.warn(
-					`[pg-history] Table ${tableName} does not exist, skipping trigger creation`,
-				)
+				this.logger.warn('Table does not exist, skipping trigger creation', {
+					table: tableName,
+				})
 				continue
 			}
 
 			// Get primary key columns for this table
 			const pkColumns = await this.getPrimaryKeyColumns(tableName)
 
-			// Create table-specific trigger function (idempotent)
-			// Build the function body based on primary key configuration.
 			// Defense-in-depth: re-validate all identifiers immediately before
 			// interpolation into PL/pgSQL, even though they were validated earlier.
 			// The regex ensures only [a-zA-Z0-9_] chars, making SQL injection
@@ -351,89 +295,27 @@ export class PgHistory {
 			for (const col of pkColumns) {
 				this.validateColumnName(col)
 			}
-			let functionBody: string
 
-			if (pkColumns.length === 0) {
-				// No primary key: use hash of all column values
-				functionBody = `
-				CREATE OR REPLACE FUNCTION "${funcName}"()
-				RETURNS TRIGGER AS $$
-				BEGIN
-					IF (TG_OP = 'DELETE') THEN
-						INSERT INTO ${this.auditTable} (table_name, record_id, operation, old_data)
-						VALUES (TG_TABLE_NAME, md5(row_to_json(OLD)::text), TG_OP, to_jsonb(OLD));
-						RETURN OLD;
-					ELSIF (TG_OP = 'UPDATE') THEN
-						INSERT INTO ${this.auditTable} (table_name, record_id, operation, old_data, new_data)
-						VALUES (TG_TABLE_NAME, md5(row_to_json(NEW)::text), TG_OP, to_jsonb(OLD), to_jsonb(NEW));
-						RETURN NEW;
-					ELSIF (TG_OP = 'INSERT') THEN
-						INSERT INTO ${this.auditTable} (table_name, record_id, operation, new_data)
-						VALUES (TG_TABLE_NAME, md5(row_to_json(NEW)::text), TG_OP, to_jsonb(NEW));
-						RETURN NEW;
-					END IF;
-				END;
-				$$ LANGUAGE plpgsql;
-				`
-			} else if (pkColumns.length === 1) {
-				// Single primary key
-				const pkCol = pkColumns[0]
-				functionBody = `
-				CREATE OR REPLACE FUNCTION "${funcName}"()
-				RETURNS TRIGGER AS $$
-				BEGIN
-					IF (TG_OP = 'DELETE') THEN
-						INSERT INTO ${this.auditTable} (table_name, record_id, operation, old_data)
-						VALUES (TG_TABLE_NAME, OLD."${pkCol}"::text, TG_OP, to_jsonb(OLD));
-						RETURN OLD;
-					ELSIF (TG_OP = 'UPDATE') THEN
-						INSERT INTO ${this.auditTable} (table_name, record_id, operation, old_data, new_data)
-						VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, to_jsonb(OLD), to_jsonb(NEW));
-						RETURN NEW;
-					ELSIF (TG_OP = 'INSERT') THEN
-						INSERT INTO ${this.auditTable} (table_name, record_id, operation, new_data)
-						VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, to_jsonb(NEW));
-						RETURN NEW;
-					END IF;
-				END;
-				$$ LANGUAGE plpgsql;
-				`
-			} else {
-				// Composite primary key: concatenate with '|' delimiter
-				const pkExpressionsNew = pkColumns
-					.map((col) => `COALESCE(NEW."${col}"::text, '')`)
-					.join(" || '|' || ")
-				const pkExpressionsOld = pkColumns
-					.map((col) => `COALESCE(OLD."${col}"::text, '')`)
-					.join(" || '|' || ")
-				functionBody = `
-				CREATE OR REPLACE FUNCTION "${funcName}"()
-				RETURNS TRIGGER AS $$
-				BEGIN
-					IF (TG_OP = 'DELETE') THEN
-						INSERT INTO ${this.auditTable} (table_name, record_id, operation, old_data)
-						VALUES (TG_TABLE_NAME, ${pkExpressionsOld}, TG_OP, to_jsonb(OLD));
-						RETURN OLD;
-					ELSIF (TG_OP = 'UPDATE') THEN
-						INSERT INTO ${this.auditTable} (table_name, record_id, operation, old_data, new_data)
-						VALUES (TG_TABLE_NAME, ${pkExpressionsNew}, TG_OP, to_jsonb(OLD), to_jsonb(NEW));
-						RETURN NEW;
-					ELSIF (TG_OP = 'INSERT') THEN
-						INSERT INTO ${this.auditTable} (table_name, record_id, operation, new_data)
-						VALUES (TG_TABLE_NAME, ${pkExpressionsNew}, TG_OP, to_jsonb(NEW));
-						RETURN NEW;
-					END IF;
-				END;
-				$$ LANGUAGE plpgsql;
-				`
-			}
-
+			// Build trigger function SQL via the dedicated helper module
+			const functionBody = buildTriggerFunctionSql({
+				funcName,
+				pkColumns,
+				auditTable: this.auditTable,
+			})
 			await this.pool.query(functionBody)
 
-			// Check if trigger exists
+			// Check if trigger exists on THIS specific table.
+			// pg_trigger.tgname is unique per (tgrelid, tgname), so we must scope
+			// by table to avoid silently skipping legitimate trigger creation when
+			// another table happens to have a trigger with the same name.
 			const triggerExists = await this.pool.query(
-				'SELECT 1 FROM pg_trigger WHERE tgname = $1',
-				[triggerName],
+				`SELECT 1 FROM pg_trigger t
+				JOIN pg_class c ON c.oid = t.tgrelid
+				JOIN pg_namespace n ON n.oid = c.relnamespace
+				WHERE t.tgname = $1
+				AND c.relname = $2
+				AND n.nspname = $3`,
+				[triggerName, tableName, this.schema],
 			)
 
 			if (triggerExists.rows.length === 0) {
@@ -453,11 +335,17 @@ export class PgHistory {
 					)
 				}
 			} else {
-				console.warn(
-					`[pg-history] Trigger ${triggerName} already exists, skipping`,
-				)
+				this.logger.debug('Trigger already exists, skipping', {
+					trigger: triggerName,
+					table: tableName,
+				})
 			}
 		}
+
+		this.logger.info('Setup complete', {
+			schema: this.schema,
+			tables: this.tables.length,
+		})
 	}
 
 	/** Returns schema-qualified audit_log table name */
@@ -469,6 +357,46 @@ export class PgHistory {
 		if (!this.setupComplete) {
 			throw new SetupRequiredError()
 		}
+	}
+
+	/**
+	 * Check if the soft_deleted_at column exists on audit_log.
+	 * This column is added by the archiver setup, not by PgHistory.setup().
+	 * Result is cached for the lifetime of the instance.
+	 */
+	private async hasSoftDeleteColumn(): Promise<boolean> {
+		if (this.softDeleteColumnExists !== undefined) {
+			return this.softDeleteColumnExists
+		}
+		const result = await this.pool.query(
+			`SELECT 1 FROM information_schema.columns
+			WHERE table_schema = $1
+			AND table_name = 'audit_log'
+			AND column_name = 'soft_deleted_at'`,
+			[this.schema],
+		)
+		this.softDeleteColumnExists = result.rows.length > 0
+		return this.softDeleteColumnExists
+	}
+
+	/**
+	 * Invalidate the primary key cache for a table (or all tables if omitted).
+	 * Call this after schema changes like ALTER TABLE ... ADD/DROP CONSTRAINT.
+	 */
+	invalidatePrimaryKeyCache(tableName?: string): void {
+		if (tableName) {
+			this.primaryKeyCache.delete(tableName)
+		} else {
+			this.primaryKeyCache.clear()
+		}
+	}
+
+	/**
+	 * Invalidate the cached soft-delete column existence check.
+	 * Call this after the archiver has set up its schema extensions.
+	 */
+	invalidateSoftDeleteColumnCache(): void {
+		this.softDeleteColumnExists = undefined
 	}
 
 	async getHistory(
@@ -497,15 +425,23 @@ export class PgHistory {
 			}
 		}
 
+		// Build soft-delete filter only if archiver has added the column.
+		// Records that have been soft-deleted must not appear in history results
+		// since they are scheduled for permanent deletion.
+		const softDeleteFilter = (await this.hasSoftDeleteColumn())
+			? ' AND soft_deleted_at IS NULL'
+			: ''
+
 		let queryResult: { rows: unknown[] }
 		if (options.cursor) {
-			// Cursor-based pagination
+			// Cursor-based pagination — cast cursor to bigint explicitly so the
+			// query planner uses the idx_audit_record_id index predictably
 			if (order === 'desc') {
 				queryResult = await this.pool.query(
 					`SELECT * FROM ${this.auditTable}
 					WHERE table_name = $1
 					AND record_id = $2
-					AND id < $3
+					AND id < $3::bigint${softDeleteFilter}
 					ORDER BY id DESC
 					LIMIT $4`,
 					[tableName, recordId, options.cursor, limit + 1],
@@ -515,7 +451,7 @@ export class PgHistory {
 					`SELECT * FROM ${this.auditTable}
 					WHERE table_name = $1
 					AND record_id = $2
-					AND id > $3
+					AND id > $3::bigint${softDeleteFilter}
 					ORDER BY id ASC
 					LIMIT $4`,
 					[tableName, recordId, options.cursor, limit + 1],
@@ -527,7 +463,7 @@ export class PgHistory {
 				queryResult = await this.pool.query(
 					`SELECT * FROM ${this.auditTable}
 					WHERE table_name = $1
-					AND record_id = $2
+					AND record_id = $2${softDeleteFilter}
 					ORDER BY id DESC
 					LIMIT $3`,
 					[tableName, recordId, limit + 1],
@@ -536,7 +472,7 @@ export class PgHistory {
 				queryResult = await this.pool.query(
 					`SELECT * FROM ${this.auditTable}
 					WHERE table_name = $1
-					AND record_id = $2
+					AND record_id = $2${softDeleteFilter}
 					ORDER BY id ASC
 					LIMIT $3`,
 					[tableName, recordId, limit + 1],
@@ -606,7 +542,12 @@ export class PgHistory {
 		const conditions: string[] = []
 		const params: unknown[] = []
 		let paramIndex = 1
-		let usesIlike = false // eslint-disable-line prefer-const
+		let usesIlike = false
+
+		// Filter out soft-deleted records if the archiver extension is installed
+		if (await this.hasSoftDeleteColumn()) {
+			conditions.push('soft_deleted_at IS NULL')
+		}
 
 		// Table filter - pass JS array directly, pg driver handles conversion
 		conditions.push(`table_name = ANY($${paramIndex}::text[])`)
@@ -676,9 +617,9 @@ export class PgHistory {
 			paramIndex++
 		}
 
-		// Cursor filter
+		// Cursor filter — cast to bigint explicitly for predictable index usage
 		if (options.cursor) {
-			conditions.push(`id < $${paramIndex}`)
+			conditions.push(`id < $${paramIndex}::bigint`)
 			params.push(options.cursor)
 			paramIndex++
 		}
@@ -753,10 +694,26 @@ export class PgHistory {
 		}
 	}
 
+	/**
+	 * Revert a record to the state captured in an audit entry.
+	 *
+	 * IMPORTANT: Revert operations normally trigger their own audit entries
+	 * because the INSERT/UPDATE/DELETE on the user table fires the audit trigger.
+	 * This can create "revert of revert of revert" chains that grow the audit log.
+	 *
+	 * Pass `suppressAuditTriggers: true` (default) to skip audit rows for the
+	 * revert operation itself. This uses PostgreSQL's `session_replication_role`
+	 * which suppresses user-defined triggers for the session duration — scoped
+	 * to the transaction because we restore it before COMMIT.
+	 *
+	 * Pass `suppressAuditTriggers: false` to get an audit trail that includes
+	 * the revert operations themselves.
+	 */
 	async revert(
 		tableName: string,
 		recordId: string,
 		auditEntryId: string,
+		options: { suppressAuditTriggers?: boolean } = {},
 	): Promise<void> {
 		this.ensureSetup()
 
@@ -764,159 +721,30 @@ export class PgHistory {
 			throw new TableNotConfiguredError(tableName)
 		}
 
-		// Wrap entire revert operation in a transaction for consistency
-		// Get a client from the pool and use it for the transaction
+		const suppressTriggers = options.suppressAuditTriggers ?? true
+
+		// Fetch PK columns before opening the transaction so we fail fast on
+		// a missing PK without holding a client connection.
+		const pkColumns = await this.getPrimaryKeyColumns(tableName)
+
+		// Wrap entire revert operation in a transaction for consistency.
+		// executeRevert does the SQL work; this method manages the client lifecycle.
 		const client = await this.pool.connect()
 		try {
 			await client.query('BEGIN')
-
-			// Get the audit entry
-			const entryResult = await client.query(
-				`SELECT * FROM ${this.auditTable}
-				WHERE id = $1
-				AND table_name = $2
-				AND record_id = $3`,
-				[auditEntryId, tableName, recordId],
-			)
-			const [entry] = entryResult.rows as Array<{
-				id: number
-				table_name: string
-				record_id: string
-				operation: string
-				old_data: Record<string, unknown> | null
-				new_data: Record<string, unknown> | null
-			}>
-
-			if (!entry) {
-				throw new AuditEntryNotFoundError(auditEntryId, tableName, recordId)
-			}
-
-			// Get primary key columns
-			const pkColumns = await this.getPrimaryKeyColumns(tableName)
-			if (pkColumns.length === 0) {
-				throw new Error(
-					`Cannot revert table "${tableName}" - no primary key defined`,
-				)
-			}
-
-			// Validate PK columns
-			this.validateColumnNames(pkColumns)
-
-			// Cross-check revert data columns against actual table columns
-			// to prevent writing to unintended columns via crafted audit_log entries
-			const revertData = entry.old_data || entry.new_data || {}
-			const dataColumns = Object.keys(revertData)
-			if (dataColumns.length > 0) {
-				const colResult = await client.query(
-					`SELECT column_name FROM information_schema.columns
-					WHERE table_schema = $1 AND table_name = $2`,
-					[this.schema, tableName],
-				)
-				const realColumns = new Set(
-					colResult.rows.map((r: { column_name: string }) => r.column_name),
-				)
-				const unknownColumns = dataColumns.filter((c) => !realColumns.has(c))
-				if (unknownColumns.length > 0) {
-					throw new Error(
-						`Revert data contains columns not in table "${tableName}": ${unknownColumns.join(', ')}`,
-					)
-				}
-			}
-
-			// Branch on operation type
-			if (entry.operation === 'INSERT') {
-				// Undo INSERT = DELETE the row
-				const revertData = entry.new_data || {}
-				const { whereClause, values } = this.buildPkWhereClause(
-					pkColumns,
-					revertData,
-					0,
-				)
-
-				const deleteQuery = `
-					DELETE FROM "${tableName}"
-					WHERE ${whereClause}
-					RETURNING true as success
-				`
-				const deleteResult = await client.query(deleteQuery, values)
-				if (!deleteResult.rows || deleteResult.rows.length === 0) {
-					throw new Error(
-						`Failed to revert INSERT for record ${recordId} in table ${tableName} - row not found`,
-					)
-				}
-			} else if (entry.operation === 'DELETE') {
-				// Undo DELETE = re-INSERT the row
-				const revertData = entry.old_data
-				if (!revertData || Object.keys(revertData).length === 0) {
-					throw new Error(
-						`No old_data available to revert DELETE for entry ${auditEntryId}`,
-					)
-				}
-
-				const allColumns = Object.keys(revertData)
-				this.validateColumnNames(allColumns)
-
-				const columnList = allColumns.map((col) => `"${col}"`).join(', ')
-				const placeholders = allColumns
-					.map((_, idx) => `$${idx + 1}`)
-					.join(', ')
-				const values = allColumns.map((col) => revertData[col])
-
-				const insertQuery = `
-					INSERT INTO "${tableName}" (${columnList})
-					VALUES (${placeholders})
-					RETURNING true as success
-				`
-				const insertResult = await client.query(insertQuery, values)
-				if (!insertResult.rows || insertResult.rows.length === 0) {
-					throw new Error(
-						`Failed to revert DELETE for record ${recordId} in table ${tableName}`,
-					)
-				}
-			} else {
-				// UPDATE: restore old_data
-				const revertData = entry.old_data
-				if (!revertData || Object.keys(revertData).length === 0) {
-					throw new Error(
-						`No old_data available to revert for entry ${auditEntryId}`,
-					)
-				}
-
-				const columns = Object.keys(revertData).filter(
-					(k) => !pkColumns.includes(k),
-				)
-				this.validateColumnNames(columns)
-
-				const setClauses = columns
-					.map((col, idx) => `"${col}" = $${idx + 1}`)
-					.join(', ')
-				const values: unknown[] = columns.map((col) => revertData[col])
-
-				const { whereClause, values: pkValues } = this.buildPkWhereClause(
-					pkColumns,
-					revertData,
-					values.length,
-				)
-				values.push(...pkValues)
-
-				const updateQuery = `
-					UPDATE "${tableName}"
-					SET ${setClauses}
-					WHERE ${whereClause}
-					RETURNING true as success
-				`
-
-				const updateResult = await client.query(updateQuery, values)
-				if (!updateResult.rows || updateResult.rows.length === 0) {
-					throw new Error(
-						`Failed to revert record ${recordId} in table ${tableName} - no rows updated`,
-					)
-				}
-			}
-
+			await executeRevert({
+				client,
+				schema: this.schema,
+				auditTable: this.auditTable,
+				tableName,
+				recordId,
+				auditEntryId,
+				pkColumns,
+				suppressAuditTriggers: suppressTriggers,
+			})
 			await client.query('COMMIT')
 		} catch (error) {
-			await client.query('ROLLBACK')
+			await client.query('ROLLBACK').catch(() => {})
 			throw error
 		} finally {
 			client.release()

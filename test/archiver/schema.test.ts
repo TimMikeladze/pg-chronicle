@@ -96,3 +96,30 @@ describe('Schema Setup', () => {
 		expect(result.rows.length).toBe(1)
 	})
 })
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #33: updateArchivalStats uses named column destructuring
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #33: updateArchivalStats uses named column destructuring', () => {
+	test('schema.ts uses EXCLUDED.<col> in the upsert', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/schema.ts', 'utf-8')
+
+		expect(source).toContain('EXCLUDED.records_pending_archive')
+		expect(source).toContain('EXCLUDED.records_pending_soft_delete')
+		expect(source).toContain('EXCLUDED.records_pending_hard_delete')
+		expect(source).toContain('EXCLUDED.oldest_unarchived_record')
+	})
+
+	test('stats result is destructured by named column with defaults', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/schema.ts', 'utf-8')
+
+		// The destructuring form with defaults should be present
+		expect(source).toMatch(/pending_archive\s*=\s*0/)
+		expect(source).toMatch(/pending_soft_delete\s*=\s*0/)
+		expect(source).toMatch(/pending_hard_delete\s*=\s*0/)
+		expect(source).toMatch(/oldest_unarchived\s*=\s*null/)
+	})
+})

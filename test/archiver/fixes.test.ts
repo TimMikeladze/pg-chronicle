@@ -44,17 +44,17 @@ describe('Fix #2: processBatch UTC date boundaries', () => {
 
 	test('archives records near UTC midnight without splitting incorrectly', async () => {
 		// Insert records at 23:30 UTC and 00:30 UTC on consecutive days
-		// These should go into separate batches (different UTC days)
+		// These should go into separate batches (different UTC days).
+		// ids are BIGSERIAL — let PG assign them and key records by record_id.
 		await pool.query(`
 			DELETE FROM audit_log WHERE table_name = 'users'
 		`)
 
 		// Day 1: 2024-01-15 23:30 UTC
 		await pool.query(
-			`INSERT INTO audit_log (id, table_name, record_id, operation, changed_at, new_data)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
+			`INSERT INTO audit_log (table_name, record_id, operation, changed_at, new_data)
+			VALUES ($1, $2, $3, $4, $5)`,
 			[
-				'utc-day1',
 				'users',
 				'user-utc-1',
 				'INSERT',
@@ -65,10 +65,9 @@ describe('Fix #2: processBatch UTC date boundaries', () => {
 
 		// Day 2: 2024-01-16 00:30 UTC
 		await pool.query(
-			`INSERT INTO audit_log (id, table_name, record_id, operation, changed_at, new_data)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
+			`INSERT INTO audit_log (table_name, record_id, operation, changed_at, new_data)
+			VALUES ($1, $2, $3, $4, $5)`,
 			[
-				'utc-day2',
 				'users',
 				'user-utc-2',
 				'INSERT',
@@ -131,13 +130,14 @@ describe('Fix #3: Hard delete S3 verification', () => {
 	})
 
 	test('refuses to hard delete records with non-existent S3 path', async () => {
-		// Set s3_path to a path that does NOT exist in S3
+		// Set s3_path to a path that does NOT exist in S3.
+		// Target the "old" rows by changed_at since ids are now BIGSERIAL.
 		await pool.query(`
 			UPDATE audit_log
 			SET archived_at = NOW() - INTERVAL '20 days',
 					soft_deleted_at = NOW() - INTERVAL '10 days',
 					s3_path = 'nonexistent/path/that/does/not/exist.parquet'
-			WHERE table_name = 'users' AND id LIKE 'old-%'
+			WHERE table_name = 'users' AND changed_at < '2025-01-01'
 		`)
 
 		const deleted = await archiver.hardDeletePurged('users')
@@ -155,7 +155,7 @@ describe('Fix #3: Hard delete S3 verification', () => {
 			SET archived_at = NOW() - INTERVAL '20 days',
 					soft_deleted_at = NOW() - INTERVAL '10 days',
 					s3_path = $1
-			WHERE table_name = 'users' AND id LIKE 'old-%'`,
+			WHERE table_name = 'users' AND changed_at < '2025-01-01'`,
 			[s3Key],
 		)
 
@@ -169,25 +169,27 @@ describe('Fix #3: Hard delete S3 verification', () => {
 		const realKey = 'test-archive/real-file.parquet'
 		await putTestS3Object('test-bucket', realKey)
 
-		// First 50 records: real S3 path
+		// First half of old records: real S3 path
 		await pool.query(
 			`UPDATE audit_log
 			SET archived_at = NOW() - INTERVAL '20 days',
 					soft_deleted_at = NOW() - INTERVAL '10 days',
 					s3_path = $1
-			WHERE table_name = 'users' AND id LIKE 'old-%'
-				AND id < 'old-50'`,
+			WHERE id IN (
+				SELECT id FROM audit_log
+				WHERE table_name = 'users' AND changed_at < '2025-01-01'
+				ORDER BY id ASC LIMIT 50
+			)`,
 			[realKey],
 		)
 
-		// Remaining records: fake S3 path
+		// Remaining old records: fake S3 path
 		await pool.query(`
 			UPDATE audit_log
 			SET archived_at = NOW() - INTERVAL '20 days',
 					soft_deleted_at = NOW() - INTERVAL '10 days',
 					s3_path = 'fake/nonexistent.parquet'
-			WHERE table_name = 'users' AND id LIKE 'old-%'
-				AND id >= 'old-50'
+			WHERE table_name = 'users' AND changed_at < '2025-01-01'
 				AND s3_path IS NULL
 		`)
 
@@ -275,5 +277,83 @@ describe('Fix #12: S3 orphan crash recovery documented', () => {
 
 		expect(source).toContain('becomes an orphan')
 		expect(source).toContain('cleanup job')
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #6: archival queries use ORDER BY for deterministic batching
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #6: archival queries have ORDER BY', () => {
+	test('softDeleteArchived SQL contains ORDER BY id', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+
+		const softDeleteRegion = source.slice(
+			source.indexOf('softDeleteArchived'),
+			source.indexOf('hardDeletePurged'),
+		)
+		expect(softDeleteRegion).toContain('ORDER BY id ASC')
+	})
+
+	test('hardDeletePurged SQL contains ORDER BY id', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+
+		const hardDeleteRegion = source.slice(
+			source.indexOf('hardDeletePurged'),
+			source.indexOf('async close'),
+		)
+		expect(hardDeleteRegion).toContain('ORDER BY id ASC')
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #17: verifyS3File uses checksum when available
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #17: verifyS3File uses checksum when available', () => {
+	test('verifyS3File sends ChecksumMode: ENABLED', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+
+		// Both verifyS3File and the upload HeadObject should request checksums
+		expect(source).toContain("ChecksumMode: 'ENABLED'")
+		// Mismatch handling must delete the corrupt upload
+		expect(source).toContain('S3 upload checksum mismatch')
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #19: dynamic imports removed from hot paths
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #19: dynamic imports removed from hot paths', () => {
+	test('HeadObjectCommand and DeleteObjectCommand imported statically', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+
+		// Top-level imports should include these — they were dynamic before
+		expect(source).toMatch(
+			/import \{[^}]*HeadObjectCommand[^}]*\} from '@aws-sdk\/client-s3'/s,
+		)
+		expect(source).toMatch(
+			/import \{[^}]*DeleteObjectCommand[^}]*\} from '@aws-sdk\/client-s3'/s,
+		)
+		// And should NOT contain `await import('@aws-sdk/client-s3')`
+		expect(source).not.toContain("await import('@aws-sdk/client-s3')")
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #25: archivedCount partial branch documented
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #25: archivedCount partial branch documented', () => {
+	test('processBatch contains NOTE about partial concurrent archival', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+
+		expect(source).toContain('NOTE: if archivedCount > 0 but < records.length')
 	})
 })

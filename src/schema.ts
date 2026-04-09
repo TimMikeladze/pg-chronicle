@@ -130,7 +130,19 @@ export async function updateArchivalStats(
 		[tableName, retentionCutoff, gracePeriodCutoff],
 	)
 
-	const stats = result.rows[0]
+	// Destructure by name so a future query shape change doesn't silently
+	// remap columns to the wrong INSERT slots.
+	const {
+		pending_archive = 0,
+		pending_soft_delete = 0,
+		pending_hard_delete = 0,
+		oldest_unarchived = null,
+	} = (result.rows[0] ?? {}) as {
+		pending_archive?: number | string
+		pending_soft_delete?: number | string
+		pending_hard_delete?: number | string
+		oldest_unarchived?: Date | null
+	}
 
 	// Upsert stats
 	await pool.query(
@@ -143,17 +155,17 @@ export async function updateArchivalStats(
       last_updated
     ) VALUES ($1, $2, $3, $4, $5, NOW())
     ON CONFLICT (table_name) DO UPDATE SET
-      records_pending_archive = $2,
-      records_pending_soft_delete = $3,
-      records_pending_hard_delete = $4,
-      oldest_unarchived_record = $5,
+      records_pending_archive = EXCLUDED.records_pending_archive,
+      records_pending_soft_delete = EXCLUDED.records_pending_soft_delete,
+      records_pending_hard_delete = EXCLUDED.records_pending_hard_delete,
+      oldest_unarchived_record = EXCLUDED.oldest_unarchived_record,
       last_updated = NOW()`,
 		[
 			tableName,
-			stats.pending_archive || 0,
-			stats.pending_soft_delete || 0,
-			stats.pending_hard_delete || 0,
-			stats.oldest_unarchived || null,
+			pending_archive,
+			pending_soft_delete,
+			pending_hard_delete,
+			oldest_unarchived,
 		],
 	)
 }

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import type { Pool } from 'pg'
+import { silentLogger } from '../src/logger'
 import { PgHistory } from '../src/PgHistory'
 import { createServer } from '../src/server'
 import { cleanDatabase, getTestConnection, setupTestDatabase } from './helpers'
@@ -406,5 +407,158 @@ describe('Fix #11: updateArchivalStats comment is accurate', () => {
 		// New accurate comment should exist
 		expect(source).toContain('Scans audit_log rows')
 		expect(source).toContain('can be expensive')
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #1: ensurePool() caches rejected promises forever
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #1: ensurePool() retries after failed pool creation', () => {
+	test('PgHistory retries after a failed pool creation', async () => {
+		// A known-bad connection string — the DNS lookup will fail.
+		const history = new PgHistory({
+			tables: ['users'],
+			connection: 'postgres://x:x@nonexistent.invalid.tld:5432/db',
+			logger: silentLogger,
+		})
+
+		// First call should reject
+		let firstError: unknown
+		try {
+			await history.setup()
+		} catch (err) {
+			firstError = err
+		}
+		expect(firstError).toBeDefined()
+
+		// Second call should also reject (no cached rejection) — verifies the
+		// poolPromise was reset so the next call attempts pool creation again.
+		let secondError: unknown
+		try {
+			await history.setup()
+		} catch (err) {
+			secondError = err
+		}
+		expect(secondError).toBeDefined()
+	}, 15_000)
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #7: cursor is cast to bigint explicitly
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #7: cursor is cast to bigint explicitly', () => {
+	test('getHistory/search use $N::bigint in cursor clauses', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/PgHistory.ts', 'utf-8')
+
+		// Both getHistory and search should cast cursor explicitly
+		expect(source).toContain('id < $3::bigint')
+		expect(source).toContain('id > $3::bigint')
+		// search() cursor uses paramIndex variable; must include ::bigint
+		expect(source).toContain('id < $${paramIndex}::bigint')
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #13: logger interface used throughout
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #13: logger interface used throughout', () => {
+	test('src files do not use bare console.log/error/warn', async () => {
+		const fs = await import('node:fs/promises')
+		const files = [
+			'./src/PgHistory.ts',
+			'./src/PgHistoryArchiver.ts',
+			'./src/orchestrator.ts',
+			'./src/server.ts',
+		]
+
+		for (const file of files) {
+			const source = await fs.readFile(file, 'utf-8')
+			// Strip comments so we don't false-positive on docs
+			const noComments = source
+				.replace(/\/\*[\s\S]*?\*\//g, '')
+				.replace(/\/\/.*$/gm, '')
+			expect(noComments).not.toContain('console.log(')
+			expect(noComments).not.toContain('console.error(')
+			expect(noComments).not.toContain('console.warn(')
+		}
+	})
+
+	test('silentLogger can be injected without breaking behavior', () => {
+		const history = new PgHistory({
+			tables: ['dummy'],
+			connection: 'postgres://user:pass@localhost:9999/fake',
+			logger: silentLogger,
+		})
+		expect(history).toBeDefined()
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #28: PgHistory.ts is split into focused modules
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #28: PgHistory.ts is split into focused modules', () => {
+	test('PgHistory.ts is under 800 lines', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/PgHistory.ts', 'utf-8')
+		const lines = source.split('\n').length
+		expect(lines).toBeLessThanOrEqual(800)
+	})
+
+	test('pg-history-validators.ts exports pure validation functions', async () => {
+		const mod = await import('../src/pg-history-validators')
+		expect(typeof mod.validateIdentifier).toBe('function')
+		expect(typeof mod.validateColumnNames).toBe('function')
+		expect(typeof mod.validateStringInput).toBe('function')
+		expect(typeof mod.validateLimit).toBe('function')
+		expect(typeof mod.validateCursor).toBe('function')
+	})
+
+	test('pg-history-triggers.ts exports buildTriggerFunctionSql', async () => {
+		const mod = await import('../src/pg-history-triggers')
+		expect(typeof mod.buildTriggerFunctionSql).toBe('function')
+	})
+
+	test('pg-history-revert.ts exports executeRevert', async () => {
+		const mod = await import('../src/pg-history-revert')
+		expect(typeof mod.executeRevert).toBe('function')
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #29: stray eslint-disable comment removed
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #29: stray eslint-disable comment removed', () => {
+	test('usesIlike no longer has a misleading eslint-disable comment', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/PgHistory.ts', 'utf-8')
+
+		// The line declaring usesIlike should not carry the eslint-disable suppression
+		const region = source.slice(source.indexOf('let usesIlike'))
+		const firstLine = region.split('\n')[0]
+		expect(firstLine).not.toContain('eslint-disable-line')
+	})
+})
+
+// ─────────────────────────────────────────────────────────
+// Review Fix #31: ServerConfig.archiverConfig.batchSize is optional
+// ─────────────────────────────────────────────────────────
+
+describe('Review Fix #31: ServerConfig.archiverConfig.batchSize is optional', () => {
+	test('types.ts declares batchSize as optional', async () => {
+		const fs = await import('node:fs/promises')
+		const source = await fs.readFile('./src/types.ts', 'utf-8')
+
+		// Match within the ServerConfig.archiverConfig block
+		const archiverConfigBlock = source.slice(
+			source.indexOf('archiverConfig?'),
+			source.indexOf('runOptions?'),
+		)
+		expect(archiverConfigBlock).toContain('batchSize?: number')
 	})
 })

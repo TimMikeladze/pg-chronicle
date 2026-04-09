@@ -48,7 +48,7 @@ describe('PgHistory input validation', () => {
 		test('should reject invalid limit', async () => {
 			await expect(async () => {
 				await audit.getHistory('users', '123', { limit: -1 })
-			}).toThrow('Limit must be a positive integer')
+			}).toThrow('limit must be a positive integer')
 		})
 
 		test('should cap limit at maximum', async () => {
