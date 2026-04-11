@@ -98,7 +98,7 @@ describe('Serverless mode', () => {
 			'CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)',
 		)
 
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			serverless: true,
 			enableHistory: true,
@@ -124,7 +124,7 @@ describe('Serverless mode', () => {
 			'CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)',
 		)
 
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			serverless: true,
 			enableHistory: true,
@@ -159,7 +159,7 @@ describe('POST /api/archive endpoint', () => {
 			) PARTITION BY LIST (table_name)
 		`)
 
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableArchiver: true,
 			archiverConfig: {
@@ -197,7 +197,7 @@ describe('POST /api/archive endpoint', () => {
 			) PARTITION BY LIST (table_name)
 		`)
 
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableArchiver: true,
 			archiverConfig: {
@@ -227,7 +227,7 @@ describe('POST /api/archive endpoint', () => {
 		expect(json.archival).toBeDefined()
 	})
 
-	test('allows access without secret when none configured', async () => {
+	test('returns 404 when no auth is configured (endpoint not registered)', async () => {
 		const pool = await getTestConnection()
 
 		await pool.query(`
@@ -247,7 +247,7 @@ describe('POST /api/archive endpoint', () => {
 		const savedCronSecret = process.env.CRON_SECRET
 		delete process.env.CRON_SECRET
 
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableArchiver: true,
 			archiverConfig: {
@@ -265,8 +265,10 @@ describe('POST /api/archive endpoint', () => {
 			serverless: true,
 		})
 
+		// Endpoint is not registered when no auth is configured (security fix).
+		// The route does not exist, so Hono returns 404.
 		const res = await app.request('/api/archive', { method: 'POST' })
-		expect(res.status).toBe(200)
+		expect(res.status).toBe(404)
 
 		// Restore env
 		if (savedCronSecret) process.env.CRON_SECRET = savedCronSecret

@@ -41,7 +41,7 @@ async function main() {
   `)
 
 	// Create server in serverless mode (same as pg-history/vercel entry point)
-	const app = await createServer({
+	const { app } = await createServer({
 		pool,
 		serverless: true,
 		enableHistory: true,

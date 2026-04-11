@@ -38,7 +38,7 @@ async function main() {
   `)
 
 	// Create and start the server
-	const app = await createServer({
+	const { app } = await createServer({
 		pool,
 		port: PORT,
 		enableHistory: true,

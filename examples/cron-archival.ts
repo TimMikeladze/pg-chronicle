@@ -38,7 +38,7 @@ async function main() {
   `)
 
 	// Create server in serverless mode with archiver enabled
-	const app = await createServer({
+	const { app } = await createServer({
 		pool,
 		serverless: true,
 		enableHistory: true,

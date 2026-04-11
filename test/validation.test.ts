@@ -130,7 +130,7 @@ describe('parseSearchBody runtime validation', () => {
 		expect(result.dateFrom).toBeInstanceOf(Date)
 		expect(result.dateTo).toBeInstanceOf(Date)
 		expect(result.limit).toBe(50)
-		expect(result.cursor).toBe('100')
+		expect(result.cursor as string).toBe('100')
 	})
 })
 

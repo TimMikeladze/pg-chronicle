@@ -1,9 +1,21 @@
 import type { Pool } from 'pg'
+import { validateIdentifier } from './pg-history-validators'
+
+// Cache schema per pool instance to avoid repeated round-trips.
+// The schema does not change during a session; keying by pool avoids
+// cross-contamination when multiple pools are used in the same process (tests).
+const schemaCache = new WeakMap<Pool, string>()
 
 async function getSchemaPrefix(pool: Pool): Promise<string> {
+	const cached = schemaCache.get(pool)
+	if (cached) return cached
+
 	const result = await pool.query('SELECT current_schema() as schema')
 	const schema = result.rows[0]?.schema || 'public'
-	return `"${schema}"`
+	validateIdentifier(schema, 'schema')
+	const prefix = `"${schema}"`
+	schemaCache.set(pool, prefix)
+	return prefix
 }
 
 export async function setupArchiverSchema(pool: Pool): Promise<void> {
@@ -113,7 +125,12 @@ export async function updateArchivalStats(
 	const auditTable = `${s}."audit_log"`
 	const statsTable = `${s}."audit_archival_stats"`
 
-	// Get counts in a single query using FILTER
+	// Get counts in a single query using FILTER aggregates.
+	// Each FILTER is self-contained — no outer WHERE pre-filtering is needed and
+	// adding one creates subtle correctness bugs (e.g. pending_soft_delete rows
+	// may not satisfy changed_at < retentionCutoff but still need counting).
+	// This scans the full table partition, which is acceptable: this method runs
+	// outside the advisory lock and is a reporting-only operation.
 	const result = await pool.query(
 		`SELECT
       COUNT(*) FILTER (WHERE archived_at IS NULL AND changed_at < $2) as pending_archive,
@@ -121,12 +138,7 @@ export async function updateArchivalStats(
       COUNT(*) FILTER (WHERE soft_deleted_at IS NOT NULL AND soft_deleted_at < $3) as pending_hard_delete,
       MIN(changed_at) FILTER (WHERE archived_at IS NULL) as oldest_unarchived
     FROM ${auditTable}
-    WHERE table_name = $1
-      AND (
-        (archived_at IS NULL AND changed_at < $2)
-        OR (archived_at IS NOT NULL AND archived_at < $3 AND soft_deleted_at IS NULL)
-        OR (soft_deleted_at IS NOT NULL AND soft_deleted_at < $3)
-      )`,
+    WHERE table_name = $1`,
 		[tableName, retentionCutoff, gracePeriodCutoff],
 	)
 

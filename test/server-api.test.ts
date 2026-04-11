@@ -43,7 +43,7 @@ describe('Server API Types', () => {
 
 	test('server should initialize PgHistory when historyConfig provided', async () => {
 		const pool = await getTestConnection()
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			port: 3001,
 			enableHistory: true,
@@ -63,7 +63,7 @@ describe('GET /api/history/:table/:recordId', () => {
 		process.env.PG_HISTORY_JWT_SECRET = 'test-secret'
 
 		const pool = await getTestConnection()
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableHistory: true,
 			historyConfig: { tables: ['users'] },
@@ -87,7 +87,7 @@ describe('GET /api/history/:table/:recordId', () => {
 		`)
 
 		// Create server (which initializes PgHistory)
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableHistory: true,
 			historyConfig: { tables: ['users'] },
@@ -136,7 +136,7 @@ describe('POST /api/history/search', () => {
 		await pool.query(`INSERT INTO users (id, name) VALUES (1, 'Alice')`)
 		await pool.query(`INSERT INTO posts (id, title) VALUES (1, 'Hello World')`)
 
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableHistory: true,
 			historyConfig: { tables: ['users', 'posts'] },
@@ -161,7 +161,7 @@ describe('POST /api/history/search', () => {
 
 	test('should return 400 for empty tables array', async () => {
 		const pool = await getTestConnection()
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableHistory: true,
 			historyConfig: { tables: ['users'] },
@@ -212,11 +212,19 @@ describe('Review Fix #15: rate limiter cleanup runs on a timer', () => {
 // ─────────────────────────────────────────────────────────
 
 describe('Review Fix #20: Bun.serve is gated', () => {
-	test('server.ts guards the runtime entry point', async () => {
+	test('main.ts is isolated as a Bun-only entrypoint', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/server.ts', 'utf-8')
+		// The Bun entrypoint was extracted to src/main.ts so server.ts stays
+		// importable by Node/Vercel without referencing Bun globals.
+		// main.ts is not in the package exports map and not imported anywhere —
+		// its isolation is structural (not a typeof guard at runtime).
+		const source = await fs.readFile('./src/main.ts', 'utf-8')
+		const serverSource = await fs.readFile('./src/server.ts', 'utf-8')
 
-		expect(source).toContain("typeof Bun !== 'undefined'")
+		// server.ts must NOT reference Bun globals — it's imported in Node/Vercel
+		expect(serverSource).not.toContain('Bun.serve')
+		// main.ts declares the Bun type explicitly (not as a global assumption)
+		expect(source).toContain('declare const Bun')
 	})
 })
 

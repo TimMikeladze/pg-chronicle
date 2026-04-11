@@ -175,8 +175,8 @@ describe('PgHistory triggers', () => {
     `)
 
 		expect(logs.rows.length).toBe(1)
-		// Composite key should be concatenated with '|' delimiter
-		expect(logs.rows[0]?.record_id).toBe('123|456')
+		// Composite key is concatenated with ASCII unit separator chr(31) as delimiter
+		expect(logs.rows[0]?.record_id).toBe('123\x1f456')
 		expect(logs.rows[0]?.new_data?.user_id).toBe(123)
 		expect(logs.rows[0]?.new_data?.role_id).toBe(456)
 	})
@@ -223,12 +223,13 @@ describe('PgHistory triggers', () => {
 describe('buildTriggerFunctionSql', () => {
 	test('generates function for single-column primary key', () => {
 		const sql = buildTriggerFunctionSql({
+			schema: 'public',
 			funcName: 'audit_trigger_func_users',
 			pkColumns: ['id'],
 			auditTable: '"public"."audit_log"',
 		})
 		expect(sql).toContain(
-			'CREATE OR REPLACE FUNCTION "audit_trigger_func_users"()',
+			'CREATE OR REPLACE FUNCTION "public"."audit_trigger_func_users"()',
 		)
 		expect(sql).toContain('OLD."id"::text')
 		expect(sql).toContain('NEW."id"::text')
@@ -237,17 +238,19 @@ describe('buildTriggerFunctionSql', () => {
 
 	test('generates function for composite primary key', () => {
 		const sql = buildTriggerFunctionSql({
+			schema: 'public',
 			funcName: 'audit_trigger_func_order_items',
 			pkColumns: ['order_id', 'item_id'],
 			auditTable: '"public"."audit_log"',
 		})
 		expect(sql).toContain('COALESCE(NEW."order_id"::text')
 		expect(sql).toContain('COALESCE(NEW."item_id"::text')
-		expect(sql).toContain("|| '|' ||")
+		expect(sql).toContain('|| chr(31) ||')
 	})
 
 	test('generates function for no primary key (md5 hash)', () => {
 		const sql = buildTriggerFunctionSql({
+			schema: 'public',
 			funcName: 'audit_trigger_func_logs',
 			pkColumns: [],
 			auditTable: '"public"."audit_log"',

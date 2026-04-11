@@ -11,7 +11,10 @@
  */
 import type { PoolClient } from 'pg'
 import { AuditEntryNotFoundError, RevertError } from './errors'
-import { validateColumnNames } from './pg-history-validators'
+import {
+	validateColumnNames,
+	validateIdentifier,
+} from './pg-history-validators'
 
 export interface RevertArgs {
 	client: PoolClient
@@ -22,6 +25,8 @@ export interface RevertArgs {
 	auditEntryId: string
 	pkColumns: string[]
 	suppressAuditTriggers: boolean
+	/** When true, the query filters out soft-deleted audit entries. */
+	hasSoftDeleteColumn?: boolean
 }
 
 /**
@@ -38,22 +43,46 @@ export async function executeRevert(args: RevertArgs): Promise<void> {
 		auditEntryId,
 		pkColumns,
 		suppressAuditTriggers,
+		hasSoftDeleteColumn,
 	} = args
+
+	// Self-defend: validate tableName even if the caller already checked an allowlist.
+	// executeRevert is a public export — callers may pass tableName from untrusted sources.
+	validateIdentifier(tableName, 'table')
 
 	// Suppress audit triggers for this session if requested.
 	// session_replication_role = 'replica' disables user-defined triggers
 	// but keeps system triggers (e.g., FK/CHECK) enabled. SET LOCAL scopes
 	// it to the current transaction so we don't leak state.
+	// Requires SUPERUSER or the pg_replication role (PostgreSQL 16+).
 	if (suppressAuditTriggers) {
-		await client.query(`SET LOCAL session_replication_role = 'replica'`)
+		try {
+			await client.query(`SET LOCAL session_replication_role = 'replica'`)
+		} catch (err) {
+			const code = (err as { code?: string }).code
+			if (code === '42501') {
+				throw new RevertError(
+					'Cannot suppress audit triggers: the database user lacks the required privilege. ' +
+						'Grant the pg_replication role (PostgreSQL 16+) or SUPERUSER, ' +
+						'or pass suppressAuditTriggers: false to allow revert operations to be re-audited.',
+				)
+			}
+			throw err
+		}
 	}
 
-	// Fetch the audit entry
+	// Fetch the audit entry. When the archiver schema is present, exclude
+	// soft-deleted entries — a row pending hard deletion should not be used as a
+	// revert source (the backup may already be on its way to S3 and the DB row
+	// may disappear at any time).
+	const softDeleteFilter = hasSoftDeleteColumn
+		? ' AND soft_deleted_at IS NULL'
+		: ''
 	const entryResult = await client.query(
 		`SELECT * FROM ${auditTable}
 		WHERE id = $1::bigint
 		AND table_name = $2
-		AND record_id = $3`,
+		AND record_id = $3${softDeleteFilter}`,
 		[auditEntryId, tableName, recordId],
 	)
 	const [entry] = entryResult.rows as Array<{
@@ -77,6 +106,26 @@ export async function executeRevert(args: RevertArgs): Promise<void> {
 
 	validateColumnNames(pkColumns)
 
+	// Pre-flight: ensure every PK column is present in the audit data before
+	// entering the SQL path. buildPkWhereClause would otherwise throw mid-
+	// transaction with a less-actionable error. Only INSERT (inverse: DELETE
+	// WHERE pk) and UPDATE (inverse: UPDATE WHERE pk) reverts need the PK;
+	// DELETE reverts re-INSERT whole rows and don't build a PK where clause.
+	if (entry.operation === 'INSERT' || entry.operation === 'UPDATE') {
+		const revertSource =
+			entry.operation === 'INSERT' ? entry.new_data : entry.old_data
+		if (revertSource) {
+			const missingPk = pkColumns.filter(
+				(col) => revertSource[col] === undefined,
+			)
+			if (missingPk.length > 0) {
+				throw new RevertError(
+					`Cannot revert ${entry.operation} for entry ${auditEntryId}: primary key column(s) [${missingPk.join(', ')}] missing from audit data for table "${tableName}". The audit entry may be corrupted or from a schema that predates the current primary key.`,
+				)
+			}
+		}
+	}
+
 	// Cross-check revert data columns against actual table columns
 	// to prevent writing to unintended columns via crafted audit_log entries.
 	// Also detect schema drift: if the live table has columns the audit data
@@ -86,7 +135,7 @@ export async function executeRevert(args: RevertArgs): Promise<void> {
 	const dataColumns = Object.keys(revertDataForCheck)
 	if (dataColumns.length > 0) {
 		const colResult = await client.query(
-			`SELECT column_name, is_nullable, column_default
+			`SELECT column_name, is_nullable, column_default, is_generated, identity_generation
 			FROM information_schema.columns
 			WHERE table_schema = $1 AND table_name = $2`,
 			[schema, tableName],
@@ -95,6 +144,8 @@ export async function executeRevert(args: RevertArgs): Promise<void> {
 			column_name: string
 			is_nullable: 'YES' | 'NO'
 			column_default: string | null
+			is_generated: 'ALWAYS' | 'NEVER' | string
+			identity_generation: 'ALWAYS' | 'BY DEFAULT' | null
 		}>
 		const realColumnNames = new Set(realColumnRows.map((r) => r.column_name))
 		const unknownColumns = dataColumns.filter((c) => !realColumnNames.has(c))
@@ -114,7 +165,10 @@ export async function executeRevert(args: RevertArgs): Promise<void> {
 					(r) =>
 						!auditColumnSet.has(r.column_name) &&
 						r.is_nullable === 'NO' &&
-						r.column_default === null,
+						r.column_default === null &&
+						// GENERATED ALWAYS columns cannot be supplied — exclude from check
+						r.identity_generation !== 'ALWAYS' &&
+						r.is_generated !== 'ALWAYS',
 				)
 				.map((r) => r.column_name)
 			if (missingRequired.length > 0) {
@@ -123,16 +177,49 @@ export async function executeRevert(args: RevertArgs): Promise<void> {
 				)
 			}
 		}
+
+		// Collect columns that are GENERATED ALWAYS — they cannot be supplied in INSERT
+		const generatedAlwaysColumns = new Set(
+			realColumnRows
+				.filter(
+					(r) =>
+						r.identity_generation === 'ALWAYS' || r.is_generated === 'ALWAYS',
+				)
+				.map((r) => r.column_name),
+		)
+
+		if (entry.operation === 'DELETE' && generatedAlwaysColumns.size > 0) {
+			// Pass generated column set so revertDelete can exclude them from INSERT
+			await revertDelete(
+				client,
+				schema,
+				tableName,
+				entry,
+				auditEntryId,
+				recordId,
+				generatedAlwaysColumns,
+			)
+			return
+		}
 	}
 
 	// Branch on operation type
 	if (entry.operation === 'INSERT') {
-		await revertInsert(client, tableName, pkColumns, entry, recordId)
+		await revertInsert(client, schema, tableName, pkColumns, entry, recordId)
 	} else if (entry.operation === 'DELETE') {
-		await revertDelete(client, tableName, entry, auditEntryId, recordId)
+		await revertDelete(
+			client,
+			schema,
+			tableName,
+			entry,
+			auditEntryId,
+			recordId,
+			new Set(),
+		)
 	} else {
 		await revertUpdate(
 			client,
+			schema,
 			tableName,
 			pkColumns,
 			entry,
@@ -144,6 +231,7 @@ export async function executeRevert(args: RevertArgs): Promise<void> {
 
 async function revertInsert(
 	client: PoolClient,
+	schema: string,
 	tableName: string,
 	pkColumns: string[],
 	entry: { new_data: Record<string, unknown> | null },
@@ -154,7 +242,7 @@ async function revertInsert(
 	const { whereClause, values } = buildPkWhereClause(pkColumns, revertData, 0)
 
 	const deleteQuery = `
-		DELETE FROM "${tableName}"
+		DELETE FROM "${schema}"."${tableName}"
 		WHERE ${whereClause}
 		RETURNING true as success
 	`
@@ -168,10 +256,12 @@ async function revertInsert(
 
 async function revertDelete(
 	client: PoolClient,
+	schema: string,
 	tableName: string,
 	entry: { old_data: Record<string, unknown> | null },
 	auditEntryId: string,
 	recordId: string,
+	generatedAlwaysColumns: Set<string>,
 ): Promise<void> {
 	// Undo DELETE = re-INSERT the row
 	const revertData = entry.old_data
@@ -181,7 +271,20 @@ async function revertDelete(
 		)
 	}
 
-	const allColumns = Object.keys(revertData)
+	// Exclude GENERATED ALWAYS columns — PostgreSQL forbids supplying values for them.
+	// SERIAL/IDENTITY BY DEFAULT columns CAN be overridden, so we include those.
+	const allColumns = Object.keys(revertData).filter(
+		(col) => !generatedAlwaysColumns.has(col),
+	)
+
+	if (allColumns.length === 0) {
+		throw new RevertError(
+			`Cannot revert DELETE for entry ${auditEntryId}: all audited columns in table "${tableName}" are GENERATED ALWAYS. ` +
+				'PostgreSQL does not allow supplying values for generated columns. ' +
+				'The row will be re-created by the sequence/generation expression if inserted without explicit column values.',
+		)
+	}
+
 	validateColumnNames(allColumns)
 
 	const columnList = allColumns.map((col) => `"${col}"`).join(', ')
@@ -189,7 +292,7 @@ async function revertDelete(
 	const values = allColumns.map((col) => revertData[col])
 
 	const insertQuery = `
-		INSERT INTO "${tableName}" (${columnList})
+		INSERT INTO "${schema}"."${tableName}" (${columnList})
 		VALUES (${placeholders})
 		RETURNING true as success
 	`
@@ -203,6 +306,7 @@ async function revertDelete(
 
 async function revertUpdate(
 	client: PoolClient,
+	schema: string,
 	tableName: string,
 	pkColumns: string[],
 	entry: { old_data: Record<string, unknown> | null },
@@ -218,6 +322,11 @@ async function revertUpdate(
 	}
 
 	const columns = Object.keys(revertData).filter((k) => !pkColumns.includes(k))
+	if (columns.length === 0) {
+		throw new RevertError(
+			`Cannot revert UPDATE for entry ${auditEntryId}: no non-primary-key columns found in audit data for table "${tableName}". The audited row may contain only primary key columns.`,
+		)
+	}
 	validateColumnNames(columns)
 
 	const setClauses = columns
@@ -233,7 +342,7 @@ async function revertUpdate(
 	values.push(...pkValues)
 
 	const updateQuery = `
-		UPDATE "${tableName}"
+		UPDATE "${schema}"."${tableName}"
 		SET ${setClauses}
 		WHERE ${whereClause}
 		RETURNING true as success

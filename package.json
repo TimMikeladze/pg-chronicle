@@ -36,7 +36,7 @@
 	},
 	"scripts": {
 		"build": "bunup",
-		"dev": "bun run src/server.ts",
+		"dev": "bun run src/main.ts",
 		"lint": "bun biome check . && bun biome format .",
 		"lint:fix": "bun biome check --unsafe --write . && bun biome format --write .",
 		"tsc": "tsc --noEmit",

@@ -32,7 +32,8 @@ describe('Fix #1 + #9: Vercel handler error recovery', () => {
 		expect(res.status).toBe(500)
 		const body = await res.json()
 		expect(body.error.code).toBe('INIT_ERROR')
-		expect(body.error.message).toContain('PG_HISTORY_DATABASE_URL')
+		// Generic message — real error is logged server-side, not exposed to clients
+		expect(body.error.message).toBe('Service initialization failed')
 	})
 
 	test('POST returns 500 JSON when init fails (missing env vars)', async () => {
@@ -153,11 +154,11 @@ describe('Fix #4: Archive endpoint authentication warning', () => {
 		`)
 	})
 
-	test('warns when no cron secret is configured', async () => {
+	test('logs error and refuses to register /api/archive when no auth is configured', async () => {
 		const originalCronSecret = process.env.CRON_SECRET
 		delete process.env.CRON_SECRET
 
-		const warnSpy = spyOn(console, 'warn')
+		const errorSpy = spyOn(console, 'error')
 
 		await createServer({
 			pool,
@@ -171,21 +172,21 @@ describe('Fix #4: Archive endpoint authentication warning', () => {
 			serverless: true,
 		})
 
-		const warnings = warnSpy.mock.calls.map((call) => call[0])
+		const errors = errorSpy.mock.calls.map((call) => call[0])
 		expect(
-			warnings.some(
-				(w: string) =>
-					typeof w === 'string' &&
-					w.includes('/api/archive endpoint has no authentication'),
+			errors.some(
+				(e: string) =>
+					typeof e === 'string' &&
+					e.includes('/api/archive endpoint NOT registered'),
 			),
 		).toBe(true)
 
-		warnSpy.mockRestore()
+		errorSpy.mockRestore()
 		process.env.CRON_SECRET = originalCronSecret
 	})
 
-	test('does not warn when cron secret is configured', async () => {
-		const warnSpy = spyOn(console, 'warn')
+	test('does not log archive auth error when cron secret is configured', async () => {
+		const errorSpy = spyOn(console, 'error')
 
 		await createServer({
 			pool,
@@ -200,20 +201,20 @@ describe('Fix #4: Archive endpoint authentication warning', () => {
 			serverless: true,
 		})
 
-		const warnings = warnSpy.mock.calls.map((call) => call[0])
+		const errors = errorSpy.mock.calls.map((call) => call[0])
 		expect(
-			warnings.some(
-				(w: string) =>
-					typeof w === 'string' &&
-					w.includes('/api/archive endpoint has no authentication'),
+			errors.some(
+				(e: string) =>
+					typeof e === 'string' &&
+					e.includes('/api/archive endpoint NOT registered'),
 			),
 		).toBe(false)
 
-		warnSpy.mockRestore()
+		errorSpy.mockRestore()
 	})
 
 	test('archive endpoint rejects invalid cron secret', async () => {
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableArchiver: true,
 			archiverConfig: {

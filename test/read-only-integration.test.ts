@@ -69,7 +69,7 @@ describe('Read-Only API Integration Test', () => {
 
 		// Step 4: Create server instance
 		console.log('Step 4: Creating server...')
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			port: 3001,
 			enableHistory: true,
@@ -290,7 +290,7 @@ describe('Read-Only API Integration Test', () => {
 			await pool.query(`UPDATE products SET price = ${10.0 + i} WHERE id = 1`)
 		}
 
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableHistory: true,
 			historyConfig: {
@@ -348,7 +348,7 @@ describe('Read-Only API Integration Test', () => {
 			})
 			await pgHistory.setup()
 
-			const app = await createServer({
+			const { app } = await createServer({
 				pool,
 				enableHistory: true,
 				historyConfig: {

@@ -1,5 +1,6 @@
 import { stat } from 'node:fs/promises'
 import { parquetWriteFile } from 'hyparquet-writer'
+import { consoleLogger, type Logger } from './logger'
 
 /**
  * Convert an id value (which pg-js returns as a string for BIGINT by default)
@@ -87,8 +88,6 @@ export async function writeParquet(
 	const fileStats = await stat(filePath)
 	return fileStats.size
 }
-
-import { consoleLogger, type Logger } from './logger'
 
 export async function readParquet(
 	filePath: string,

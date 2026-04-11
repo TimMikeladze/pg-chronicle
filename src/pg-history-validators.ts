@@ -18,11 +18,12 @@ const IDENTIFIER_REGEX = /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/
  */
 export function validateIdentifier(
 	name: string,
-	kind: 'table' | 'column',
+	kind: 'table' | 'column' | 'schema',
 ): void {
 	if (!IDENTIFIER_REGEX.test(name)) {
-		throw new Error(
-			`Invalid ${kind} name: "${name}". ${kind === 'table' ? 'Table' : 'Column'} names must start with a letter or underscore and contain only alphanumeric characters and underscores.`,
+		const kindLabel = kind.charAt(0).toUpperCase() + kind.slice(1)
+		throw new ValidationError(
+			`Invalid ${kind} name: "${name}". ${kindLabel} names must start with a letter or underscore and contain only alphanumeric characters and underscores.`,
 		)
 	}
 }

@@ -1,5 +1,7 @@
 import type { Pool } from 'pg'
+import pg from 'pg'
 import { consoleLogger, type Logger } from './logger'
+import { validateIdentifier } from './pg-history-validators'
 import { updateArchivalStats } from './schema'
 import type {
 	OrchestratorConfig,
@@ -22,6 +24,7 @@ export class Orchestrator {
 	private gracePeriod: number
 	private batchSize: number
 	private logger: Logger
+	private lockConnectionString: string | undefined
 
 	/**
 	 * Construct an Orchestrator.
@@ -54,6 +57,7 @@ export class Orchestrator {
 			this.gracePeriod = cfg.gracePeriod
 			this.batchSize = cfg.batchSize
 			this.logger = cfg.logger ?? consoleLogger
+			this.lockConnectionString = cfg.lockConnectionString
 		} else {
 			// Legacy 4-positional form
 			this.s3Config = configOrS3 as S3Config
@@ -62,6 +66,59 @@ export class Orchestrator {
 			this.batchSize = batchSize as number
 			this.logger = consoleLogger
 		}
+	}
+
+	/**
+	 * Create a standalone pg.Client for advisory lock management.
+	 *
+	 * A standalone client does NOT consume a pool slot, so the pool remains
+	 * fully available for archival queries even while S3 uploads are in flight.
+	 * Session-level advisory locks are tied to the backend connection: as long
+	 * as this client stays connected the lock is held; calling client.end()
+	 * releases both the lock and the TCP connection.
+	 *
+	 * When `lockConnectionString` is provided in the constructor config, it is
+	 * used directly and the pool is not inspected. This is the recommended path
+	 * for production deployments where you need certainty that the lock client
+	 * connects to the same database as the pool.
+	 *
+	 * Without `lockConnectionString`, we fall back to reading `pool.options` via
+	 * an internal cast (not part of the public @types/pg API). If those fields
+	 * are all undefined, pg.Client falls back to PGHOST/PGUSER/PGPASSWORD env
+	 * vars — the same fallback the pool itself used.
+	 */
+	private async createLockClient(pool: Pool): Promise<pg.Client> {
+		if (this.lockConnectionString) {
+			const client = new pg.Client({
+				connectionString: this.lockConnectionString,
+			})
+			await client.connect()
+			return client
+		}
+		const poolOpts =
+			(
+				pool as unknown as {
+					options?: pg.ClientConfig & { connectionString?: string }
+				}
+			).options ?? {}
+		if (!poolOpts.connectionString && !poolOpts.host && !poolOpts.database) {
+			this.logger.warn(
+				'lockConnectionString not set and pool options are empty — ' +
+					'lock client will connect using PGHOST/PGUSER/PGPASSWORD env vars. ' +
+					'Set lockConnectionString in OrchestratorConfig to silence this warning.',
+			)
+		}
+		const client = new pg.Client({
+			connectionString: poolOpts.connectionString,
+			host: poolOpts.host,
+			port: poolOpts.port,
+			user: poolOpts.user,
+			password: poolOpts.password,
+			database: poolOpts.database,
+			ssl: poolOpts.ssl,
+		})
+		await client.connect()
+		return client
 	}
 
 	async discoverTables(pool: Pool): Promise<string[]> {
@@ -77,10 +134,12 @@ export class Orchestrator {
         c.relname AS table_name
       FROM pg_trigger t
       JOIN pg_class c ON c.oid = t.tgrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
       JOIN pg_proc p ON p.oid = t.tgfoid
       WHERE t.tgname LIKE 'audit_trigger_%'
         AND p.proname LIKE 'audit_trigger_func_%'
         AND NOT t.tgisinternal
+        AND n.nspname = current_schema()
       ORDER BY table_name
     `)
 
@@ -89,7 +148,12 @@ export class Orchestrator {
 
 	getRetentionCutoff(tableName: string): Date {
 		const retentionDays =
-			this.retentionConfig.tables?.[tableName] || this.retentionConfig.default
+			this.retentionConfig.tables?.[tableName] ?? this.retentionConfig.default
+		if (!Number.isFinite(retentionDays) || retentionDays < 1) {
+			throw new Error(
+				`Invalid retention days for table "${tableName}": ${retentionDays}. Must be a positive integer.`,
+			)
+		}
 		const cutoff = new Date()
 		cutoff.setDate(cutoff.getDate() - retentionDays)
 		return cutoff
@@ -107,6 +171,9 @@ export class Orchestrator {
 		}
 
 		// Discover tables (or use single target)
+		if (options.targetTable) {
+			validateIdentifier(options.targetTable, 'table')
+		}
 		const tables = options.targetTable
 			? [options.targetTable]
 			: await this.discoverTables(pool)
@@ -128,7 +195,7 @@ export class Orchestrator {
 				if (!options.dryRun) {
 					try {
 						const retentionDays =
-							this.retentionConfig.tables?.[table] ||
+							this.retentionConfig.tables?.[table] ??
 							this.retentionConfig.default
 						await updateArchivalStats(
 							pool,
@@ -173,12 +240,10 @@ export class Orchestrator {
 
 		// Acquire advisory lock to prevent concurrent processing of the same table.
 		// The lock is session-level: it persists as long as lockClient stays connected.
-		// We keep lockClient alive (not released) throughout processing so the lock holds.
-		// NOTE: This holds a pool connection for the entire duration of table processing
-		// (archive + soft delete + hard delete). Ensure the pool max is at least 2
-		// (1 for the lock + 1 for queries). Tables are processed sequentially.
+		// We use a standalone pg.Client (not a pool connection) so the pool remains
+		// fully available for archival queries throughout S3 I/O.
 		const lockKey = `${ADVISORY_LOCK_KEY_PREFIX}${tableName}`
-		const lockClient = await pool.connect()
+		const lockClient = await this.createLockClient(pool)
 		try {
 			const lockResult = await lockClient.query(
 				`SELECT pg_try_advisory_lock($1, hashtext($2))`,
@@ -189,12 +254,12 @@ export class Orchestrator {
 				this.logger.info('Skipping table — another instance is processing it', {
 					table: tableName,
 				})
-				lockClient.release()
+				await lockClient.end().catch(() => {})
 				stats.durationMs = Date.now() - startTime
 				return stats
 			}
 		} catch (error) {
-			lockClient.release()
+			await lockClient.end().catch(() => {})
 			throw error
 		}
 
@@ -204,11 +269,27 @@ export class Orchestrator {
 				'SELECT current_schema() as schema',
 			)
 			const schema = schemaResult.rows[0]?.schema || 'public'
+			validateIdentifier(schema, 'schema')
 			const auditTable = `"${schema}"."audit_log"`
 
-			const cutoff = this.getRetentionCutoff(tableName)
-			const gracePeriodDate = new Date()
-			gracePeriodDate.setDate(gracePeriodDate.getDate() - this.gracePeriod)
+			// Compute both cutoffs from the DB clock to avoid Node.js / PostgreSQL
+			// clock-skew. The DB-side interval arithmetic is identical to what
+			// softDeleteArchived / hardDeletePurged execute, so dry-run counts and
+			// actual archival operate on the same logical boundary.
+			const retentionDays =
+				this.retentionConfig.tables?.[tableName] ?? this.retentionConfig.default
+			if (!Number.isFinite(retentionDays) || retentionDays < 1) {
+				throw new Error(
+					`Invalid retention days for table "${tableName}": ${retentionDays}. Must be a positive integer.`,
+				)
+			}
+			const clockResult = await lockClient.query(
+				`SELECT NOW() - ($1 * INTERVAL '1 day') AS cutoff,
+				        NOW() - ($2 * INTERVAL '1 day') AS grace_cutoff`,
+				[retentionDays, this.gracePeriod],
+			)
+			const cutoff: Date = clockResult.rows[0].cutoff
+			const graceCutoff: Date = clockResult.rows[0].grace_cutoff
 
 			if (options.dryRun) {
 				// Use lockClient for dry-run queries to avoid extra pool checkouts
@@ -229,7 +310,7 @@ export class Orchestrator {
 						AND archived_at < $2
 						AND soft_deleted_at IS NULL
 						AND s3_path IS NOT NULL`,
-					[tableName, gracePeriodDate],
+					[tableName, graceCutoff],
 				)
 
 				const hardDeleteCount = await lockClient.query(
@@ -238,7 +319,7 @@ export class Orchestrator {
 					WHERE table_name = $1
 						AND soft_deleted_at IS NOT NULL
 						AND soft_deleted_at < $2`,
-					[tableName, gracePeriodDate],
+					[tableName, graceCutoff],
 				)
 
 				this.logger.info('DRY RUN', {
@@ -344,14 +425,16 @@ export class Orchestrator {
 			stats.durationMs = Date.now() - startTime
 			return stats
 		} finally {
-			// Release the advisory lock and return connection to pool
+			// Unlock before disconnecting (best-effort; the lock also releases when
+			// the connection closes, so a failure here is not catastrophic).
 			await lockClient
 				.query(`SELECT pg_advisory_unlock($1, hashtext($2))`, [
 					ADVISORY_LOCK_NAMESPACE,
 					lockKey,
 				])
 				.catch(() => {})
-			lockClient.release()
+			// end() closes the TCP connection and implicitly releases the session lock
+			await lockClient.end().catch(() => {})
 		}
 	}
 }

@@ -7,6 +7,8 @@
  */
 
 export interface BuildTriggerFunctionArgs {
+	/** Schema to create the function in (e.g., "public") */
+	schema: string
 	/** Name of the trigger function to create (e.g., "audit_trigger_func_users") */
 	funcName: string
 	/** Primary key column names on the target table */
@@ -28,12 +30,17 @@ export interface BuildTriggerFunctionArgs {
 export function buildTriggerFunctionSql(
 	args: BuildTriggerFunctionArgs,
 ): string {
-	const { funcName, pkColumns, auditTable } = args
+	const { schema, funcName, pkColumns, auditTable } = args
 
 	if (pkColumns.length === 0) {
-		// No primary key: use md5 hash of all column values
+		// No primary key: use md5 hash of the full row as record_id.
+		// NOTE: For UPDATE operations, record_id is md5(NEW row) — it changes on
+		// every update because it reflects the new values. This means getHistory()
+		// queries by record_id will NOT correlate UPDATE entries with preceding
+		// INSERT entries for no-PK tables. Use tables with explicit primary keys
+		// for complete, queryable audit history.
 		return `
-CREATE OR REPLACE FUNCTION "${funcName}"()
+CREATE OR REPLACE FUNCTION "${schema}"."${funcName}"()
 RETURNS TRIGGER AS $$
 BEGIN
 	IF (TG_OP = 'DELETE') THEN
@@ -57,7 +64,7 @@ $$ LANGUAGE plpgsql;
 	if (pkColumns.length === 1) {
 		const pkCol = pkColumns[0]
 		return `
-CREATE OR REPLACE FUNCTION "${funcName}"()
+CREATE OR REPLACE FUNCTION "${schema}"."${funcName}"()
 RETURNS TRIGGER AS $$
 BEGIN
 	IF (TG_OP = 'DELETE') THEN
@@ -78,17 +85,19 @@ $$ LANGUAGE plpgsql;
 		`
 	}
 
-	// Composite primary key: concatenate with '|' delimiter.
+	// Composite primary key: concatenate with ASCII unit separator (chr(31)) as delimiter.
+	// chr(31) is a control character that cannot appear in normal text/varchar PK column
+	// values, preventing ambiguous record_id collisions (e.g. PK ('a|b','c') vs ('a','b|c')).
 	// COALESCE wraps each column so a NULL PK component doesn't poison the key.
 	const pkExpressionsNew = pkColumns
 		.map((col) => `COALESCE(NEW."${col}"::text, '')`)
-		.join(" || '|' || ")
+		.join(' || chr(31) || ')
 	const pkExpressionsOld = pkColumns
 		.map((col) => `COALESCE(OLD."${col}"::text, '')`)
-		.join(" || '|' || ")
+		.join(' || chr(31) || ')
 
 	return `
-CREATE OR REPLACE FUNCTION "${funcName}"()
+CREATE OR REPLACE FUNCTION "${schema}"."${funcName}"()
 RETURNS TRIGGER AS $$
 BEGIN
 	IF (TG_OP = 'DELETE') THEN

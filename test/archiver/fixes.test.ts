@@ -276,7 +276,7 @@ describe('Fix #12: S3 orphan crash recovery documented', () => {
 		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
 
 		expect(source).toContain('becomes an orphan')
-		expect(source).toContain('cleanup job')
+		expect(source).toContain('cleanupOrphanedFiles')
 	})
 })
 
@@ -346,14 +346,17 @@ describe('Review Fix #19: dynamic imports removed from hot paths', () => {
 })
 
 // ─────────────────────────────────────────────────────────
-// Review Fix #25: archivedCount partial branch documented
+// Review Fix #25: concurrent archival race eliminated via row locks
+// (replaces the old archivedCount partial-branch documentation — the
+// partial branch no longer exists because FOR UPDATE SKIP LOCKED
+// prevents two processes from ever observing the same rows)
 // ─────────────────────────────────────────────────────────
 
-describe('Review Fix #25: archivedCount partial branch documented', () => {
-	test('processBatch contains NOTE about partial concurrent archival', async () => {
+describe('Review Fix #25: concurrent archival uses row locks', () => {
+	test('processBatch claims batches with SELECT FOR UPDATE SKIP LOCKED', async () => {
 		const fs = await import('node:fs/promises')
 		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
 
-		expect(source).toContain('NOTE: if archivedCount > 0 but < records.length')
+		expect(source).toContain('FOR UPDATE SKIP LOCKED')
 	})
 })

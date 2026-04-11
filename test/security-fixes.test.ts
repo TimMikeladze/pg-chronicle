@@ -74,7 +74,7 @@ describe('CRIT-2: /api/stats requires JWT when secret is set', () => {
 		const original = process.env.PG_HISTORY_JWT_SECRET
 		process.env.PG_HISTORY_JWT_SECRET = 'test-secret'
 
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableArchiver: true,
 			archiverConfig: {
@@ -144,7 +144,8 @@ describe('HIGH-3: Generic error messages for database errors', () => {
 				match.includes('INVALID_TABLE') ||
 					match.includes('NOT_FOUND') ||
 					match.includes('NOT_CONFIGURED') ||
-					match.includes('VALIDATION_ERROR'),
+					match.includes('VALIDATION_ERROR') ||
+					match.includes('REVERT_ERROR'),
 			).toBe(true)
 		}
 	})
@@ -161,7 +162,7 @@ describe('HIGH-3: Generic error messages for database errors', () => {
 			'CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)',
 		)
 
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableHistory: true,
 			historyConfig: { tables: ['users'] },
@@ -265,7 +266,7 @@ describe('MED-2: Timing-safe cron secret comparison', () => {
 	})
 
 	test('rejects wrong secret via timing-safe path', async () => {
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableArchiver: true,
 			archiverConfig: {
@@ -286,7 +287,7 @@ describe('MED-2: Timing-safe cron secret comparison', () => {
 	})
 
 	test('accepts correct secret via timing-safe path', async () => {
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableArchiver: true,
 			archiverConfig: {
@@ -373,7 +374,8 @@ describe('MED-4: Cursor must be numeric', () => {
 		await pgHistory.setup()
 
 		await expect(
-			pgHistory.search({ tables: ['users'], cursor: 'not-a-number' }),
+			// Cast: intentionally passing invalid input to test runtime validation
+			pgHistory.search({ tables: ['users'], cursor: 'not-a-number' as never }),
 		).rejects.toThrow('cursor must be a numeric ID')
 
 		await pgHistory.teardown()
@@ -448,14 +450,14 @@ describe('LOW-3: Security headers on all responses', () => {
 	})
 
 	test('responses include X-Content-Type-Options: nosniff', async () => {
-		const app = await createServer({ pool })
+		const { app } = await createServer({ pool })
 
 		const res = await app.request('/health')
 		expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
 	})
 
 	test('responses include X-Frame-Options: DENY', async () => {
-		const app = await createServer({ pool })
+		const { app } = await createServer({ pool })
 
 		const res = await app.request('/health')
 		expect(res.headers.get('X-Frame-Options')).toBe('DENY')
@@ -482,7 +484,7 @@ describe('Health endpoint strips internal error details', () => {
 	})
 
 	test('health response does not contain lastError field', async () => {
-		const app = await createServer({
+		const { app } = await createServer({
 			pool,
 			enableArchiver: true,
 			archiverConfig: {

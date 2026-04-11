@@ -7,7 +7,8 @@
  * into a 400 response.
  */
 import { ValidationError } from './errors'
-import type { SearchOptions } from './types'
+import { validateCursor, validateIdentifier } from './pg-history-validators'
+import type { SearchCursor, SearchOptions } from './types'
 
 const VALID_OPERATIONS = new Set(['INSERT', 'UPDATE', 'DELETE'])
 
@@ -28,6 +29,16 @@ export function parseSearchBody(body: unknown): SearchOptions {
 	}
 	if (!body.tables.every((t) => typeof t === 'string' && t.length > 0)) {
 		throw new ValidationError('tables must contain only non-empty strings')
+	}
+	// Validate each name as a safe identifier at the API boundary.
+	// This is NOT a breaking change: PgHistory already enforces the same
+	// identifier regex on all configured table names at construction time, so
+	// any name that passes the downstream allowlist check will also pass here.
+	// The only practical effect is that injection strings like "users;DROP TABLE"
+	// now get a 400 ValidationError instead of a 400 INVALID_TABLE — better DX
+	// and removes the table-existence probing oracle.
+	for (const t of body.tables as string[]) {
+		validateIdentifier(t, 'table')
 	}
 
 	// query — optional string
@@ -68,16 +79,18 @@ export function parseSearchBody(body: unknown): SearchOptions {
 		limit = body.limit
 	}
 
-	// cursor — optional numeric string
-	let cursor: string | undefined
+	// cursor — optional numeric string; validate format at the boundary
+	// (search() also calls validateCursor, but validating here gives the caller
+	// a 400 before any database interaction).
+	let cursor: SearchCursor | undefined
 	if (body.cursor !== undefined) {
 		if (typeof body.cursor !== 'string') {
 			throw new ValidationError('cursor must be a string')
 		}
-		if (!/^\d+$/.test(body.cursor)) {
-			throw new ValidationError('cursor must be a numeric ID')
-		}
-		cursor = body.cursor
+		validateCursor(body.cursor)
+		// Safe cast: validateCursor confirms this is a numeric string, which is
+		// the only valid SearchCursor value produced by search().
+		cursor = body.cursor as SearchCursor
 	}
 
 	return {
@@ -110,15 +123,22 @@ export function parseRevertBody(body: unknown): {
 			'table is required and must be a non-empty string',
 		)
 	}
+	validateIdentifier(table, 'table')
 	if (typeof recordId !== 'string' || recordId.length === 0) {
 		throw new ValidationError(
 			'recordId is required and must be a non-empty string',
 		)
 	}
+	if (recordId.length > 500) {
+		throw new ValidationError('recordId must not exceed 500 characters')
+	}
 	if (typeof auditEntryId !== 'string' || auditEntryId.length === 0) {
 		throw new ValidationError(
 			'auditEntryId is required and must be a non-empty string',
 		)
+	}
+	if (auditEntryId.length > 100) {
+		throw new ValidationError('auditEntryId must not exceed 100 characters')
 	}
 
 	return { table, recordId, auditEntryId }
@@ -129,10 +149,10 @@ function parseOptionalDate(
 	fieldName: string,
 ): Date | undefined {
 	if (value === undefined) return undefined
-	if (typeof value !== 'string' && !(value instanceof Date)) {
-		throw new ValidationError(`${fieldName} must be an ISO-8601 string or Date`)
+	if (typeof value !== 'string') {
+		throw new ValidationError(`${fieldName} must be an ISO-8601 string`)
 	}
-	const date = value instanceof Date ? value : new Date(value)
+	const date = new Date(value)
 	if (Number.isNaN(date.getTime())) {
 		throw new ValidationError(`${fieldName} is not a valid date`)
 	}

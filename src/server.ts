@@ -8,6 +8,7 @@ import { createErrorResponse } from './api-helpers'
 import {
 	AuditEntryNotFoundError,
 	PgHistoryError,
+	RevertError,
 	SetupRequiredError,
 	TableNotConfiguredError,
 	ValidationError,
@@ -15,6 +16,7 @@ import {
 import { consoleLogger, type Logger } from './logger'
 import { Orchestrator } from './orchestrator'
 import { PgHistory } from './PgHistory'
+import { validateIdentifier } from './pg-history-validators'
 import { getArchivalStats, setupArchiverSchema } from './schema'
 import type { ServerConfig } from './types'
 import { parseRevertBody, parseSearchBody } from './validation'
@@ -23,34 +25,35 @@ type Variables = JwtVariables & {
 	pgHistory?: PgHistory
 }
 
-// Module-level archival state for graceful shutdown coordination
-let currentArchivalPromise: Promise<void> | null = null
-let archivalInterval: ReturnType<typeof setInterval> | undefined
-let rateLimitCleanupInterval: ReturnType<typeof setInterval> | undefined
-// In-flight request count — used by graceful shutdown to wait for drain
-let inFlightRequests = 0
-const inFlightWaiters: Array<() => void> = []
-
-async function waitForInFlightRequests(timeoutMs: number): Promise<void> {
-	if (inFlightRequests === 0) return
-	await new Promise<void>((resolve) => {
-		const timer = setTimeout(() => {
-			const idx = inFlightWaiters.indexOf(resolve)
-			if (idx >= 0) inFlightWaiters.splice(idx, 1)
-			resolve()
-		}, timeoutMs)
-		inFlightWaiters.push(() => {
-			clearTimeout(timer)
-			resolve()
-		})
-	})
-}
-
-export async function createServer(
-	config: ServerConfig,
-): Promise<Hono<{ Variables: Variables }>> {
+export async function createServer(config: ServerConfig): Promise<{
+	app: Hono<{ Variables: Variables }>
+	dispose: (drainTimeoutMs?: number) => Promise<void>
+}> {
 	const app = new Hono<{ Variables: Variables }>()
 	const logger: Logger = config.logger ?? consoleLogger
+
+	// Instance-scoped state — not module-level globals, so multiple createServer()
+	// calls (tests, hot reload) each get their own isolated state.
+	let currentArchivalPromise: Promise<void> | null = null
+	let archivalInterval: ReturnType<typeof setInterval> | undefined
+	let rateLimitCleanupInterval: ReturnType<typeof setInterval> | undefined
+	let inFlightRequests = 0
+	const inFlightWaiters: Array<() => void> = []
+
+	function waitForInFlightRequests(timeoutMs: number): Promise<void> {
+		if (inFlightRequests === 0) return Promise.resolve()
+		return new Promise<void>((resolve) => {
+			const timer = setTimeout(() => {
+				const idx = inFlightWaiters.indexOf(resolve)
+				if (idx >= 0) inFlightWaiters.splice(idx, 1)
+				resolve()
+			}, timeoutMs)
+			inFlightWaiters.push(() => {
+				clearTimeout(timer)
+				resolve()
+			})
+		})
+	}
 
 	// Limit request body size to 1MB to prevent memory exhaustion
 	app.use('/api/*', bodyLimit({ maxSize: 1024 * 1024 }))
@@ -176,8 +179,10 @@ export async function createServer(
 
 		const archiverConfig = config.archiverConfig
 		const runOptions = config.runOptions || {}
-		const MAX_RETRIES = 3
-		const RETRY_DELAYS = [5_000, 15_000, 60_000] // 5s, 15s, 60s
+		// MAX_ATTEMPTS: total runs including the initial attempt.
+		// RETRY_DELAYS: one entry per retry (MAX_ATTEMPTS - 1 entries).
+		const MAX_ATTEMPTS = 4
+		const RETRY_DELAYS = [5_000, 15_000, 60_000] // 3 retries after the initial attempt
 		let archivalRunning = false
 
 		runArchival = async (): Promise<void> => {
@@ -185,7 +190,7 @@ export async function createServer(
 			archivalRunning = true
 
 			try {
-				for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+				for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
 					try {
 						archivalHealth.status = 'running'
 						archivalHealth.attempts++
@@ -222,18 +227,18 @@ export async function createServer(
 						archivalHealth.status = 'failed'
 						archivalHealth.lastError = message
 
-						if (attempt < MAX_RETRIES) {
-							const delay = RETRY_DELAYS[attempt] || 60_000
+						if (attempt < MAX_ATTEMPTS - 1) {
+							const delay = RETRY_DELAYS[attempt] ?? 60_000
 							logger.error('Background archival failed, retrying', {
 								attempt: attempt + 1,
-								maxAttempts: MAX_RETRIES + 1,
+								maxAttempts: MAX_ATTEMPTS,
 								delayMs: delay,
 								message,
 							})
 							await new Promise((r) => setTimeout(r, delay))
 						} else {
 							logger.error('Background archival failed after all attempts', {
-								attempts: MAX_RETRIES + 1,
+								attempts: MAX_ATTEMPTS,
 								message,
 							})
 						}
@@ -272,13 +277,25 @@ export async function createServer(
 					logger.error('Scheduled archival failed', { err })
 				})
 			}, intervalMs)
+			// Don't hold the event loop open just for archival scheduling.
+			// Without unref(), a process crash before dispose() leaves the event
+			// loop alive indefinitely.
+			if (
+				typeof archivalInterval === 'object' &&
+				archivalInterval &&
+				'unref' in archivalInterval
+			) {
+				;(archivalInterval as unknown as { unref: () => void }).unref()
+			}
 		}
 	}
 
 	// Conditionally apply JWT auth if PG_HISTORY_JWT_SECRET is set.
 	// When set, we also gate the /openapi endpoint by default unless the
 	// consumer explicitly opts into publicOpenApi.
-	const jwtSecret = process.env.PG_HISTORY_JWT_SECRET
+	// Trim to catch accidental empty-string values (would otherwise silently
+	// disable auth while `jwtSecret` is falsy).
+	const jwtSecret = process.env.PG_HISTORY_JWT_SECRET?.trim() || undefined
 	if (jwtSecret) {
 		logger.info('JWT authentication enabled')
 		const jwtMiddleware = jwt({ secret: jwtSecret, alg: 'HS256' })
@@ -320,50 +337,79 @@ export async function createServer(
 	// Moved after JWT middleware so it's auth-gated when JWT is configured
 	if (config.enableArchiver) {
 		app.get('/api/stats', async (c) => {
-			const stats = await getArchivalStats(config.pool)
-			return c.json({ stats })
-		})
-	}
-
-	// On-demand archival endpoint — for cron triggers (Vercel Cron, AWS EventBridge, etc.)
-	// Authenticated via archiveCronSecret config or CRON_SECRET env var (Vercel convention)
-	if (config.enableArchiver && runArchival) {
-		const cronSecret = config.archiveCronSecret || process.env.CRON_SECRET
-		if (!cronSecret) {
-			logger.warn(
-				'/api/archive endpoint has no authentication. Set archiveCronSecret or CRON_SECRET env var.',
-			)
-		}
-
-		app.post('/api/archive', async (c) => {
-			// Verify cron secret using timing-safe comparison to prevent timing attacks
-			if (cronSecret) {
-				const authHeader = c.req.header('authorization') ?? ''
-				const expected = `Bearer ${cronSecret}`
-				const a = Buffer.from(authHeader)
-				const b = Buffer.from(expected)
-				if (a.length !== b.length || !timingSafeEqual(a, b)) {
-					return c.json(
-						createErrorResponse('UNAUTHORIZED', 'Invalid cron secret'),
-						401,
-					)
-				}
-			}
-
 			try {
-				await runArchival()
-				return c.json({
-					success: true,
-					archival: archivalHealth,
-				})
+				const stats = await getArchivalStats(config.pool)
+				return c.json({ stats })
 			} catch (error) {
-				logger.error('archival error', { err: error })
+				logger.error('getArchivalStats error', { err: error })
 				return c.json(
-					createErrorResponse('ARCHIVAL_ERROR', 'An internal error occurred'),
+					createErrorResponse('DATABASE_ERROR', 'An internal error occurred'),
 					500,
 				)
 			}
 		})
+	}
+
+	// On-demand archival endpoint — for cron triggers (Vercel Cron, AWS EventBridge, etc.)
+	// Authenticated via archiveCronSecret config or CRON_SECRET env var (Vercel convention).
+	// If neither is set AND no JWT is configured, the endpoint would be fully unauthenticated
+	// on an internet-accessible deployment — refuse to register it rather than allow that.
+	if (config.enableArchiver && runArchival) {
+		const cronSecret =
+			(config.archiveCronSecret || process.env.CRON_SECRET)?.trim() || undefined
+
+		if (!cronSecret && !jwtSecret) {
+			logger.error(
+				'/api/archive endpoint NOT registered: no authentication configured. ' +
+					'Set archiveCronSecret / CRON_SECRET or PG_HISTORY_JWT_SECRET to enable it.',
+			)
+		} else {
+			app.post('/api/archive', async (c) => {
+				// Auth contract: at least one of the two guards below is always active.
+				// The outer `if (!cronSecret && !jwtSecret)` prevents this route from
+				// being registered unless one is configured, so we can never reach here
+				// with both missing.
+				//
+				// Case 1: cronSecret is set — verify it here with HMAC-based comparison.
+				//   HMAC digests have fixed length (32 bytes), so timingSafeEqual never
+				//   needs a length pre-check that would leak the secret length.
+				// Case 2: only jwtSecret is set — the JWT middleware registered above
+				//   for '/api/*' already verified the token before reaching this handler.
+				if (cronSecret) {
+					const { createHmac } = await import('node:crypto')
+					const authHeader = c.req.header('authorization') ?? ''
+					const expected = `Bearer ${cronSecret}`
+					const key = Buffer.from(cronSecret)
+					const mac = (v: string) =>
+						createHmac('sha256', key).update(v).digest()
+					if (!timingSafeEqual(mac(authHeader), mac(expected))) {
+						return c.json(
+							createErrorResponse('UNAUTHORIZED', 'Invalid cron secret'),
+							401,
+						)
+					}
+				}
+				// else: jwtSecret-only path — JWT middleware already authenticated above.
+
+				try {
+					await runArchival()
+					return c.json({
+						success: true,
+						archival: {
+							status: archivalHealth.status,
+							attempts: archivalHealth.attempts,
+							lastCompletedAt: archivalHealth.lastCompletedAt,
+						},
+					})
+				} catch (error) {
+					logger.error('archival error', { err: error })
+					return c.json(
+						createErrorResponse('ARCHIVAL_ERROR', 'An internal error occurred'),
+						500,
+					)
+				}
+			})
+		}
 	}
 
 	// History API endpoints (only if history enabled)
@@ -379,6 +425,19 @@ export async function createServer(
 
 			const table = c.req.param('table')
 			const recordId = c.req.param('recordId')
+
+			// Validate table name format at the boundary — consistent with POST endpoints.
+			// This gives a 400 VALIDATION_ERROR for malformed identifiers rather than
+			// leaking the table allowlist via INVALID_TABLE.
+			try {
+				validateIdentifier(table, 'table')
+			} catch {
+				return c.json(
+					createErrorResponse('VALIDATION_ERROR', 'Invalid table name'),
+					400,
+				)
+			}
+
 			const limitQuery = c.req.query('limit')
 			const cursor = c.req.query('cursor') || undefined
 			const orderQuery = c.req.query('order')
@@ -557,6 +616,9 @@ export async function createServer(
 				if (error instanceof AuditEntryNotFoundError) {
 					return c.json(createErrorResponse('NOT_FOUND', error.message), 404)
 				}
+				if (error instanceof RevertError) {
+					return c.json(createErrorResponse('REVERT_ERROR', error.message), 422)
+				}
 				if (error instanceof ValidationError) {
 					return c.json(
 						createErrorResponse('VALIDATION_ERROR', error.message),
@@ -584,87 +646,33 @@ export async function createServer(
 				},
 				servers: [
 					{
-						url: `http://localhost:${config.port || 3001}`,
-						description: 'Local Server',
+						// Prefer an explicit baseUrl, then Vercel deployment URL,
+						// then fall back to localhost for local dev.
+						url:
+							config.baseUrl ||
+							(process.env.VERCEL_URL
+								? `https://${process.env.VERCEL_URL}`
+								: `http://localhost:${config.port || 3001}`),
+						description: 'API Server',
 					},
 				],
 			},
 		}),
 	)
 
-	return app
-}
-
-// If this file is run directly under Bun (e.g. `bun server.ts`), create and
-// start the server. Gated on `typeof Bun !== 'undefined'` so importing this
-// module from a Node.js or Vercel environment doesn't reference `Bun` globally.
-interface BunServer {
-	stop(): void
-}
-interface BunRuntime {
-	serve(config: {
-		port: number
-		fetch: (req: Request) => Response | Promise<Response>
-	}): BunServer
-}
-declare const Bun: BunRuntime | undefined
-if (typeof Bun !== 'undefined' && import.meta.main) {
-	;(async () => {
-		const { Pool } = await import('pg')
-		const startupLogger = consoleLogger
-
-		const databaseUrl = process.env.PG_HISTORY_DATABASE_URL
-		if (!databaseUrl) {
-			throw new Error(
-				'PG_HISTORY_DATABASE_URL environment variable is required',
-			)
+	/**
+	 * Graceful shutdown: wait for in-flight requests to drain, then cancel the
+	 * archival interval and wait for any running archival to complete.
+	 * Call this before closing the pool and exiting.
+	 */
+	async function dispose(drainTimeoutMs = 15_000): Promise<void> {
+		await waitForInFlightRequests(drainTimeoutMs)
+		if (archivalInterval) clearInterval(archivalInterval)
+		if (rateLimitCleanupInterval) clearInterval(rateLimitCleanupInterval)
+		if (currentArchivalPromise) {
+			await currentArchivalPromise.catch(() => {})
 		}
+	}
 
-		const poolMax = Number.parseInt(process.env.PG_HISTORY_POOL_MAX || '5', 10)
-		const pool = new Pool({
-			connectionString: databaseUrl,
-			max: poolMax,
-		})
-
-		const port = Number.parseInt(
-			process.env.PG_HISTORY_PORT || process.env.PORT || '3001',
-			10,
-		)
-
-		const app = await createServer({ pool, port, logger: startupLogger })
-
-		startupLogger.info('Starting server', { port })
-		const server = Bun.serve({
-			port,
-			fetch: app.fetch,
-		})
-
-		// Graceful shutdown — stop accepting new requests, wait for in-flight
-		// handlers to finish (with a bounded timeout), drain archival, then
-		// close the pool.
-		const SHUTDOWN_DRAIN_TIMEOUT_MS = 15_000
-		const shutdown = async (signal: string): Promise<void> => {
-			startupLogger.info('Received signal, shutting down gracefully', {
-				signal,
-			})
-			// Stop accepting new connections
-			server.stop()
-			// Drain in-flight requests before cleanup
-			await waitForInFlightRequests(SHUTDOWN_DRAIN_TIMEOUT_MS)
-			if (archivalInterval) clearInterval(archivalInterval)
-			if (rateLimitCleanupInterval) clearInterval(rateLimitCleanupInterval)
-			if (currentArchivalPromise) {
-				startupLogger.info('Waiting for background archival to complete')
-				await currentArchivalPromise.catch(() => {})
-			}
-			await pool.end()
-			process.exit(0)
-		}
-
-		process.on('SIGTERM', () => shutdown('SIGTERM'))
-		process.on('SIGINT', () => shutdown('SIGINT'))
-	})().catch((err) => {
-		consoleLogger.error('Fatal error starting server', { err })
-		process.exit(1)
-	})
+	return { app, dispose }
 }

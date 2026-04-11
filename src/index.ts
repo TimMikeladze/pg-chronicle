@@ -28,6 +28,8 @@ export type {
 	RetentionConfig,
 	RunOptions,
 	S3Config,
+	SearchCursor,
 	SearchOptions,
+	SearchPaginatedResult,
 	ServerConfig,
 } from './types'
