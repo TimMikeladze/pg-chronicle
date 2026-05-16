@@ -16,8 +16,8 @@ PostgreSQL audit trails with automated S3 archival.
 - [Deployment](#deployment)
 - [Archiver](#archiver)
 - [Environment Variables](#environment-variables)
+- [Production Caveats](#production-caveats)
 - [Error Handling](#error-handling)
-- [Testing](#testing)
 - [Limitations](#limitations)
 
 ## Quick Start
@@ -58,6 +58,23 @@ await history.close()
 ```
 
 3 lines to set up, then query with `getHistory` / `search` / `revert`.
+
+**Skip auditing secrets/PII** by listing the columns to strip per table:
+
+```typescript
+new PgHistory({
+  pool,
+  tables: ['users'],
+  excludeColumns: { users: ['password_hash', 'mfa_secret'] },
+})
+```
+
+**Inject a structured logger** to route library events (`Archival complete`, `Batch failed`, etc.) into your aggregator:
+
+```typescript
+import pino from 'pino'
+new PgHistory({ pool, tables: ['users'], logger: pino() })
+```
 
 ## Installation
 
@@ -137,91 +154,156 @@ Advisory locks prevent concurrent archival of the same table. Each step verifies
 
 ### audit_log Schema
 
+One partitioned `audit_log` table — partitioned by `LIST (table_name)` so queries against one table don't scan others. You can query it directly if you want, but the typed `getHistory` / `search` API is recommended.
+
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | `BIGSERIAL` | Audit entry ID |
+| `id` | `BIGSERIAL` | Audit entry ID — use as cursor |
 | `table_name` | `TEXT` | Source table |
-| `record_id` | `TEXT` | PK value(s) of affected row |
+| `record_id` | `TEXT` | PK value(s) of the affected row |
 | `operation` | `TEXT` | `INSERT` / `UPDATE` / `DELETE` |
 | `changed_at` | `TIMESTAMPTZ` | Transaction timestamp |
-| `old_data` | `JSONB` | Previous row state |
-| `new_data` | `JSONB` | New row state |
+| `old_data` | `JSONB` | Previous row state (excluded columns omitted) |
+| `new_data` | `JSONB` | New row state (excluded columns omitted) |
 
-### Indexes
-
-- GIN on `old_data`, `new_data` for `@>` containment queries
-- B-tree on `(table_name, record_id, changed_at DESC)`
-- B-tree on `changed_at DESC`
+When the archiver is enabled, additional columns track lifecycle: `archived_at`, `s3_path`, `soft_deleted_at`. Treat these as internal — `getHistory` and `search` filter on them automatically (soft-deleted rows hidden, archived rows still visible until hard-deleted).
 
 ### Primary Key Handling
 
+`record_id` is derived from the source table's PK:
+
 | PK Type | `record_id` |
 |---------|-------------|
-| Single column | PK cast to text |
-| Composite | Values joined with `\|` |
-| None | `md5(row_to_json(...)::text)` |
-
-### Source Files
-
-```
-src/
-  PgHistory.ts          Setup, getHistory, search, revert, teardown
-  PgHistoryArchiver.ts  S3 upload, soft/hard delete
-  orchestrator.ts       Multi-table archival coordination
-  server.ts             Hono REST API
-  schema.ts             Archiver DDL
-  parquet.ts            Parquet read/write (hyparquet, Snappy)
-  errors.ts             Typed error classes
-  types.ts              TypeScript interfaces
-  vercel.ts             Vercel serverless entry point
-```
+| Single column | PK value cast to text |
+| Composite | Each part capped at 200 chars and joined with `chr(31)` (ASCII unit separator) |
+| None | `md5(row_to_json(...)::text)` — but note the value changes on every UPDATE, so `getHistory` cannot correlate INSERT with later UPDATEs. Use tables with a PK if you want full history. |
 
 ## API Reference
 
-### Constructor
+### `PgHistory`
+
+#### Constructor
 
 ```typescript
 const history = new PgHistory({
   tables: ['users', 'orders'],
-  pool: existingPool,            // or connection: 'postgres://...'
+  pool: existingPool,                      // or connection: 'postgres://...'
+  excludeColumns: {                         // optional — strip PII per table
+    users: ['password_hash', 'ssn'],
+  },
+  logger: pino(),                           // optional — defaults to consoleLogger
 })
 ```
 
-Passing `connection` creates an internal Pool; `close()` ends it. Passing `pool` borrows yours; `close()` is a no-op.
+- `pool` or `connection` — one is required. `connection` creates an internal Pool that `close()` ends; `pool` is borrowed and `close()` doesn't end it.
+- `excludeColumns` — per-table column allowlist subtraction. Trigger emits `(to_jsonb(NEW) - 'col1' - 'col2')`. PK columns rejected at setup (would break `revert()`).
+- `logger` — anything implementing the `Logger` interface (`debug`/`info`/`warn`/`error`). `silentLogger` available for tests.
 
-### `setup(): Promise<void>`
+#### `setup(): Promise<void>`
 
-Creates `audit_log` table, partitions, indexes, and triggers. Idempotent — safe to call on every app startup.
+Creates `audit_log` table, partitions, indexes, and triggers. Idempotent — safe to call on every app startup. Concurrent calls dedup on a shared promise.
 
-**Important:** Must be called before `getHistory()`, `search()`, or `revert()`. These methods throw `SetupRequiredError` if `setup()` hasn't been called.
+**Required before** `getHistory()`, `search()`, or `revert()`. These methods throw `SetupRequiredError` if setup hasn't completed.
 
-### `getHistory(tableName, recordId, options?): Promise<PaginatedResult<AuditEntry>>`
+#### `getHistory(tableName, recordId, options?): Promise<PaginatedResult<AuditEntry>>`
 
-Options: `limit` (default 50, max 1000), `cursor`, `order` (`'asc'` | `'desc'`).
+Options: `limit` (default 50, max 1000), `cursor` (opaque ID), `order` (`'asc'` | `'desc'`, default `'desc'`).
 
-### `search(options): Promise<PaginatedResult<AuditEntry>>`
+Excludes soft-deleted entries when the archiver schema is present.
 
-Options: `tables` (required), `query`, `operation`, `dateFrom`, `dateTo`, `limit` (default 100, max 1000), `cursor`.
+#### `search(options): Promise<SearchPaginatedResult<AuditEntry>>`
 
-If `query` looks like JSON (`{...}`), uses `@>` containment (GIN-indexed). Otherwise falls back to `ILIKE` text search with a 5-second statement timeout to prevent runaway queries on large tables.
+Options: `tables` (required), `query`, `operation` (`'INSERT'` / `'UPDATE'` / `'DELETE'`), `dateFrom`, `dateTo`, `limit` (default 100, max 1000), `cursor` (typed `SearchCursor`).
 
-### `revert(tableName, recordId, auditEntryId): Promise<void>`
+If `query` looks like JSON (`{...}`), uses `@>` containment (GIN-indexed) with a 30s timeout. Otherwise falls back to `ILIKE` text search with a 5s timeout. Both timeouts use `SET LOCAL statement_timeout` so the pooled connection returns clean.
+
+Returned `nextCursor` is branded `SearchCursor` — only pass it back to `search()`, not `getHistory()` (different sort direction).
+
+#### `revert(tableName, recordId, auditEntryId): Promise<void>`
 
 Restores a record to the state in the given audit entry. Runs in a single transaction. Requires a primary key.
 
 | Original Op | Revert Action |
 |-------------|---------------|
 | `INSERT` | Deletes the row |
-| `DELETE` | Re-inserts from `old_data` |
-| `UPDATE` | Restores `old_data` values |
+| `DELETE` | Re-inserts from `old_data` (unique/FK violations surface as `RevertError`) |
+| `UPDATE` | Restores `old_data` values via PK |
 
-### `teardown(): Promise<void>`
+Cross-checks audit columns against current schema; rejects revert if columns drifted. `GENERATED ALWAYS` columns are excluded from the INSERT. Setting `suppressAuditTriggers: true` requires `pg_replication` role or superuser.
+
+#### `invalidatePrimaryKeyCache(tableName?): void`
+
+Clears the cached PK lookup for `tableName` (or all tables if omitted). Call after `ALTER TABLE ... ADD/DROP CONSTRAINT` that changes the primary key.
+
+#### `invalidateSoftDeleteColumnCache(): void`
+
+Clears the cached `soft_deleted_at` column existence check. Call after running the archiver schema setup on a database where PgHistory was already configured.
+
+#### `teardown(): Promise<void>`
 
 Drops triggers, functions, and `audit_log`. Idempotent.
 
-### `close(): Promise<void>`
+#### `close(timeoutMs?): Promise<void>`
 
-Ends internal Pool if one was created.
+Ends internal Pool if one was created. Races `pool.end()` against `timeoutMs` (default 30s) so SIGTERM can't be blocked by hung clients.
+
+### `PgHistoryArchiver`
+
+Low-level archiver — most callers should use `Orchestrator.run()` instead. Direct API for custom schedulers or one-off cleanup jobs.
+
+```typescript
+const archiver = new PgHistoryArchiver({
+  pool,
+  s3: { bucket, endpoint, region, accessKeyId, secretAccessKey },
+  retention: { default: 90 },
+  gracePeriod: 7,
+  batchSize: 10000,
+  maxBatchBytes: 256 * 1024 * 1024,   // optional soft memory cap
+  staleClaimMinutes: 30,               // optional reaper threshold
+  logger,                              // optional
+})
+await archiver.setup()                 // idempotent — adds claim/archive columns
+```
+
+| Method | Purpose |
+|--------|---------|
+| `processBatch(table, cutoffDate)` | Claim → upload → finalize one day-bounded batch. Returns `{recordCount, fileSize, s3Path, status}`. |
+| `softDeleteArchived(table)` | Set `soft_deleted_at` on rows past grace period with confirmed S3 backup. |
+| `hardDeletePurged(table)` | Re-verify S3 inside TX, then DELETE rows past second grace period. |
+| `reapStaleClaims(minutes?)` | Release claims older than `staleClaimMinutes` (worker-crash recovery). |
+| `cleanupOrphanedFiles(table, {maxDeletions=10000})` | Delete S3 files not referenced in `audit_archive_metadata`. |
+| `pruneArchive(table, olderThan)` | Paired DELETE of metadata + S3 for archives past compliance retention. |
+| `close(timeoutMs?)` | End internal Pool with timeout. |
+
+### `Orchestrator`
+
+```typescript
+const orch = new Orchestrator({
+  s3, retention, gracePeriod,
+  batchSize: 10000,                    // optional, default 10000
+  lockConnectionString: 'postgres://...', // optional — bypass pooler
+  logger,
+})
+const stats = await orch.run(pool, { dryRun: false, targetTable: 'users' })
+```
+
+`run()` discovers audited tables (or processes `targetTable`), takes a 64-bit advisory lock per table, reaps stale claims, then loops `processBatch → softDelete → hardDelete`. Stats per table aggregated into `OrchestratorStats`.
+
+### `createServer`
+
+```typescript
+const { app, dispose } = await createServer({
+  pool, port, logger, baseUrl, publicOpenApi, serverless,
+  cors: { origin: 'https://...', credentials: true },
+  enableHistory: true, historyConfig: { tables: [...] },
+  enableArchiver: true, archiverConfig: { /* see Archiver */ },
+  archiveCronSecret: '...',            // or CRON_SECRET env
+  archivalRetry: { maxAttempts: 4, delays: [5_000, 15_000, 60_000] },
+  runOptions: { dryRun: false, targetTable: 'users' },
+})
+```
+
+`dispose(drainTimeoutMs=15_000)` cancels intervals, drains in-flight requests, aborts pending retry sleeps, and awaits any running archival.
 
 ### Types
 
@@ -241,7 +323,21 @@ interface PaginatedResult<T> {
   nextCursor: string | null
   hasMore: boolean
 }
+
+// Branded type — search() cursors are NOT interchangeable with getHistory() cursors
+type SearchCursor = string & { readonly __brand: unique symbol }
+
+interface OrchestratorStats {
+  tables: string[]
+  totalRecordsArchived: number
+  totalRecordsSoftDeleted: number
+  totalRecordsHardDeleted: number
+  errors: Array<{ table: string; operation: string; error: string }>
+  durationMs: number
+}
 ```
+
+All types exported from `pg-history` root: `ArchiverConfig`, `AuditEntry`, `GetHistoryOptions`, `OrchestratorConfig`, `OrchestratorStats`, `PaginatedResult`, `PgHistoryConfig`, `RetentionConfig`, `RunOptions`, `S3Config`, `SearchCursor`, `SearchOptions`, `SearchPaginatedResult`, `ServerConfig`.
 
 ## Server & REST API
 
@@ -266,35 +362,46 @@ Bun.serve({ port: 3001, fetch: app.fetch })
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/health` | No | Health check with archival status |
-| `GET` | `/openapi` | No | OpenAPI spec |
-| `GET` | `/api/stats` | JWT | Archival stats (requires `enableArchiver`) |
+| `GET` | `/health` | No | Minimal liveness probe (`{status}` only) |
+| `GET` | `/api/health/detailed` | JWT or cron | Archival status + attempts + last completion |
+| `GET` | `/openapi` | JWT (unless `publicOpenApi: true`) | OpenAPI spec |
+| `GET` | `/api/stats` | JWT or cron | Archival stats (requires `enableArchiver`) |
 | `GET` | `/api/history/:table/:recordId` | JWT | Record history |
 | `POST` | `/api/history/search` | JWT | Search history |
 | `POST` | `/api/history/revert` | JWT | Revert a record |
-| `POST` | `/api/archive` | Cron secret | Trigger archival on demand |
+| `POST` | `/api/archive` | JWT or cron secret | Trigger archival on demand |
 
-Set `PG_HISTORY_JWT_SECRET` to enable JWT auth on `/api/*`. Public routes (`/health`, `/openapi`) are unprotected.
-
-The `/api/archive` endpoint is authenticated separately via `CRON_SECRET` or `archiveCronSecret` config (see [Vercel Cron](#vercel-cron)).
+**Auth resolution:**
+- Set `PG_HISTORY_JWT_SECRET` to enable JWT on `/api/*`. Algorithm via `PG_HISTORY_JWT_ALG` (default `HS256`; supports `HS256/384/512`, `RS256/384/512`, `ES256/384/512`).
+- Set `archiveCronSecret` (or `CRON_SECRET` env) to authenticate `/api/archive`, `/api/stats`, and `/api/health/detailed` via timing-safe HMAC. In cron-only deployments (no JWT), these endpoints still require the bearer secret.
+- `/health` and `/openapi` (when `publicOpenApi: true`) are public.
+- `OPTIONS` preflight bypasses JWT so CORS works.
 
 ### Health Check
 
-The `/health` endpoint returns archival status when the archiver is enabled:
+`GET /health` returns the minimal liveness shape so operational details aren't leaked to anonymous callers:
+
+```json
+{ "status": "ok" }
+```
+
+`status` flips to `"degraded"` when the archiver has failed.
+
+`GET /api/health/detailed` (auth-gated) exposes operational state:
 
 ```json
 {
   "status": "ok",
   "archival": {
     "status": "completed",
-    "lastError": null,
-    "attempts": 1,
-    "lastCompletedAt": "2026-03-17T..."
+    "attempts": 0,
+    "lastCompletedAt": "2026-03-17T...",
+    "lastError": null
   }
 }
 ```
 
-`status` is `"degraded"` if archival has failed.
+`attempts` resets to `0` on each successful run — it represents retries since last success, not lifetime count. `lastError` is the most recent failure message (null on success).
 
 ### Standalone
 
@@ -444,7 +551,7 @@ export default app
 
 ## Archiver
 
-Three layers: `Orchestrator` (table discovery, advisory locking) -> `PgHistoryArchiver` (S3 upload, delete lifecycle) -> `parquet.ts` (Snappy-compressed Parquet).
+Move old audit rows to S3 as compressed Parquet files. Hands off to `Orchestrator` for scheduling and `PgHistoryArchiver` for the upload + delete lifecycle. Concurrent runs are safe — advisory locks prevent two archivers from processing the same table.
 
 ### Lifecycle
 
@@ -480,21 +587,71 @@ const app = await createServer({
     gracePeriod: 7,
     batchSize: 10000,
   },
+  // Optional: cap batch memory by serialized payload size (default 256 MiB).
+  // Rows past the cap are released back to the claim pool for the next run.
+  // maxBatchBytes: 256 * 1024 * 1024,
   runOptions: { dryRun: false },
+  // Optional retry policy for background archival. Defaults shown.
+  archivalRetry: {
+    maxAttempts: 4,
+    delays: [5_000, 15_000, 60_000], // length must be maxAttempts - 1
+  },
+  // Optional CORS — omit to disable entirely (server-to-server default)
+  cors: { origin: 'https://app.example.com', credentials: true },
 })
 ```
+
+### Excluding columns from audit (PII)
+
+`to_jsonb(NEW)` captures the full row. Strip secrets/PII per-table:
+
+```typescript
+new PgHistory({
+  tables: ['users', 'orders'],
+  excludeColumns: {
+    users: ['password_hash', 'mfa_secret', 'ssn'],
+  },
+  pool,
+})
+```
+
+Trigger generates `(to_jsonb(NEW) - 'password_hash' - 'mfa_secret' - 'ssn')`. PK columns cannot be excluded (would break `revert()`).
+
+### Pruning long-term archives
+
+Metadata + S3 grow linearly forever. Schedule periodic pruning of archives past compliance retention:
+
+```typescript
+import { PgHistoryArchiver } from 'pg-history'
+
+const archiver = new PgHistoryArchiver({ pool, ...config })
+const cutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000) // 1 year
+const deleted = await archiver.pruneArchive('users', cutoff)
+```
+
+Removes both the S3 object and its `audit_archive_metadata` row in lockstep.
+
+### Cleaning up orphan S3 files
+
+Run periodically to delete S3 files left behind by crashed archival workers:
+
+```typescript
+const orphans = await archiver.cleanupOrphanedFiles('users', { maxDeletions: 10000 })
+```
+
+Bounded per-call so a bucket with millions of orphans doesn't tie up one DB connection for hours. Idempotent — resume on next invocation.
 
 ### Direct Usage
 
 ```typescript
 import { Orchestrator } from 'pg-history'
 
-const orchestrator = new Orchestrator(
-  { bucket: 'my-bucket', region: 'us-west-2' },
-  { default: 90, tables: { logs: 7 } },
-  7,     // grace period days
-  10000, // batch size
-)
+const orchestrator = new Orchestrator({
+  s3: { bucket: 'my-bucket', region: 'us-west-2' },
+  retention: { default: 90, tables: { logs: 7 } },
+  gracePeriod: 7,
+  // batchSize: 10000, // optional
+})
 
 const stats = await orchestrator.run(pool, { dryRun: true })
 ```
@@ -507,6 +664,7 @@ const stats = await orchestrator.run(pool, { dryRun: true })
 | `PG_HISTORY_PORT` | No | Server port (also reads `PORT`, default `3001`) |
 | `PG_HISTORY_POOL_MAX` | No | Max pool connections (default `5`, use `2-3` for serverless) |
 | `PG_HISTORY_JWT_SECRET` | No | JWT auth on `/api/*` |
+| `PG_HISTORY_JWT_ALG` | No | JWT algorithm: `HS256/384/512`, `RS256/384/512`, `ES256/384/512` (default `HS256`) |
 | `PG_HISTORY_TABLES` | Vercel entry point | Comma-separated table names |
 | `PG_HISTORY_S3_ENDPOINT` | Archival | S3 endpoint |
 | `PG_HISTORY_S3_ACCESS_KEY_ID` | Archival | S3 access key |
@@ -518,6 +676,56 @@ const stats = await orchestrator.run(pool, { dryRun: true })
 | `PG_HISTORY_GRACE_PERIOD_DAYS` | No | Grace period before hard delete (default `7`) |
 | `PG_HISTORY_BATCH_SIZE` | No | Archival batch size (default `10000`) |
 | `CRON_SECRET` | Vercel cron | Protects `POST /api/archive` endpoint |
+
+## Production Caveats
+
+Operational notes for running this in earnest. None are bugs — they are knobs and trade-offs you need to know about.
+
+### Connection pooler compatibility
+
+- The main pool can run behind **PgBouncer transaction mode** — every archival query uses `SET LOCAL statement_timeout` inside a short transaction.
+- The `Orchestrator` advisory-lock client is a **standalone `pg.Client`**, not borrowed from the pool. Session-level advisory locks require a stable connection — pass `lockConnectionString` in `OrchestratorConfig` to point it directly at PostgreSQL (bypass the pooler) or use a pooler in session mode for that one connection.
+
+### Rate limiting
+
+Built-in `/api/*` rate limiter is **per-process in-memory**. It trusts the first IP in `x-forwarded-for`, which is client-spoofable behind an untrusted proxy. For production: terminate rate limiting at your API gateway (Cloudflare, AWS API Gateway, etc.) and run with `serverless: true` to skip the in-process limiter.
+
+### `audit_archive_metadata` and S3 growth
+
+INSERT-only by design. After hard-delete, audit_log rows are gone but the S3 file + metadata row stay for compliance. Schedule `archiver.pruneArchive(table, olderThan)` weekly/monthly to bound long-term storage. `cleanupOrphanedFiles` only removes S3 files not in metadata — not the metadata itself.
+
+### `hardDeletePurged` lock window
+
+The final-delete transaction re-verifies up to 500 S3 paths per call before issuing `DELETE` (capped to bound lock duration; remaining rows roll into the next call). On a hot path this transaction can hold row locks for a few seconds. Run hard-delete on its own schedule, not in the same loop as `processBatch`, if you have heavy concurrent writes.
+
+### Memory under wide rows
+
+`maxBatchBytes` (default 256 MiB) is a **soft cap based on serialized JSON length**. The estimate is approximate — PG's on-wire JSONB binary differs from JS's serialization. If you audit columns with multi-MB jsonb, set `maxBatchBytes` to 30-50% of available RSS. Excluded columns (`excludeColumns`) reduce the per-row payload at source.
+
+### Trigger ownership (SECURITY DEFINER)
+
+Generated trigger functions run with the privileges of their **owner** — whoever ran `setup()`. If that role is superuser, audit inserts run with superuser privilege. For least-privilege deployments, create a dedicated `pg_history_writer` role with INSERT on `audit_log` and either run `setup()` as that role, or post-setup do `ALTER FUNCTION audit_trigger_func_<table>() OWNER TO pg_history_writer`.
+
+### Metrics & observability
+
+No metrics emitted natively. Wire your monitor of choice via the injected `Logger`:
+
+```typescript
+import pino from 'pino'
+const logger = pino()
+new PgHistory({ pool, tables, logger })
+new PgHistoryArchiver({ pool, ...config, logger })
+```
+
+Then aggregate by event name (`Archival complete`, `Batch failed`, `Pool idle client error`, etc.).
+
+### Schema-drift on archive replay
+
+`revert()` cross-checks audit columns against current table schema and refuses to write to columns the table no longer has. After heavy schema migrations, run a representative `revert()` in staging to confirm restorability.
+
+### Cold-start cost
+
+`setup()` is idempotent. On a cold-started serverless instance where the schema already exists, it short-circuits after a single catalog probe (~5ms) instead of running every DDL statement. Safe to call on every invocation; no need to gate it yourself.
 
 ## Error Handling
 
@@ -541,30 +749,6 @@ try {
   }
 }
 ```
-
-## Testing
-
-Tests run against real PostgreSQL and MinIO. Each test file gets a fresh database.
-
-```bash
-docker compose up -d
-cp .env.template .env
-bun test
-```
-
-### Scripts
-
-| Command | Description |
-|---------|-------------|
-| `bun test` | Run tests |
-| `bun test --watch` | Watch mode |
-| `bun test --coverage` | Coverage |
-| `bun run dev` | Start server |
-| `bun run build` | Build (ESM + CJS) |
-| `bun run lint` | Biome check |
-| `bun run lint:fix` | Biome auto-fix |
-| `bun run tsc` | Type check |
-| `bun run check` | Lint + tsc + test |
 
 ## Limitations
 

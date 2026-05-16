@@ -118,11 +118,13 @@ describe('Review Fix #22: setupInternal logs per-phase progress', () => {
 	test('PgHistory.ts setup emits phase log messages', async () => {
 		const fs = await import('node:fs/promises')
 		const source = await fs.readFile('./src/PgHistory.ts', 'utf-8')
+		const setupSource = await fs.readFile('./src/pg-history-setup.ts', 'utf-8')
+		const combined = `${source}\n${setupSource}`
 
-		expect(source).toContain('Setup phase: audit_log parent table')
-		expect(source).toContain('Setup phase: partitions')
-		expect(source).toContain('Setup phase: indexes')
-		expect(source).toContain('Setup phase: triggers')
-		expect(source).toContain('Setup complete')
+		expect(combined).toContain('Setup phase: audit_log parent table')
+		expect(combined).toContain('Setup phase: partitions')
+		expect(combined).toContain('Setup phase: indexes')
+		expect(combined).toContain('Setup phase: triggers')
+		expect(combined).toContain('Setup complete')
 	})
 })

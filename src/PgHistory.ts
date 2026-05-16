@@ -1,7 +1,19 @@
 import type { Pool } from 'pg'
 import { SetupRequiredError, TableNotConfiguredError } from './errors'
-import { consoleLogger, type Logger } from './logger'
+import {
+	attachPoolErrorHandler,
+	consoleLogger,
+	endPoolWithTimeout,
+	type Logger,
+} from './logger'
 import { executeRevert } from './pg-history-revert'
+import {
+	setupAuditTable as extSetupAuditTable,
+	setupIndexes as extSetupIndexes,
+	setupPartitions as extSetupPartitions,
+	triggerFuncNameFor,
+	triggerNameFor,
+} from './pg-history-setup'
 import { buildTriggerFunctionSql } from './pg-history-triggers'
 import {
 	validateColumnNames as extValidateColumnNames,
@@ -23,6 +35,7 @@ import type {
 export class PgHistory {
 	private pool!: Pool
 	private tables: string[]
+	private excludeColumns: Record<string, string[]>
 	private ownConnection: boolean
 	private schema: string = 'public'
 	private primaryKeyCache: Map<string, string[]> = new Map()
@@ -39,15 +52,22 @@ export class PgHistory {
 	constructor(config: PgHistoryConfig) {
 		this.tables = config.tables
 		this.logger = config.logger ?? consoleLogger
+		this.excludeColumns = config.excludeColumns ?? {}
 
-		// Validate all table names before storing them (C1, I2)
-		for (const tableName of this.tables) {
-			this.validateTableName(tableName)
+		for (const tableName of this.tables) this.validateTableName(tableName)
+		for (const [tableName, cols] of Object.entries(this.excludeColumns)) {
+			if (!this.tables.includes(tableName)) {
+				throw new Error(
+					`PgHistory: excludeColumns references unknown table "${tableName}"`,
+				)
+			}
+			for (const col of cols) validateIdentifier(col, 'column')
 		}
 
 		if (config.pool) {
 			this.pool = config.pool
 			this.ownConnection = false
+			attachPoolErrorHandler(this.pool, this.logger, 'PgHistory')
 		} else if (config.connection) {
 			this.pendingConnection = config.connection
 			this.ownConnection = true
@@ -65,6 +85,7 @@ export class PgHistory {
 				this.pool = new pg.default.Pool({
 					connectionString: this.pendingConnection,
 				})
+				attachPoolErrorHandler(this.pool, this.logger, 'PgHistory')
 				this.pendingConnection = undefined
 			})().catch((err) => {
 				// Reset so the next call retries instead of re-awaiting the rejection
@@ -75,31 +96,13 @@ export class PgHistory {
 		await this.poolPromise
 	}
 
-	// Instance-level wrappers around the pure validators.
-	// These exist because the rest of the class uses `this.validateX(...)`
-	// rather than importing the standalone functions everywhere.
-	private validateTableName(name: string): void {
-		validateIdentifier(name, 'table')
-	}
-	private validateColumnName(name: string): void {
-		validateIdentifier(name, 'column')
-	}
-	private validateColumnNames(names: string[]): void {
-		extValidateColumnNames(names)
-	}
-	private validateStringInput(
-		value: string,
-		fieldName: string,
-		maxLength = 1000,
-	): void {
-		extValidateStringInput(value, fieldName, maxLength)
-	}
-	private validateLimit(
-		limit: number | undefined,
-		defaultLimit: number,
-	): number {
-		return extValidateLimit(limit, defaultLimit)
-	}
+	private validateTableName = (n: string) => validateIdentifier(n, 'table')
+	private validateColumnName = (n: string) => validateIdentifier(n, 'column')
+	private validateColumnNames = (ns: string[]) => extValidateColumnNames(ns)
+	private validateStringInput = (v: string, f: string, m = 1000) =>
+		extValidateStringInput(v, f, m)
+	private validateLimit = (l: number | undefined, d: number) =>
+		extValidateLimit(l, d)
 
 	/**
 	 * Retrieves the primary key column(s) for a given table by querying PostgreSQL system catalogs.
@@ -217,83 +220,23 @@ export class PgHistory {
 		})
 	}
 
-	/** Phase 1: Create the partitioned audit_log parent table. */
 	private async setupAuditTable(): Promise<void> {
-		this.logger.info('Setup phase: audit_log parent table', {
-			schema: this.schema,
-		})
-		await this.pool.query(`
-			CREATE TABLE IF NOT EXISTS ${this.auditTable} (
-				id BIGSERIAL,
-				table_name TEXT NOT NULL,
-				record_id TEXT NOT NULL,
-				operation TEXT NOT NULL,
-				changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-				old_data JSONB,
-				new_data JSONB,
-				PRIMARY KEY (id, table_name)
-			) PARTITION BY LIST (table_name)
-		`)
+		await extSetupAuditTable(
+			this.pool,
+			this.auditTable,
+			this.schema,
+			this.logger,
+		)
 	}
 
-	/** Phase 2: Create per-table partitions of audit_log. */
 	private async setupPartitions(): Promise<void> {
-		this.logger.info('Setup phase: partitions', { count: this.tables.length })
-		for (const tableName of this.tables) {
-			const partitionName = `audit_log_${tableName}`
-
-			const exists = await this.pool.query(
-				'SELECT 1 FROM pg_tables WHERE schemaname = $1 AND tablename = $2',
-				[this.schema, partitionName],
-			)
-
-			if (exists.rows.length === 0) {
-				try {
-					// Use format() with %I/%L to safely interpolate identifiers/literals
-					// Explicit ::text casts required so PG can infer parameter types
-					const ddlResult = await this.pool.query(
-						`SELECT format(
-							'CREATE TABLE %I.%I PARTITION OF %I.%I FOR VALUES IN (%L)',
-							$1::text, $2::text, $1::text, $3::text, $4::text
-						) AS ddl`,
-						[this.schema, partitionName, 'audit_log', tableName],
-					)
-					await this.pool.query(ddlResult.rows[0].ddl)
-				} catch (error) {
-					throw new Error(
-						`Failed to create partition for table "${tableName}": ${error instanceof Error ? error.message : String(error)}`,
-					)
-				}
-			} else {
-				this.logger.debug('Partition already exists, skipping', {
-					partition: partitionName,
-				})
-			}
-		}
+		await extSetupPartitions(this.pool, this.schema, this.tables, this.logger)
 	}
 
-	/** Phase 3: Create GIN and B-tree indexes on audit_log. */
 	private async setupIndexes(): Promise<void> {
-		this.logger.info('Setup phase: indexes')
-		await this.pool.query(`
-			CREATE INDEX IF NOT EXISTS idx_audit_old_data_gin
-			ON ${this.auditTable} USING GIN (old_data jsonb_path_ops)
-		`)
-		await this.pool.query(`
-			CREATE INDEX IF NOT EXISTS idx_audit_new_data_gin
-			ON ${this.auditTable} USING GIN (new_data jsonb_path_ops)
-		`)
-		await this.pool.query(`
-			CREATE INDEX IF NOT EXISTS idx_audit_changed_at
-			ON ${this.auditTable} (changed_at DESC)
-		`)
-		await this.pool.query(`
-			CREATE INDEX IF NOT EXISTS idx_audit_record_id
-			ON ${this.auditTable} (table_name, record_id, changed_at DESC)
-		`)
+		await extSetupIndexes(this.pool, this.auditTable, this.logger)
 	}
 
-	/** Phase 4: Create trigger functions and triggers for each tracked table. */
 	private async setupTriggers(): Promise<void> {
 		this.logger.info('Setup phase: triggers', { count: this.tables.length })
 		for (const tableName of this.tables) {
@@ -303,8 +246,8 @@ export class PgHistory {
 
 	/** Create (or skip if already present) the audit trigger for one table. */
 	private async setupTableTrigger(tableName: string): Promise<void> {
-		const triggerName = `audit_trigger_${tableName}`
-		const funcName = `audit_trigger_func_${tableName}`
+		const triggerName = triggerNameFor(tableName)
+		const funcName = triggerFuncNameFor(tableName)
 
 		const tableExists = await this.pool.query(
 			'SELECT 1 FROM pg_tables WHERE schemaname = $1 AND tablename = $2',
@@ -318,6 +261,15 @@ export class PgHistory {
 		}
 
 		const pkColumns = await this.getPrimaryKeyColumns(tableName)
+		const tableExcludes = this.excludeColumns[tableName] ?? []
+		// Excluding a PK column would break revert (PK is needed in WHERE)
+		const pkSet = new Set(pkColumns)
+		const conflicts = tableExcludes.filter((c) => pkSet.has(c))
+		if (conflicts.length > 0) {
+			throw new Error(
+				`PgHistory: excludeColumns for "${tableName}" cannot include PK columns [${conflicts.join(', ')}]`,
+			)
+		}
 
 		// Defense-in-depth: re-validate all identifiers immediately before
 		// interpolation into PL/pgSQL, even though they were validated on construction.
@@ -327,12 +279,16 @@ export class PgHistory {
 		for (const col of pkColumns) {
 			this.validateColumnName(col)
 		}
+		for (const col of tableExcludes) {
+			this.validateColumnName(col)
+		}
 
 		const functionBody = buildTriggerFunctionSql({
 			schema: this.schema,
 			funcName,
 			pkColumns,
 			auditTable: this.auditTable,
+			excludeColumns: tableExcludes,
 		})
 		await this.pool.query(functionBody)
 
@@ -569,14 +525,15 @@ export class PgHistory {
 				params.push(jsonStr)
 				paramIndex++
 			} else {
-				// Plain text — ILIKE full scan (statement timeout applied at execution)
+				// Plain text ILIKE full scan with explicit ESCAPE so backslash-
+				// escaped %/_ from user input are honored (PG default is literal).
 				usesIlike = true
 				const escaped = options.query
 					.replace(/\\/g, '\\\\')
 					.replace(/%/g, '\\%')
 					.replace(/_/g, '\\_')
 				conditions.push(
-					`(old_data::text ILIKE $${paramIndex} OR new_data::text ILIKE $${paramIndex})`,
+					`(old_data::text ILIKE $${paramIndex} ESCAPE '\\' OR new_data::text ILIKE $${paramIndex} ESCAPE '\\')`,
 				)
 				params.push(`%${escaped}%`)
 				paramIndex++
@@ -627,23 +584,26 @@ export class PgHistory {
 		params: unknown[],
 		usesIlike: boolean,
 	): Promise<{ rows: unknown[] }> {
-		if (!usesIlike) {
-			return this.pool.query(query, params)
-		}
-
-		// Use SET LOCAL inside an explicit transaction so the timeout is scoped
-		// to this query only. SET LOCAL auto-reverts when the transaction ends,
-		// avoiding the dirty-connection issue where a timed-out statement leaves
-		// the session-level timeout set on a connection returned to the pool.
+		// Both ILIKE (full scan) and JSON containment (GIN-indexed) are bounded
+		// by SET LOCAL statement_timeout. JSON is usually fast but a bloated
+		// index, large @> payload, or operator-class mismatch can still hang;
+		// the 30s ceiling is generous for indexed search yet short enough that
+		// a stuck query frees its connection slot.
+		const timeoutMs = usesIlike ? 5000 : 30000
 		const client = await this.pool.connect()
 		try {
 			await client.query('BEGIN')
-			await client.query('SET LOCAL statement_timeout = 5000') // 5 s
+			await client.query(`SET LOCAL statement_timeout = ${timeoutMs}`)
 			const result = await client.query(query, params)
 			await client.query('COMMIT')
 			return result
 		} catch (error) {
-			await client.query('ROLLBACK').catch(() => {})
+			await client.query('ROLLBACK').catch((rollbackErr) => {
+				this.logger.warn('ROLLBACK failed after query error', {
+					rollbackErr,
+					originalError: error instanceof Error ? error.message : String(error),
+				})
+			})
 			if (
 				error instanceof Error &&
 				error.message.includes('statement timeout')
@@ -726,8 +686,9 @@ export class PgHistory {
 		const data = rows.slice(0, limit)
 		const entries = this.mapAuditRows(data)
 		const lastItem = data[data.length - 1]
-		const nextCursor =
-			hasMore && lastItem ? (lastItem.id.toString() as SearchCursor) : null
+		const cursorStr = hasMore && lastItem ? lastItem.id.toString() : null
+		if (cursorStr) validateCursor(cursorStr) // guard brand cast
+		const nextCursor = cursorStr ? (cursorStr as SearchCursor) : null
 
 		return { data: entries, nextCursor, hasMore }
 	}
@@ -783,7 +744,12 @@ export class PgHistory {
 			})
 			await client.query('COMMIT')
 		} catch (error) {
-			await client.query('ROLLBACK').catch(() => {})
+			await client.query('ROLLBACK').catch((rollbackErr) => {
+				this.logger.warn('ROLLBACK failed during revert', {
+					rollbackErr,
+					originalError: error instanceof Error ? error.message : String(error),
+				})
+			})
 			throw error
 		} finally {
 			client.release()
@@ -796,7 +762,7 @@ export class PgHistory {
 		// Schema-qualify both the trigger table and the trigger function to avoid
 		// search_path resolution issues in non-default schemas.
 		for (const tableName of this.tables) {
-			const triggerName = `audit_trigger_${tableName}`
+			const triggerName = triggerNameFor(tableName)
 			const ddl = await this.pool.query(
 				`SELECT format('DROP TRIGGER IF EXISTS %I ON %I.%I', $1::text, $2::text, $3::text) AS ddl`,
 				[triggerName, this.schema, tableName],
@@ -805,7 +771,7 @@ export class PgHistory {
 		}
 
 		for (const tableName of this.tables) {
-			const funcName = `audit_trigger_func_${tableName}`
+			const funcName = triggerFuncNameFor(tableName)
 			const ddl = await this.pool.query(
 				`SELECT format('DROP FUNCTION IF EXISTS %I.%I() CASCADE', $1::text, $2::text) AS ddl`,
 				[this.schema, funcName],
@@ -825,9 +791,8 @@ export class PgHistory {
 		this.setupPromise = null
 	}
 
-	async close(): Promise<void> {
-		if (this.ownConnection) {
-			await this.pool.end()
-		}
+	async close(timeoutMs: number = 30_000): Promise<void> {
+		if (!this.ownConnection) return
+		await endPoolWithTimeout(this.pool, timeoutMs, this.logger, 'PgHistory')
 	}
 }

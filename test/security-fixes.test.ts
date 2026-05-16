@@ -21,15 +21,14 @@ describe('CRIT-1: DDL uses format() for safe interpolation', () => {
 	test('setup creates partition using format() without raw interpolation', async () => {
 		const fs = await import('node:fs/promises')
 		const source = await fs.readFile('./src/PgHistory.ts', 'utf-8')
+		const setupSource = await fs.readFile('./src/pg-history-setup.ts', 'utf-8')
+		const combined = `${source}\n${setupSource}`
 
-		// The old pattern: raw JS interpolation in partition DDL should be gone
-		// The string "FOR VALUES IN ('" followed by ${tableName} is the unsafe pattern
-		expect(source).not.toMatch(/FOR VALUES IN \('\$\{/)
+		expect(combined).not.toMatch(/FOR VALUES IN \('\$\{/)
 
-		// The new pattern: format() with %I/%L should exist
-		expect(source).toContain('format(')
-		expect(source).toContain('%I')
-		expect(source).toContain('%L')
+		expect(combined).toContain('format(')
+		expect(combined).toContain('%I')
+		expect(combined).toContain('%L')
 	})
 
 	test('setup works correctly with format()-based DDL', async () => {

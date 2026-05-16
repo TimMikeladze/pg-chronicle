@@ -45,17 +45,16 @@ export class Orchestrator {
 		gracePeriod?: number,
 		batchSize?: number,
 	) {
-		if (
-			'retention' in configOrS3 &&
-			'gracePeriod' in configOrS3 &&
-			'batchSize' in configOrS3
-		) {
+		// Disambiguate by `retention` + `gracePeriod` — `batchSize` is now optional
+		// on OrchestratorConfig and can't be required here without misrouting
+		// config-object callers that omit it into the legacy positional path.
+		if ('retention' in configOrS3 && 'gracePeriod' in configOrS3) {
 			// Config-object form
 			const cfg = configOrS3 as OrchestratorConfig
 			this.s3Config = cfg.s3
 			this.retentionConfig = cfg.retention
 			this.gracePeriod = cfg.gracePeriod
-			this.batchSize = cfg.batchSize
+			this.batchSize = cfg.batchSize ?? 10_000
 			this.logger = cfg.logger ?? consoleLogger
 			this.lockConnectionString = cfg.lockConnectionString
 		} else {
@@ -170,7 +169,12 @@ export class Orchestrator {
 			durationMs: 0,
 		}
 
-		// Discover tables (or use single target)
+		// Validate targetTable identifier format. We deliberately do NOT require
+		// targetTable to be in discoverTables() — operators may run the
+		// orchestrator against tables whose triggers haven't been set up yet
+		// (audit_log rows present from external triggers, dry-run scenarios).
+		// The archival queries are scoped by WHERE table_name = $1 so a
+		// misspelled name is a safe no-op, not data corruption.
 		if (options.targetTable) {
 			validateIdentifier(options.targetTable, 'table')
 		}
@@ -245,9 +249,14 @@ export class Orchestrator {
 		const lockKey = `${ADVISORY_LOCK_KEY_PREFIX}${tableName}`
 		const lockClient = await this.createLockClient(pool)
 		try {
+			// hashtextextended returns int8 (64-bit) — wider collision space than
+			// hashtext's int4. The single-arg form pg_try_advisory_lock(bigint)
+			// uses the full 64-bit lock address. Seed includes the namespace so
+			// the orchestrator's locks remain partitioned from any other caller
+			// that uses pg_try_advisory_lock with a different seed convention.
 			const lockResult = await lockClient.query(
-				`SELECT pg_try_advisory_lock($1, hashtext($2))`,
-				[ADVISORY_LOCK_NAMESPACE, lockKey],
+				`SELECT pg_try_advisory_lock(hashtextextended($1, $2::bigint))`,
+				[lockKey, ADVISORY_LOCK_NAMESPACE],
 			)
 			const acquired = lockResult.rows[0]?.pg_try_advisory_lock === true
 			if (!acquired) {
@@ -343,6 +352,29 @@ export class Orchestrator {
 				batchSize: this.batchSize,
 				logger: this.logger,
 			})
+			// Schema is already initialized by callers that use the archiver
+			// directly; mark it ready here so reapStaleClaims/processBatch don't
+			// re-run setup under the advisory lock. The PgHistory.setup() call in
+			// server.ts and standalone scripts handles the actual DDL.
+			await archiver.setup()
+
+			// Reap stale claims left by previously-crashed workers before the
+			// batch loop so abandoned rows return to the pending pool and get
+			// re-claimed in this run.
+			try {
+				const reaped = await archiver.reapStaleClaims()
+				if (reaped > 0) {
+					this.logger.info('Reaped stale claims', {
+						table: tableName,
+						count: reaped,
+					})
+				}
+			} catch (error) {
+				this.logger.warn('Failed to reap stale claims', {
+					table: tableName,
+					err: error,
+				})
+			}
 
 			// Archive old records in batches
 			let hasMore = true
@@ -428,9 +460,9 @@ export class Orchestrator {
 			// Unlock before disconnecting (best-effort; the lock also releases when
 			// the connection closes, so a failure here is not catastrophic).
 			await lockClient
-				.query(`SELECT pg_advisory_unlock($1, hashtext($2))`, [
-					ADVISORY_LOCK_NAMESPACE,
+				.query(`SELECT pg_advisory_unlock(hashtextextended($1, $2::bigint))`, [
 					lockKey,
+					ADVISORY_LOCK_NAMESPACE,
 				])
 				.catch(() => {})
 			// end() closes the TCP connection and implicitly releases the session lock

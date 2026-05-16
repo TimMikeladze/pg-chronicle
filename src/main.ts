@@ -60,10 +60,16 @@ declare const Bun: BunRuntime
 	const SHUTDOWN_DRAIN_TIMEOUT_MS = 15_000
 	const shutdown = async (signal: string): Promise<void> => {
 		startupLogger.info('Received signal, shutting down gracefully', { signal })
-		server.stop()
-		await dispose(SHUTDOWN_DRAIN_TIMEOUT_MS)
-		await pool.end()
-		process.exit(0)
+		let exitCode = 0
+		try {
+			server.stop()
+			await dispose(SHUTDOWN_DRAIN_TIMEOUT_MS)
+			await pool.end()
+		} catch (err) {
+			startupLogger.error('Error during shutdown', { err })
+			exitCode = 1
+		}
+		process.exit(exitCode)
 	}
 
 	process.on('SIGTERM', () => shutdown('SIGTERM'))

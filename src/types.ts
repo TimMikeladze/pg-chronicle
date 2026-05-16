@@ -12,6 +12,18 @@ export interface PgHistoryConfig {
 	pool?: Pool
 
 	/**
+	 * Per-table column exclusion list. Listed columns are stripped from
+	 * `old_data` / `new_data` before insertion into audit_log. Use this to
+	 * keep secrets and PII (passwords, API tokens, SSNs, etc.) out of audit
+	 * history. Column names must match the source table's column names
+	 * exactly. Identifiers are validated against the standard
+	 * [a-zA-Z0-9_] allowlist before interpolation into PL/pgSQL.
+	 *
+	 * Example: `{ users: ['password_hash', 'ssn'] }`
+	 */
+	excludeColumns?: Record<string, string[]>
+
+	/**
 	 * Optional logger for operational messages. Defaults to console-based logger.
 	 * Pass silentLogger (from './logger') in tests to suppress output.
 	 */
@@ -101,6 +113,24 @@ export interface ArchiverConfig {
 	batchSize?: number
 
 	/**
+	 * Soft memory cap per batch in bytes. After claim, records exceeding this
+	 * cumulative serialized size are released back to be re-claimed on the next
+	 * run. Defends against OOM on tables with very large jsonb payloads —
+	 * batchSize alone is insufficient because a single row's old_data/new_data
+	 * can be megabytes. Default: 256 MiB.
+	 */
+	maxBatchBytes?: number
+
+	/**
+	 * Minutes after which a claim_id is considered stale and reapStaleClaims()
+	 * will release it. Set well above the worst-case S3 upload + DB latency for
+	 * a batch — if the reaper resets a claim while finalize is still running,
+	 * the batch is retried under a fresh claim and one S3 file is wasted.
+	 * Default: 30.
+	 */
+	staleClaimMinutes?: number
+
+	/**
 	 * Optional logger for operational messages. Defaults to console-based logger.
 	 * Pass silentLogger (from './logger') in tests to suppress output.
 	 */
@@ -115,7 +145,8 @@ export interface OrchestratorConfig {
 	s3: S3Config
 	retention: RetentionConfig
 	gracePeriod: number
-	batchSize: number
+	/** Batch size for processing (default: 10000). Matches ArchiverConfig.batchSize. */
+	batchSize?: number
 	logger?: Logger
 	/**
 	 * Optional explicit connection string for the standalone advisory-lock
@@ -148,7 +179,15 @@ export interface ServerConfig {
 	/** PostgreSQL connection pool */
 	pool: Pool
 
-	/** Server port (default: 3001) */
+	/**
+	 * Server port (default: 3001).
+	 *
+	 * NOTE: `createServer()` does NOT listen on this port — it only builds the
+	 * Hono app and returns `{app, dispose}`. The caller is responsible for
+	 * binding (e.g. `Bun.serve({port, fetch: app.fetch})` in `main.ts`).
+	 * `port` is read here only as a fallback for the OpenAPI `servers[].url`
+	 * field when `baseUrl` and `VERCEL_URL` are unset.
+	 */
 	port?: number
 
 	/**
@@ -172,6 +211,18 @@ export interface ServerConfig {
 
 	/** Run options forwarded to the archiver (only used if enableArchiver is true). */
 	runOptions?: RunOptions
+
+	/**
+	 * Background archival retry policy. Defaults to 4 attempts with delays
+	 * [5s, 15s, 60s]. Set `maxAttempts: 1` to disable retry; useful in tests
+	 * or for callers that prefer one-shot semantics + external scheduling.
+	 */
+	archivalRetry?: {
+		/** Total attempts including the initial one. Default 4. */
+		maxAttempts?: number
+		/** Delays between attempts in ms. Length must equal maxAttempts - 1. Default [5000, 15000, 60000]. */
+		delays?: number[]
+	}
 
 	/**
 	 * Enable the PgHistory REST API. When true, `/api/history` and `/api/search`
@@ -217,6 +268,21 @@ export interface ServerConfig {
 	 * to prevent leaking the API shape to unauthenticated callers.
 	 */
 	publicOpenApi?: boolean
+
+	/**
+	 * Optional CORS configuration. When set, the server applies `hono/cors`
+	 * to all routes. Omit to disable CORS entirely (the default — appropriate
+	 * for server-to-server use).
+	 *
+	 * - `origin`: literal origin, list of origins, '*', or a predicate
+	 * - `credentials`: when true, sets Access-Control-Allow-Credentials
+	 */
+	cors?: {
+		origin: string | string[] | ((origin: string) => string | null | undefined)
+		credentials?: boolean
+		allowMethods?: string[]
+		allowHeaders?: string[]
+	}
 }
 
 export interface OrchestratorStats {

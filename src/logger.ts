@@ -59,15 +59,78 @@ function format(
 	const prefix = `[pg-history] [${level}] ${message}`
 	if (!context || Object.keys(context).length === 0) return prefix
 	try {
-		return `${prefix} ${JSON.stringify(context, replacer)}`
+		// Track seen objects so circular references degrade gracefully instead
+		// of throwing inside JSON.stringify and losing the whole log line.
+		const seen = new WeakSet<object>()
+		const reviveSafely = (_key: string, value: unknown): unknown => {
+			if (value instanceof Error) {
+				return { name: value.name, message: value.message, stack: value.stack }
+			}
+			if (typeof value === 'bigint') return value.toString()
+			if (value && typeof value === 'object') {
+				// Buffer summary instead of {type:'Buffer', data:[...]} which floods output
+				const maybeBuf = value as { type?: string; length?: number }
+				if (maybeBuf.type === 'Buffer' && typeof maybeBuf.length === 'number') {
+					return `<Buffer length=${maybeBuf.length}>`
+				}
+				if (seen.has(value as object)) return '[Circular]'
+				seen.add(value as object)
+			}
+			return value
+		}
+		return `${prefix} ${JSON.stringify(context, reviveSafely)}`
 	} catch {
 		return prefix
 	}
 }
 
-function replacer(_key: string, value: unknown): unknown {
-	if (value instanceof Error) {
-		return { name: value.name, message: value.message, stack: value.stack }
-	}
-	return value
+// Track pools we've already attached handlers to. Without this, attaching
+// twice (e.g. constructor + ensurePool retry) duplicates listeners and
+// trips Node's MaxListenersExceededWarning at 10.
+const handledPools = new WeakSet<object>()
+
+/**
+ * Attach an idle-client error listener to a pg Pool. Idempotent — attaching
+ * twice to the same pool is a no-op. Without a handler, idle-client backend
+ * disconnects rethrow as uncaughtException and kill Node.
+ */
+export function attachPoolErrorHandler(
+	pool: { on(event: 'error', cb: (err: unknown) => void): void },
+	logger: Logger,
+	label: string,
+): void {
+	if (handledPools.has(pool as unknown as object)) return
+	handledPools.add(pool as unknown as object)
+	pool.on('error', (err) => {
+		logger.error(`${label} pool idle client error`, {
+			err: err instanceof Error ? err.message : String(err),
+		})
+	})
+}
+
+/**
+ * Close a pg Pool with a hard timeout. `pool.end()` waits indefinitely for
+ * checked-out clients to release — under SIGTERM that means shutdown hangs.
+ * Race against a timer and proceed regardless; the OS reclaims sockets on exit.
+ */
+export async function endPoolWithTimeout(
+	pool: { end(): Promise<void> },
+	timeoutMs: number,
+	logger: Logger,
+	label: string,
+): Promise<void> {
+	await Promise.race([
+		pool.end(),
+		new Promise<void>((resolve) => {
+			const t = setTimeout(() => {
+				logger.warn(`${label} pool.end() timed out; forcing close`, {
+					timeoutMs,
+				})
+				resolve()
+			}, timeoutMs)
+			if (typeof t === 'object' && t && 'unref' in t) {
+				;(t as unknown as { unref: () => void }).unref()
+			}
+		}),
+	])
 }

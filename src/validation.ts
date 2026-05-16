@@ -129,8 +129,11 @@ export function parseRevertBody(body: unknown): {
 			'recordId is required and must be a non-empty string',
 		)
 	}
-	if (recordId.length > 500) {
-		throw new ValidationError('recordId must not exceed 500 characters')
+	if (recordId.length > 512) {
+		throw new ValidationError('recordId must not exceed 512 characters')
+	}
+	if (recordId.includes('\0')) {
+		throw new ValidationError('recordId cannot contain null bytes')
 	}
 	if (typeof auditEntryId !== 'string' || auditEntryId.length === 0) {
 		throw new ValidationError(

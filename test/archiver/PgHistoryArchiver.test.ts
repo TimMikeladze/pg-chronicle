@@ -275,4 +275,136 @@ describe('PgHistoryArchiver - Batch Processing', () => {
 
 		expect(Number(archived.rows[0].count)).toBe(0)
 	})
+
+	test('should release claim_id when S3 upload fails so rows are reclaimable', async () => {
+		const badArchiver = new PgHistoryArchiver({
+			pool,
+			s3: {
+				bucket: 'invalid-bucket-claim-test',
+				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
+				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_HISTORY_S3_REGION,
+			},
+			retention: { default: 90 },
+			gracePeriod: 7,
+			batchSize: 10,
+		})
+
+		const cutoffDate = new Date()
+		cutoffDate.setDate(cutoffDate.getDate() - 100)
+
+		await expect(
+			badArchiver.processBatch('users', cutoffDate),
+		).rejects.toThrow()
+
+		// No claims should remain — failed upload must release them.
+		const claims = await pool.query(
+			`SELECT COUNT(*) as count
+       FROM audit_log
+       WHERE claim_id IS NOT NULL
+         AND archived_at IS NULL`,
+		)
+		expect(Number(claims.rows[0].count)).toBe(0)
+	})
+})
+
+describe('PgHistoryArchiver - reapStaleClaims', () => {
+	let pool: Pool
+	let archiver: PgHistoryArchiver
+
+	beforeEach(async () => {
+		pool = await getTestConnection()
+		await setupTestData(pool)
+		await setupArchiverSchema(pool)
+
+		archiver = new PgHistoryArchiver({
+			pool,
+			s3: {
+				bucket: 'test-bucket',
+				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
+				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_HISTORY_S3_REGION,
+			},
+			retention: { default: 90 },
+			gracePeriod: 7,
+			batchSize: 10,
+			staleClaimMinutes: 5,
+		})
+		await archiver.setup()
+	})
+
+	afterEach(async () => {
+		await cleanupTestData(pool)
+		await pool.end()
+	})
+
+	test('should release claims older than staleClaimMinutes', async () => {
+		// Simulate a crashed worker: tag 5 rows with a claim_id and an old claimed_at.
+		const oldStamp = "NOW() - INTERVAL '30 minutes'"
+		await pool.query(`
+      UPDATE audit_log
+      SET claim_id = gen_random_uuid(), claimed_at = ${oldStamp}
+      WHERE id IN (SELECT id FROM audit_log WHERE table_name = 'users' LIMIT 5)
+    `)
+
+		const beforeStale = await pool.query(
+			`SELECT COUNT(*) as count FROM audit_log WHERE claim_id IS NOT NULL`,
+		)
+		expect(Number(beforeStale.rows[0].count)).toBe(5)
+
+		const reaped = await archiver.reapStaleClaims()
+		expect(reaped).toBe(5)
+
+		const afterStale = await pool.query(
+			`SELECT COUNT(*) as count FROM audit_log WHERE claim_id IS NOT NULL`,
+		)
+		expect(Number(afterStale.rows[0].count)).toBe(0)
+	})
+
+	test('should leave fresh claims alone', async () => {
+		await pool.query(`
+      UPDATE audit_log
+      SET claim_id = gen_random_uuid(), claimed_at = NOW()
+      WHERE id IN (SELECT id FROM audit_log WHERE table_name = 'users' LIMIT 3)
+    `)
+
+		const reaped = await archiver.reapStaleClaims(5)
+		expect(reaped).toBe(0)
+
+		const remaining = await pool.query(
+			`SELECT COUNT(*) as count FROM audit_log WHERE claim_id IS NOT NULL`,
+		)
+		expect(Number(remaining.rows[0].count)).toBe(3)
+	})
+
+	test('should not reap claims on already-archived rows', async () => {
+		await pool.query(`
+      UPDATE audit_log
+      SET claim_id = gen_random_uuid(),
+          claimed_at = NOW() - INTERVAL '30 minutes',
+          archived_at = NOW(),
+          s3_path = 'mock/path.parquet'
+      WHERE id IN (SELECT id FROM audit_log WHERE table_name = 'users' LIMIT 4)
+    `)
+
+		const reaped = await archiver.reapStaleClaims()
+		expect(reaped).toBe(0)
+
+		// Claim id should still be set on archived rows (we don't touch them).
+		const stillClaimed = await pool.query(
+			`SELECT COUNT(*) as count
+       FROM audit_log
+       WHERE claim_id IS NOT NULL AND archived_at IS NOT NULL`,
+		)
+		expect(Number(stillClaimed.rows[0].count)).toBe(4)
+	})
+
+	test('should reject non-positive staleAfterMinutes', async () => {
+		await expect(archiver.reapStaleClaims(0)).rejects.toThrow(/positive finite/)
+		await expect(archiver.reapStaleClaims(-1)).rejects.toThrow(
+			/positive finite/,
+		)
+	})
 })

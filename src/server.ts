@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
+import { cors } from 'hono/cors'
 import type { JwtVariables } from 'hono/jwt'
 import { jwt } from 'hono/jwt'
 import { openAPIRouteHandler } from 'hono-openapi'
@@ -37,6 +38,9 @@ export async function createServer(config: ServerConfig): Promise<{
 	let currentArchivalPromise: Promise<void> | null = null
 	let archivalInterval: ReturnType<typeof setInterval> | undefined
 	let rateLimitCleanupInterval: ReturnType<typeof setInterval> | undefined
+	let archivalRetryTimer: ReturnType<typeof setTimeout> | undefined
+	let archivalRetryResolve: (() => void) | undefined
+	let disposed = false
 	let inFlightRequests = 0
 	const inFlightWaiters: Array<() => void> = []
 
@@ -53,6 +57,12 @@ export async function createServer(config: ServerConfig): Promise<{
 				resolve()
 			})
 		})
+	}
+
+	// CORS — applied before any other middleware so preflight OPTIONS gets
+	// proper headers without hitting auth or body-limit checks.
+	if (config.cors) {
+		app.use('*', cors(config.cors))
 	}
 
 	// Limit request body size to 1MB to prevent memory exhaustion
@@ -80,6 +90,11 @@ export async function createServer(config: ServerConfig): Promise<{
 		const RATE_LIMIT_WINDOW_MS = 60_000 // 1 minute
 		const RATE_LIMIT_MAX = 100 // requests per window
 		const RATE_LIMIT_CLEANUP_INTERVAL_MS = 30_000 // sweep every 30s
+		// Cap map size to prevent memory exhaustion from a flood of unique IPs
+		// arriving between sweeps. When the cap is hit we evict the oldest
+		// inserted entry (Map preserves insertion order). This is a coarse LRU —
+		// safe under attack because the bound on memory is fixed.
+		const RATE_LIMIT_MAX_ENTRIES = 10_000
 
 		// Periodically sweep expired entries on a timer instead of in the
 		// request path. Bounded at ~2x MAX entries in the worst case until the
@@ -109,6 +124,10 @@ export async function createServer(config: ServerConfig): Promise<{
 			const entry = rateLimitMap.get(ip)
 
 			if (!entry || now > entry.resetAt) {
+				if (rateLimitMap.size >= RATE_LIMIT_MAX_ENTRIES) {
+					const oldest = rateLimitMap.keys().next().value
+					if (oldest !== undefined) rateLimitMap.delete(oldest)
+				}
 				rateLimitMap.set(ip, {
 					count: 1,
 					resetAt: now + RATE_LIMIT_WINDOW_MS,
@@ -172,6 +191,19 @@ export async function createServer(config: ServerConfig): Promise<{
 	let runArchival: () => Promise<void> = () => Promise.resolve()
 
 	if (config.enableArchiver && config.archiverConfig) {
+		// Validate retry config BEFORE schema setup so misconfiguration surfaces
+		// before any DB work is done — easier to debug than a DDL error.
+		const MAX_ATTEMPTS = config.archivalRetry?.maxAttempts ?? 4
+		const RETRY_DELAYS = config.archivalRetry?.delays ?? [5_000, 15_000, 60_000]
+		if (MAX_ATTEMPTS < 1) {
+			throw new Error('archivalRetry.maxAttempts must be >= 1')
+		}
+		if (RETRY_DELAYS.length < MAX_ATTEMPTS - 1) {
+			throw new Error(
+				`archivalRetry.delays must have at least maxAttempts - 1 (${MAX_ATTEMPTS - 1}) entries`,
+			)
+		}
+
 		logger.info('Setting up archiver schema')
 		await setupArchiverSchema(config.pool)
 		// If PgHistory is also enabled, the soft-delete column now exists
@@ -179,10 +211,6 @@ export async function createServer(config: ServerConfig): Promise<{
 
 		const archiverConfig = config.archiverConfig
 		const runOptions = config.runOptions || {}
-		// MAX_ATTEMPTS: total runs including the initial attempt.
-		// RETRY_DELAYS: one entry per retry (MAX_ATTEMPTS - 1 entries).
-		const MAX_ATTEMPTS = 4
-		const RETRY_DELAYS = [5_000, 15_000, 60_000] // 3 retries after the initial attempt
 		let archivalRunning = false
 
 		runArchival = async (): Promise<void> => {
@@ -221,21 +249,51 @@ export async function createServer(config: ServerConfig): Promise<{
 						archivalHealth.status = 'completed'
 						archivalHealth.lastError = null
 						archivalHealth.lastCompletedAt = new Date()
+						// Reset attempts so this counter represents "retries since
+						// last success", not "lifetime archival count" — operators
+						// reading /api/health/detailed expect the former.
+						archivalHealth.attempts = 0
 						return
 					} catch (err) {
 						const message = err instanceof Error ? err.message : String(err)
 						archivalHealth.status = 'failed'
 						archivalHealth.lastError = message
 
-						if (attempt < MAX_ATTEMPTS - 1) {
-							const delay = RETRY_DELAYS[attempt] ?? 60_000
+						if (attempt < MAX_ATTEMPTS - 1 && !disposed) {
+							const baseDelay = RETRY_DELAYS[attempt] ?? 60_000
+							// 0..25% jitter so multiple instances retrying after a
+							// common failure (DB blip, S3 outage) don't all wake at
+							// once and rebuild the dogpile that caused the failure.
+							const jitter = Math.floor(Math.random() * baseDelay * 0.25)
+							const delay = baseDelay + jitter
 							logger.error('Background archival failed, retrying', {
 								attempt: attempt + 1,
 								maxAttempts: MAX_ATTEMPTS,
 								delayMs: delay,
 								message,
 							})
-							await new Promise((r) => setTimeout(r, delay))
+							// Sleep with a handle that dispose() can cancel so SIGTERM
+							// during a long retry backoff doesn't block process exit.
+							// unref() prevents the timer from holding the event loop
+							// alive past process intent.
+							await new Promise<void>((resolve) => {
+								archivalRetryResolve = resolve
+								archivalRetryTimer = setTimeout(() => {
+									archivalRetryTimer = undefined
+									archivalRetryResolve = undefined
+									resolve()
+								}, delay)
+								if (
+									typeof archivalRetryTimer === 'object' &&
+									archivalRetryTimer &&
+									'unref' in archivalRetryTimer
+								) {
+									;(
+										archivalRetryTimer as unknown as { unref: () => void }
+									).unref()
+								}
+							})
+							if (disposed) return
 						} else {
 							logger.error('Background archival failed after all attempts', {
 								attempts: MAX_ATTEMPTS,
@@ -297,11 +355,41 @@ export async function createServer(config: ServerConfig): Promise<{
 	// disable auth while `jwtSecret` is falsy).
 	const jwtSecret = process.env.PG_HISTORY_JWT_SECRET?.trim() || undefined
 	if (jwtSecret) {
-		logger.info('JWT authentication enabled')
-		const jwtMiddleware = jwt({ secret: jwtSecret, alg: 'HS256' })
-		app.use('/api/*', (c, next) => jwtMiddleware(c, next))
+		// hono/jwt's supported algorithms. Default HS256 for backwards compat;
+		// allow asymmetric algs (RS256/ES256) for Vercel/Cloudflare deployments
+		// that sign with a private key and distribute the public key.
+		const SUPPORTED_ALGS = [
+			'HS256',
+			'HS384',
+			'HS512',
+			'RS256',
+			'RS384',
+			'RS512',
+			'ES256',
+			'ES384',
+			'ES512',
+		] as const
+		type JwtAlg = (typeof SUPPORTED_ALGS)[number]
+		const requestedAlg =
+			process.env.PG_HISTORY_JWT_ALG?.trim().toUpperCase() || 'HS256'
+		if (!(SUPPORTED_ALGS as readonly string[]).includes(requestedAlg)) {
+			throw new Error(
+				`PG_HISTORY_JWT_ALG="${requestedAlg}" not supported. Allowed: ${SUPPORTED_ALGS.join(', ')}`,
+			)
+		}
+		const alg = requestedAlg as JwtAlg
+		logger.info('JWT authentication enabled', { alg })
+		const jwtMiddleware = jwt({ secret: jwtSecret, alg })
+		// Skip JWT for CORS preflight — browsers send OPTIONS without auth.
+		// Without this, preflight returns 401 and the browser blocks the
+		// real request.
+		const jwtSkipOptions = (
+			c: Parameters<typeof jwtMiddleware>[0],
+			next: Parameters<typeof jwtMiddleware>[1],
+		) => (c.req.method === 'OPTIONS' ? next() : jwtMiddleware(c, next))
+		app.use('/api/*', jwtSkipOptions)
 		if (!config.publicOpenApi) {
-			app.use('/openapi', (c, next) => jwtMiddleware(c, next))
+			app.use('/openapi', jwtSkipOptions)
 		}
 	} else if (config.enableHistory) {
 		logger.warn(
@@ -316,27 +404,74 @@ export async function createServer(config: ServerConfig): Promise<{
 		c.header('X-Frame-Options', 'DENY')
 	})
 
-	// Health check endpoint (no auth required)
-	// Only expose safe status fields — never internal error messages
+	// Resolve cron secret once. Used by /api/archive, /api/stats, and
+	// /api/health/detailed so none are exposed unauthenticated in cron-only
+	// deployments (where jwtSecret is unset and the global /api/* JWT
+	// middleware therefore wasn't registered).
+	const cronSecret = config.enableArchiver
+		? (config.archiveCronSecret || process.env.CRON_SECRET)?.trim() || undefined
+		: undefined
+
+	async function verifyCronSecret(authHeader: string): Promise<boolean> {
+		if (!cronSecret) return true // not configured — JWT path is authoritative
+		const { createHmac } = await import('node:crypto')
+		const expected = `Bearer ${cronSecret}`
+		const key = Buffer.from(cronSecret)
+		const mac = (v: string) => createHmac('sha256', key).update(v).digest()
+		return timingSafeEqual(mac(authHeader), mac(expected))
+	}
+
+	// Public health endpoint — minimal surface. Returns only status to avoid
+	// leaking operational posture (last archival time, failure counts) to
+	// unauthenticated callers.
 	app.get('/health', (c) => {
-		const health: Record<string, unknown> = { status: 'ok' }
-		if (config.enableArchiver) {
-			health.archival = {
-				status: archivalHealth.status,
-				attempts: archivalHealth.attempts,
-				lastCompletedAt: archivalHealth.lastCompletedAt,
-			}
-			if (archivalHealth.status === 'failed') {
-				health.status = 'degraded'
-			}
-		}
-		return c.json(health)
+		const status =
+			config.enableArchiver && archivalHealth.status === 'failed'
+				? 'degraded'
+				: 'ok'
+		return c.json({ status })
 	})
 
-	// Archival stats endpoint — protected by JWT (registered above)
-	// Moved after JWT middleware so it's auth-gated when JWT is configured
+	// Detailed health endpoint — auth-gated via /api/* JWT middleware (when set)
+	// or cron secret. Exposes archival attempts and last completion time.
+	if (config.enableArchiver) {
+		app.get('/api/health/detailed', async (c) => {
+			if (!jwtSecret && cronSecret) {
+				const ok = await verifyCronSecret(c.req.header('authorization') ?? '')
+				if (!ok) {
+					return c.json(
+						createErrorResponse('UNAUTHORIZED', 'Invalid cron secret'),
+						401,
+					)
+				}
+			}
+			return c.json({
+				status: archivalHealth.status === 'failed' ? 'degraded' : 'ok',
+				archival: {
+					status: archivalHealth.status,
+					attempts: archivalHealth.attempts,
+					lastCompletedAt: archivalHealth.lastCompletedAt,
+					lastError: archivalHealth.lastError,
+				},
+			})
+		})
+	}
+
+	// Archival stats endpoint. Auth contract: JWT middleware (when configured)
+	// already authenticated /api/* before reaching here. When only cron secret
+	// is configured, JWT middleware was not registered and we must verify the
+	// HMAC inline — otherwise this endpoint would be public.
 	if (config.enableArchiver) {
 		app.get('/api/stats', async (c) => {
+			if (!jwtSecret && cronSecret) {
+				const ok = await verifyCronSecret(c.req.header('authorization') ?? '')
+				if (!ok) {
+					return c.json(
+						createErrorResponse('UNAUTHORIZED', 'Invalid cron secret'),
+						401,
+					)
+				}
+			}
 			try {
 				const stats = await getArchivalStats(config.pool)
 				return c.json({ stats })
@@ -351,13 +486,7 @@ export async function createServer(config: ServerConfig): Promise<{
 	}
 
 	// On-demand archival endpoint — for cron triggers (Vercel Cron, AWS EventBridge, etc.)
-	// Authenticated via archiveCronSecret config or CRON_SECRET env var (Vercel convention).
-	// If neither is set AND no JWT is configured, the endpoint would be fully unauthenticated
-	// on an internet-accessible deployment — refuse to register it rather than allow that.
 	if (config.enableArchiver && runArchival) {
-		const cronSecret =
-			(config.archiveCronSecret || process.env.CRON_SECRET)?.trim() || undefined
-
 		if (!cronSecret && !jwtSecret) {
 			logger.error(
 				'/api/archive endpoint NOT registered: no authentication configured. ' +
@@ -365,31 +494,18 @@ export async function createServer(config: ServerConfig): Promise<{
 			)
 		} else {
 			app.post('/api/archive', async (c) => {
-				// Auth contract: at least one of the two guards below is always active.
-				// The outer `if (!cronSecret && !jwtSecret)` prevents this route from
-				// being registered unless one is configured, so we can never reach here
-				// with both missing.
-				//
-				// Case 1: cronSecret is set — verify it here with HMAC-based comparison.
-				//   HMAC digests have fixed length (32 bytes), so timingSafeEqual never
-				//   needs a length pre-check that would leak the secret length.
-				// Case 2: only jwtSecret is set — the JWT middleware registered above
-				//   for '/api/*' already verified the token before reaching this handler.
+				// Auth contract: when cronSecret is set, verify HMAC here. When only
+				// jwtSecret is set, the JWT middleware registered for '/api/*' has
+				// already authenticated this request before it reaches the handler.
 				if (cronSecret) {
-					const { createHmac } = await import('node:crypto')
-					const authHeader = c.req.header('authorization') ?? ''
-					const expected = `Bearer ${cronSecret}`
-					const key = Buffer.from(cronSecret)
-					const mac = (v: string) =>
-						createHmac('sha256', key).update(v).digest()
-					if (!timingSafeEqual(mac(authHeader), mac(expected))) {
+					const ok = await verifyCronSecret(c.req.header('authorization') ?? '')
+					if (!ok) {
 						return c.json(
 							createErrorResponse('UNAUTHORIZED', 'Invalid cron secret'),
 							401,
 						)
 					}
 				}
-				// else: jwtSecret-only path — JWT middleware already authenticated above.
 
 				try {
 					await runArchival()
@@ -434,6 +550,34 @@ export async function createServer(config: ServerConfig): Promise<{
 			} catch {
 				return c.json(
 					createErrorResponse('VALIDATION_ERROR', 'Invalid table name'),
+					400,
+				)
+			}
+
+			// recordId is interpolated as a query parameter, not into SQL, but
+			// length-bound it anyway to keep pathological clients from sending
+			// multi-MB strings that the DB still has to evaluate.
+			if (typeof recordId !== 'string' || recordId.length === 0) {
+				return c.json(
+					createErrorResponse('VALIDATION_ERROR', 'recordId is required'),
+					400,
+				)
+			}
+			if (recordId.length > 512) {
+				return c.json(
+					createErrorResponse(
+						'VALIDATION_ERROR',
+						'recordId exceeds maximum length',
+					),
+					400,
+				)
+			}
+			if (recordId.includes('\0')) {
+				return c.json(
+					createErrorResponse(
+						'VALIDATION_ERROR',
+						'recordId cannot contain null bytes',
+					),
 					400,
 				)
 			}
@@ -599,12 +743,31 @@ export async function createServer(config: ServerConfig): Promise<{
 				throw error
 			}
 
+			// Capture sub from JWT payload (RFC 7519 allows non-string; trust strings only).
+			const payload = (c as unknown as { get(k: string): unknown }).get(
+				'jwtPayload',
+			) as Record<string, unknown> | undefined
+			const actor =
+				payload && typeof payload.sub === 'string' ? payload.sub : undefined
+			logger.info('revert requested', {
+				table: parsed.table,
+				recordId: parsed.recordId,
+				auditEntryId: parsed.auditEntryId,
+				actor: actor ?? 'unknown',
+			})
+
 			try {
 				await pgHistory.revert(
 					parsed.table,
 					parsed.recordId,
 					parsed.auditEntryId,
 				)
+				logger.info('revert completed', {
+					table: parsed.table,
+					recordId: parsed.recordId,
+					auditEntryId: parsed.auditEntryId,
+					actor: actor ?? 'unknown',
+				})
 				return c.json({ success: true })
 			} catch (error) {
 				if (error instanceof TableNotConfiguredError) {
@@ -666,9 +829,15 @@ export async function createServer(config: ServerConfig): Promise<{
 	 * Call this before closing the pool and exiting.
 	 */
 	async function dispose(drainTimeoutMs = 15_000): Promise<void> {
+		if (disposed) return
+		disposed = true
 		await waitForInFlightRequests(drainTimeoutMs)
 		if (archivalInterval) clearInterval(archivalInterval)
 		if (rateLimitCleanupInterval) clearInterval(rateLimitCleanupInterval)
+		// Cancel any in-progress retry backoff and resolve its promise so the
+		// runArchival loop exits immediately instead of waiting up to 60s.
+		if (archivalRetryTimer) clearTimeout(archivalRetryTimer)
+		if (archivalRetryResolve) archivalRetryResolve()
 		if (currentArchivalPromise) {
 			await currentArchivalPromise.catch(() => {})
 		}

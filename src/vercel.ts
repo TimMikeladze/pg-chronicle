@@ -104,7 +104,12 @@ function getApp(): Promise<App> {
 		// Register shutdown handlers only after the app is fully initialised.
 		// Registering earlier risks calling pool.end() while setup DDL is still in
 		// flight, which throws "Cannot use a pool after calling end on the pool".
+		// Idempotency flag: SIGTERM + beforeExit can both fire on the same exit;
+		// the second invocation must not call pool.end() again.
+		let shuttingDown = false
 		const onShutdown = () => {
+			if (shuttingDown) return
+			shuttingDown = true
 			dispose().catch(() => {})
 			pool.end().catch(() => {})
 		}

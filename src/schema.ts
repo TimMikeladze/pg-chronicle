@@ -24,6 +24,38 @@ export async function setupArchiverSchema(pool: Pool): Promise<void> {
 	const metadataTable = `${s}."audit_archive_metadata"`
 	const statsTable = `${s}."audit_archival_stats"`
 
+	// Fast path: if all expected columns + tables + indexes already exist,
+	// skip the 10+ DDL roundtrips. Critical on serverless cold starts where
+	// every roundtrip lands on the first request's latency budget. Indexes
+	// are checked too — without them, archival queries fall back to seq
+	// scans and the perf regression is invisible without an EXPLAIN.
+	const probe = await pool.query(
+		`SELECT
+       (SELECT COUNT(*) FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'audit_log'
+          AND column_name IN ('archived_at', 's3_path', 'soft_deleted_at', 'claim_id', 'claimed_at')) AS col_count,
+       (SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name IN ('audit_archive_metadata', 'audit_archival_stats')) AS tbl_count,
+       (SELECT COUNT(*) FROM pg_indexes
+        WHERE schemaname = current_schema()
+          AND indexname IN (
+            'idx_audit_log_archival',
+            'idx_audit_log_unclaimed',
+            'idx_audit_log_claimed',
+            'idx_audit_log_soft_delete',
+            'idx_audit_log_hard_delete',
+            'idx_archive_metadata_table_date',
+            'idx_archival_stats_updated'
+          )) AS idx_count`,
+	)
+	const colCount = Number(probe.rows[0]?.col_count ?? 0)
+	const tblCount = Number(probe.rows[0]?.tbl_count ?? 0)
+	const idxCount = Number(probe.rows[0]?.idx_count ?? 0)
+	if (colCount === 5 && tblCount === 2 && idxCount === 7) {
+		return
+	}
+
 	// Add archived_at column to audit_log
 	await pool.query(`
     ALTER TABLE ${auditTable}
@@ -42,11 +74,52 @@ export async function setupArchiverSchema(pool: Pool): Promise<void> {
       ADD COLUMN IF NOT EXISTS soft_deleted_at TIMESTAMPTZ
   `)
 
+	// Claim columns implement non-blocking archival: a worker UPDATEs claim_id
+	// on a batch of rows in one short transaction, releases the lock, performs
+	// the slow S3 upload outside any transaction, then UPDATEs archived_at in a
+	// second short transaction. Crashed workers leave stale claims that
+	// PgHistoryArchiver.reapStaleClaims() resets via claimed_at < NOW() - interval.
+	await pool.query(`
+    ALTER TABLE ${auditTable}
+      ADD COLUMN IF NOT EXISTS claim_id UUID
+  `)
+	await pool.query(`
+    ALTER TABLE ${auditTable}
+      ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ
+  `)
+
 	// Create composite index for archival queries
 	await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_audit_log_archival
       ON ${auditTable}(table_name, changed_at)
       WHERE archived_at IS NULL
+  `)
+
+	// CREATE INDEX CONCURRENTLY avoids the ACCESS EXCLUSIVE lock during deploy,
+	// but Postgres rejects it on partitioned parent tables. Detect partitioning
+	// and fall back to plain CREATE INDEX (which cascades to partitions and
+	// blocks writes — acceptable for partitioned tables since DDL is rare).
+	const partitionCheck = await pool.query(
+		`SELECT c.relkind = 'p' AS is_partitioned
+       FROM pg_class c
+       JOIN pg_namespace n ON c.relnamespace = n.oid
+       WHERE n.nspname = current_schema() AND c.relname = 'audit_log'`,
+	)
+	const isPartitioned = partitionCheck.rows[0]?.is_partitioned === true
+	const concurrently = isPartitioned ? '' : 'CONCURRENTLY'
+
+	// Partial index for the unclaimed-row scan that processBatch performs.
+	await pool.query(`
+    CREATE INDEX ${concurrently} IF NOT EXISTS idx_audit_log_unclaimed
+      ON ${auditTable}(table_name, changed_at)
+      WHERE archived_at IS NULL AND claim_id IS NULL
+  `)
+
+	// Index for the reaper: scan stale claims by claimed_at.
+	await pool.query(`
+    CREATE INDEX ${concurrently} IF NOT EXISTS idx_audit_log_claimed
+      ON ${auditTable}(claimed_at)
+      WHERE claim_id IS NOT NULL AND archived_at IS NULL
   `)
 
 	// Create index for soft delete queries
@@ -239,18 +312,23 @@ export async function teardownArchiverSchema(pool: Pool): Promise<void> {
 	// Drop metadata table
 	await pool.query(`DROP TABLE IF EXISTS ${metadataTable} CASCADE`)
 
-	// Remove archived_at column (optional - might want to keep)
-	await pool.query(
-		`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS archived_at CASCADE`,
-	)
+	// Drop archiver-owned indexes explicitly before dropping their columns.
+	// We avoid CASCADE on DROP COLUMN so that user-defined indexes/views/
+	// constraints that reference these columns surface as a loud error
+	// instead of being silently destroyed.
+	await pool.query(`DROP INDEX IF EXISTS ${s}.idx_audit_log_archival`)
+	await pool.query(`DROP INDEX IF EXISTS ${s}.idx_audit_log_unclaimed`)
+	await pool.query(`DROP INDEX IF EXISTS ${s}.idx_audit_log_claimed`)
+	await pool.query(`DROP INDEX IF EXISTS ${s}.idx_audit_log_soft_delete`)
+	await pool.query(`DROP INDEX IF EXISTS ${s}.idx_audit_log_hard_delete`)
 
-	// Remove s3_path column
 	await pool.query(
-		`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS s3_path CASCADE`,
+		`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS archived_at`,
 	)
-
-	// Remove soft_deleted_at column
+	await pool.query(`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS s3_path`)
 	await pool.query(
-		`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS soft_deleted_at CASCADE`,
+		`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS soft_deleted_at`,
 	)
+	await pool.query(`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS claim_id`)
+	await pool.query(`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS claimed_at`)
 }

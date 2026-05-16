@@ -296,7 +296,23 @@ async function revertDelete(
 		VALUES (${placeholders})
 		RETURNING true as success
 	`
-	const insertResult = await client.query(insertQuery, values)
+	let insertResult: { rows: unknown[] }
+	try {
+		insertResult = await client.query(insertQuery, values)
+	} catch (err) {
+		const code = (err as { code?: string }).code
+		if (code === '23505') {
+			throw new RevertError(
+				`Cannot revert DELETE for record ${recordId} in table "${tableName}": a row with the same key already exists (unique constraint violation). The record was likely re-created after the audited DELETE.`,
+			)
+		}
+		if (code === '23503') {
+			throw new RevertError(
+				`Cannot revert DELETE for record ${recordId} in table "${tableName}": foreign key constraint violation — referenced rows may no longer exist.`,
+			)
+		}
+		throw err
+	}
 	if (!insertResult.rows || insertResult.rows.length === 0) {
 		throw new RevertError(
 			`Failed to revert DELETE for record ${recordId} in table ${tableName}`,

@@ -95,6 +95,47 @@ describe('Schema Setup', () => {
 
 		expect(result.rows.length).toBe(1)
 	})
+
+	test('should add claim_id column to audit_log', async () => {
+		await setupArchiverSchema(pool)
+
+		const result = await pool.query(`
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_name = 'audit_log'
+      AND column_name = 'claim_id'
+    `)
+
+		expect(result.rows.length).toBe(1)
+		expect(result.rows[0].data_type).toBe('uuid')
+	})
+
+	test('should add claimed_at column to audit_log', async () => {
+		await setupArchiverSchema(pool)
+
+		const result = await pool.query(`
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_name = 'audit_log'
+      AND column_name = 'claimed_at'
+    `)
+
+		expect(result.rows.length).toBe(1)
+		expect(result.rows[0].data_type).toBe('timestamp with time zone')
+	})
+
+	test('should create unclaimed and claimed indexes', async () => {
+		await setupArchiverSchema(pool)
+
+		const result = await pool.query(`
+      SELECT indexname
+      FROM pg_indexes
+      WHERE tablename = 'audit_log'
+      AND indexname IN ('idx_audit_log_unclaimed', 'idx_audit_log_claimed')
+    `)
+
+		expect(result.rows.length).toBe(2)
+	})
 })
 
 // ─────────────────────────────────────────────────────────

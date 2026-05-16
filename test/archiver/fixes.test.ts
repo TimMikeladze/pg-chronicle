@@ -271,12 +271,16 @@ describe('Fix #5: PgHistoryArchiver ensurePool race condition', () => {
 // ─────────────────────────────────────────────────────────
 
 describe('Fix #12: S3 orphan crash recovery documented', () => {
-	test('processBatch comment documents orphan risk', async () => {
+	test('processBatch documents the claim-based recovery path', async () => {
 		const fs = await import('node:fs/promises')
 		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
 
-		expect(source).toContain('becomes an orphan')
+		// New 3-phase flow releases the claim and best-effort deletes the S3 file
+		// on failure; cleanupOrphanedFiles is the backstop and reapStaleClaims
+		// recovers from worker crashes between phases.
 		expect(source).toContain('cleanupOrphanedFiles')
+		expect(source).toContain('reapStaleClaims')
+		expect(source).toContain('releaseClaim')
 	})
 })
 
@@ -290,8 +294,8 @@ describe('Review Fix #6: archival queries have ORDER BY', () => {
 		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
 
 		const softDeleteRegion = source.slice(
-			source.indexOf('softDeleteArchived'),
-			source.indexOf('hardDeletePurged'),
+			source.indexOf('async softDeleteArchived('),
+			source.indexOf('async hardDeletePurged('),
 		)
 		expect(softDeleteRegion).toContain('ORDER BY id ASC')
 	})
@@ -301,7 +305,7 @@ describe('Review Fix #6: archival queries have ORDER BY', () => {
 		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
 
 		const hardDeleteRegion = source.slice(
-			source.indexOf('hardDeletePurged'),
+			source.indexOf('async hardDeletePurged('),
 			source.indexOf('async close'),
 		)
 		expect(hardDeleteRegion).toContain('ORDER BY id ASC')
