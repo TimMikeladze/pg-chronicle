@@ -156,7 +156,9 @@ describe('Fix #4: Archive endpoint authentication warning', () => {
 
 	test('logs error and refuses to register /api/archive when no auth is configured', async () => {
 		const originalCronSecret = process.env.CRON_SECRET
+		const originalSilent = process.env.PG_HISTORY_SILENT_LOGS
 		delete process.env.CRON_SECRET
+		delete process.env.PG_HISTORY_SILENT_LOGS
 
 		const errorSpy = spyOn(console, 'error')
 
@@ -183,6 +185,9 @@ describe('Fix #4: Archive endpoint authentication warning', () => {
 
 		errorSpy.mockRestore()
 		process.env.CRON_SECRET = originalCronSecret
+		if (originalSilent !== undefined) {
+			process.env.PG_HISTORY_SILENT_LOGS = originalSilent
+		}
 	})
 
 	test('does not log archive auth error when cron secret is configured', async () => {
@@ -299,7 +304,9 @@ describe('Fix #6: JWT authentication warning', () => {
 
 	test('warns when API endpoints are unauthenticated', async () => {
 		const originalJwt = process.env.PG_HISTORY_JWT_SECRET
+		const originalSilent = process.env.PG_HISTORY_SILENT_LOGS
 		delete process.env.PG_HISTORY_JWT_SECRET
+		delete process.env.PG_HISTORY_SILENT_LOGS
 
 		const warnSpy = spyOn(console, 'warn')
 
@@ -324,6 +331,9 @@ describe('Fix #6: JWT authentication warning', () => {
 
 		warnSpy.mockRestore()
 		process.env.PG_HISTORY_JWT_SECRET = originalJwt
+		if (originalSilent !== undefined) {
+			process.env.PG_HISTORY_SILENT_LOGS = originalSilent
+		}
 	})
 
 	test('does not warn when JWT secret is set', async () => {

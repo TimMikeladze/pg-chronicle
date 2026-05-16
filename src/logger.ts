@@ -26,17 +26,24 @@ export interface Logger {
  */
 // Default logger intentionally uses console.* — all other call sites route
 // through this interface so library code never touches console directly.
+// Honors PG_HISTORY_SILENT_LOGS=1 to drop output (used by test suite).
+const isSilent = (): boolean => process.env.PG_HISTORY_SILENT_LOGS === '1'
+
 export const consoleLogger: Logger = {
 	debug(message, context) {
+		if (isSilent()) return
 		console.debug(format('debug', message, context))
 	},
 	info(message, context) {
+		if (isSilent()) return
 		console.log(format('info', message, context))
 	},
 	warn(message, context) {
+		if (isSilent()) return
 		console.warn(format('warn', message, context))
 	},
 	error(message, context) {
+		if (isSilent()) return
 		console.error(format('error', message, context))
 	},
 }

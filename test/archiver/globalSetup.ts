@@ -4,6 +4,10 @@ import { ensureTestBucket } from './helpers/s3'
 // This file is preloaded before all tests run
 // It runs once at the start of the test suite
 
+// Silence library logger noise during tests (errors/warns from negative-path
+// tests are expected and clutter output). Unset locally to debug.
+process.env.PG_HISTORY_SILENT_LOGS = process.env.PG_HISTORY_SILENT_LOGS || '1'
+
 // Set up S3/MinIO environment variables for all tests
 // Using default MinIO test configuration
 process.env.PG_HISTORY_S3_ENDPOINT =
