@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
 import { validateIdentifier } from './pg-history-validators'
 
@@ -5,6 +6,67 @@ import { validateIdentifier } from './pg-history-validators'
 // The schema does not change during a session; keying by pool avoids
 // cross-contamination when multiple pools are used in the same process (tests).
 const schemaCache = new WeakMap<Pool, string>()
+
+/** List the child partition relnames of audit_log in the current schema. */
+async function listPartitions(pool: Pool): Promise<string[]> {
+	const result = await pool.query(
+		`SELECT c.relname
+       FROM pg_inherits i
+       JOIN pg_class c ON c.oid = i.inhrelid
+       JOIN pg_class p ON p.oid = i.inhparent
+       JOIN pg_namespace n ON n.oid = p.relnamespace
+       WHERE p.relname = 'audit_log' AND n.nspname = current_schema()`,
+	)
+	const names = result.rows.map((r: { relname: string }) => r.relname)
+	for (const name of names) validateIdentifier(name, 'table')
+	return names
+}
+
+/** Derive a <=63-char, collision-resistant child index name for a partition. */
+function childIndexName(partition: string, code: string): string {
+	const name = `${partition}_${code}`
+	if (name.length <= 63) return name
+	const hash = createHash('sha256').update(name).digest('hex').slice(0, 8)
+	return `pgh_${code}_${hash}`
+}
+
+/**
+ * Create a partitioned-table index WITHOUT blocking writes:
+ *   1. CREATE INDEX ... ON ONLY parent — creates an INVALID parent index with a
+ *      brief lock and no data scan (the partitioned parent holds no rows itself).
+ *   2. CREATE INDEX CONCURRENTLY on each partition — no write-blocking lock.
+ *   3. ALTER INDEX parent ATTACH PARTITION child — marks the parent VALID once
+ *      every partition's index is attached.
+ * All steps use IF NOT EXISTS / an already-attached guard so re-runs are safe.
+ * CREATE INDEX CONCURRENTLY cannot run in a transaction; these pool.query calls
+ * are autocommit, which satisfies that.
+ */
+async function createAuditLogIndexPartitioned(
+	pool: Pool,
+	schemaPrefix: string,
+	spec: { name: string; code: string; body: string },
+	partitions: string[],
+): Promise<void> {
+	await pool.query(
+		`CREATE INDEX IF NOT EXISTS ${spec.name} ON ONLY ${schemaPrefix}."audit_log" ${spec.body}`,
+	)
+	for (const part of partitions) {
+		const child = childIndexName(part, spec.code)
+		await pool.query(
+			`CREATE INDEX CONCURRENTLY IF NOT EXISTS ${child} ON ${schemaPrefix}."${part}" ${spec.body}`,
+		)
+		try {
+			await pool.query(
+				`ALTER INDEX ${schemaPrefix}.${spec.name} ATTACH PARTITION ${schemaPrefix}.${child}`,
+			)
+		} catch (err) {
+			// Re-running after a prior successful attach errors because the child is
+			// already a partition of the parent index — that is the desired state.
+			const msg = err instanceof Error ? err.message : String(err)
+			if (!/already/i.test(msg)) throw err
+		}
+	}
+}
 
 async function getSchemaPrefix(pool: Pool): Promise<string> {
 	const cached = schemaCache.get(pool)
@@ -37,9 +99,15 @@ export async function setupArchiverSchema(pool: Pool): Promise<void> {
        (SELECT COUNT(*) FROM information_schema.tables
         WHERE table_schema = current_schema()
           AND table_name IN ('audit_archive_metadata', 'audit_archival_stats')) AS tbl_count,
-       (SELECT COUNT(*) FROM pg_indexes
-        WHERE schemaname = current_schema()
-          AND indexname IN (
+       -- Count only VALID + READY indexes. An interrupted CREATE INDEX
+       -- CONCURRENTLY leaves an INVALID index of the same name; counting it
+       -- (as pg_indexes would) makes the fast path skip rebuilding it forever.
+       (SELECT COUNT(*) FROM pg_class i
+          JOIN pg_index ix ON ix.indexrelid = i.oid
+          JOIN pg_namespace n ON n.oid = i.relnamespace
+        WHERE n.nspname = current_schema()
+          AND ix.indisvalid AND ix.indisready
+          AND i.relname IN (
             'idx_audit_log_archival',
             'idx_audit_log_unclaimed',
             'idx_audit_log_claimed',
@@ -47,13 +115,38 @@ export async function setupArchiverSchema(pool: Pool): Promise<void> {
             'idx_audit_log_hard_delete',
             'idx_archive_metadata_table_date',
             'idx_archival_stats_updated'
-          )) AS idx_count`,
+          )) AS idx_count,
+       (SELECT COUNT(*) FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'audit_archive_metadata'
+          AND column_name = 'checksum_sha256') AS meta_ck`,
 	)
 	const colCount = Number(probe.rows[0]?.col_count ?? 0)
 	const tblCount = Number(probe.rows[0]?.tbl_count ?? 0)
 	const idxCount = Number(probe.rows[0]?.idx_count ?? 0)
-	if (colCount === 5 && tblCount === 2 && idxCount === 7) {
+	const metaCk = Number(probe.rows[0]?.meta_ck ?? 0)
+	if (colCount === 5 && tblCount === 2 && idxCount === 7 && metaCk === 1) {
 		return
+	}
+
+	// Drop any INVALID archiver parent indexes (from an interrupted CONCURRENTLY
+	// build) so the CREATE ... IF NOT EXISTS below actually rebuilds them instead
+	// of skipping over the broken one. Dropping a partitioned parent index
+	// cascades to its (also-invalid) partition indexes.
+	const invalidIdx = await pool.query(
+		`SELECT i.relname FROM pg_class i
+       JOIN pg_index ix ON ix.indexrelid = i.oid
+       JOIN pg_namespace n ON n.oid = i.relnamespace
+     WHERE n.nspname = current_schema()
+       AND NOT ix.indisvalid
+       AND i.relname IN (
+         'idx_audit_log_archival','idx_audit_log_unclaimed','idx_audit_log_claimed',
+         'idx_audit_log_soft_delete','idx_audit_log_hard_delete',
+         'idx_archive_metadata_table_date','idx_archival_stats_updated'
+       )`,
+	)
+	for (const row of invalidIdx.rows as Array<{ relname: string }>) {
+		validateIdentifier(row.relname, 'table')
+		await pool.query(`DROP INDEX IF EXISTS ${s}."${row.relname}"`)
 	}
 
 	// Add archived_at column to audit_log
@@ -88,17 +181,13 @@ export async function setupArchiverSchema(pool: Pool): Promise<void> {
       ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ
   `)
 
-	// Create composite index for archival queries
-	await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_audit_log_archival
-      ON ${auditTable}(table_name, changed_at)
-      WHERE archived_at IS NULL
-  `)
-
-	// CREATE INDEX CONCURRENTLY avoids the ACCESS EXCLUSIVE lock during deploy,
-	// but Postgres rejects it on partitioned parent tables. Detect partitioning
-	// and fall back to plain CREATE INDEX (which cascades to partitions and
-	// blocks writes — acceptable for partitioned tables since DDL is rare).
+	// Archiver indexes on audit_log. audit_log is ALWAYS partitioned (PARTITION
+	// BY LIST), so a plain CREATE INDEX would take a write-blocking ShareLock on
+	// the parent and every partition. Because the audit trigger INSERTs into
+	// audit_log synchronously inside every user DML, that would stall writes on
+	// EVERY audited table for the whole build. Instead build each index without
+	// blocking writes: CREATE INDEX ... ON ONLY parent (instant, invalid), then
+	// CREATE INDEX CONCURRENTLY on each partition, then ATTACH. See createAuditLogIndex.
 	const partitionCheck = await pool.query(
 		`SELECT c.relkind = 'p' AS is_partitioned
        FROM pg_class c
@@ -106,37 +195,52 @@ export async function setupArchiverSchema(pool: Pool): Promise<void> {
        WHERE n.nspname = current_schema() AND c.relname = 'audit_log'`,
 	)
 	const isPartitioned = partitionCheck.rows[0]?.is_partitioned === true
-	const concurrently = isPartitioned ? '' : 'CONCURRENTLY'
 
-	// Partial index for the unclaimed-row scan that processBatch performs.
-	await pool.query(`
-    CREATE INDEX ${concurrently} IF NOT EXISTS idx_audit_log_unclaimed
-      ON ${auditTable}(table_name, changed_at)
-      WHERE archived_at IS NULL AND claim_id IS NULL
-  `)
+	const indexSpecs: Array<{ name: string; code: string; body: string }> = [
+		{
+			name: 'idx_audit_log_archival',
+			code: 'arch',
+			body: '(table_name, changed_at) WHERE archived_at IS NULL',
+		},
+		{
+			name: 'idx_audit_log_unclaimed',
+			code: 'uncl',
+			body: '(table_name, changed_at) WHERE archived_at IS NULL AND claim_id IS NULL',
+		},
+		{
+			name: 'idx_audit_log_claimed',
+			code: 'clm',
+			body: '(claimed_at) WHERE claim_id IS NOT NULL AND archived_at IS NULL',
+		},
+		{
+			name: 'idx_audit_log_soft_delete',
+			code: 'sd',
+			body: '(archived_at) WHERE archived_at IS NOT NULL AND soft_deleted_at IS NULL',
+		},
+		{
+			name: 'idx_audit_log_hard_delete',
+			code: 'hd',
+			body: '(soft_deleted_at) WHERE soft_deleted_at IS NOT NULL',
+		},
+	]
 
-	// Index for the reaper: scan stale claims by claimed_at.
-	await pool.query(`
-    CREATE INDEX ${concurrently} IF NOT EXISTS idx_audit_log_claimed
-      ON ${auditTable}(claimed_at)
-      WHERE claim_id IS NOT NULL AND archived_at IS NULL
-  `)
+	if (isPartitioned) {
+		const partitions = await listPartitions(pool)
+		for (const spec of indexSpecs) {
+			await createAuditLogIndexPartitioned(pool, s, spec, partitions)
+		}
+	} else {
+		// Non-partitioned (legacy) audit_log: CONCURRENTLY is allowed and safe.
+		for (const spec of indexSpecs) {
+			await pool.query(
+				`CREATE INDEX CONCURRENTLY IF NOT EXISTS ${spec.name} ON ${auditTable} ${spec.body}`,
+			)
+		}
+	}
 
-	// Create index for soft delete queries
-	await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_audit_log_soft_delete
-      ON ${auditTable}(archived_at)
-      WHERE archived_at IS NOT NULL AND soft_deleted_at IS NULL
-  `)
-
-	// Create index for hard delete queries
-	await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_audit_log_hard_delete
-      ON ${auditTable}(soft_deleted_at)
-      WHERE soft_deleted_at IS NOT NULL
-  `)
-
-	// Create metadata tracking table
+	// Create metadata tracking table. checksum_sha256 (base64 SHA-256 of the
+	// uploaded Parquet) is persisted so hardDeletePurged can re-verify byte
+	// integrity — not just existence — before permanently deleting audit rows.
 	await pool.query(`
     CREATE TABLE IF NOT EXISTS ${metadataTable} (
       id SERIAL PRIMARY KEY,
@@ -145,10 +249,15 @@ export async function setupArchiverSchema(pool: Pool): Promise<void> {
       s3_path TEXT NOT NULL,
       record_count INTEGER NOT NULL,
       file_size BIGINT NOT NULL,
+      checksum_sha256 TEXT,
       archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE(s3_path)
     )
   `)
+	// Idempotent upgrade for metadata tables created before checksum tracking.
+	await pool.query(
+		`ALTER TABLE ${metadataTable} ADD COLUMN IF NOT EXISTS checksum_sha256 TEXT`,
+	)
 
 	// Create indexes on metadata table
 	await pool.query(`
@@ -188,12 +297,6 @@ export async function updateArchivalStats(
 	retentionDays: number,
 	gracePeriodDays: number,
 ): Promise<void> {
-	const retentionCutoff = new Date()
-	retentionCutoff.setDate(retentionCutoff.getDate() - retentionDays)
-
-	const gracePeriodCutoff = new Date()
-	gracePeriodCutoff.setDate(gracePeriodCutoff.getDate() - gracePeriodDays)
-
 	const s = await getSchemaPrefix(pool)
 	const auditTable = `${s}."audit_log"`
 	const statsTable = `${s}."audit_archival_stats"`
@@ -202,17 +305,21 @@ export async function updateArchivalStats(
 	// Each FILTER is self-contained — no outer WHERE pre-filtering is needed and
 	// adding one creates subtle correctness bugs (e.g. pending_soft_delete rows
 	// may not satisfy changed_at < retentionCutoff but still need counting).
+	// Cutoffs are computed from the DATABASE clock (NOW()), matching what the
+	// archiver's processTable uses. Deriving them from the Node clock instead
+	// would make these reported counts disagree with what archival processes
+	// under app-server/DB clock skew.
 	// This scans the full table partition, which is acceptable: this method runs
 	// outside the advisory lock and is a reporting-only operation.
 	const result = await pool.query(
 		`SELECT
-      COUNT(*) FILTER (WHERE archived_at IS NULL AND changed_at < $2) as pending_archive,
-      COUNT(*) FILTER (WHERE archived_at IS NOT NULL AND archived_at < $3 AND soft_deleted_at IS NULL AND s3_path IS NOT NULL) as pending_soft_delete,
-      COUNT(*) FILTER (WHERE soft_deleted_at IS NOT NULL AND soft_deleted_at < $3) as pending_hard_delete,
+      COUNT(*) FILTER (WHERE archived_at IS NULL AND changed_at < NOW() - ($2 * INTERVAL '1 day')) as pending_archive,
+      COUNT(*) FILTER (WHERE archived_at IS NOT NULL AND archived_at < NOW() - ($3 * INTERVAL '1 day') AND soft_deleted_at IS NULL AND s3_path IS NOT NULL) as pending_soft_delete,
+      COUNT(*) FILTER (WHERE soft_deleted_at IS NOT NULL AND soft_deleted_at < NOW() - ($3 * INTERVAL '1 day')) as pending_hard_delete,
       MIN(changed_at) FILTER (WHERE archived_at IS NULL) as oldest_unarchived
     FROM ${auditTable}
     WHERE table_name = $1`,
-		[tableName, retentionCutoff, gracePeriodCutoff],
+		[tableName, retentionDays, gracePeriodDays],
 	)
 
 	// Destructure by name so a future query shape change doesn't silently

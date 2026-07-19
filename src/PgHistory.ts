@@ -1,5 +1,9 @@
 import type { Pool } from 'pg'
-import { SetupRequiredError, TableNotConfiguredError } from './errors'
+import {
+	SearchConcurrencyLimitError,
+	SetupRequiredError,
+	TableNotConfiguredError,
+} from './errors'
 import {
 	attachPoolErrorHandler,
 	consoleLogger,
@@ -13,8 +17,12 @@ import {
 	setupPartitions as extSetupPartitions,
 	triggerFuncNameFor,
 	triggerNameFor,
+	truncateTriggerNameFor,
 } from './pg-history-setup'
-import { buildTriggerFunctionSql } from './pg-history-triggers'
+import {
+	buildAppendOnlyGuardSql,
+	buildTriggerFunctionSql,
+} from './pg-history-triggers'
 import {
 	validateColumnNames as extValidateColumnNames,
 	validateLimit as extValidateLimit,
@@ -32,6 +40,27 @@ import type {
 	SearchPaginatedResult,
 } from './types'
 
+/**
+ * Raw audit_log row shape returned by getHistory/search queries.
+ *
+ * `id` is BIGSERIAL. node-postgres returns int8 as a STRING by default (to avoid
+ * silent precision loss past 2^53), so it is typed `string` here — not `number`.
+ * Do NOT install a numeric int8 type parser (e.g. `pg.types.setTypeParser(20,
+ * Number)`); it would corrupt large ids and break cursor pagination.
+ */
+interface AuditRow {
+	id: string
+	table_name: string
+	record_id: string
+	operation: string
+	changed_at: string
+	old_data: Record<string, unknown> | null
+	new_data: Record<string, unknown> | null
+	db_user: string | null
+	app_actor: string | null
+	client_addr: string | null
+}
+
 export class PgHistory {
 	private pool!: Pool
 	private tables: string[]
@@ -48,11 +77,23 @@ export class PgHistory {
 	/** Unix ms timestamp until which we know the column is absent (negative TTL). */
 	private softDeleteColumnAbsentUntil: number = 0
 	private logger: Logger
+	/** Cap on concurrent search() queries (0 = unlimited). See maxConcurrentSearches. */
+	private maxConcurrentSearches: number
+	private activeSearches = 0
+	/** When true, install the append-only guard trigger on audit_log. */
+	private appendOnly: boolean
+	/** When true, refuse to trigger tables without a primary key. */
+	private requirePrimaryKey: boolean
+	/** Guards close() against a double pool.end() (which pg rejects). */
+	private closed = false
 
 	constructor(config: PgHistoryConfig) {
 		this.tables = config.tables
 		this.logger = config.logger ?? consoleLogger
 		this.excludeColumns = config.excludeColumns ?? {}
+		this.maxConcurrentSearches = config.maxConcurrentSearches ?? 4
+		this.appendOnly = config.appendOnly ?? false
+		this.requirePrimaryKey = config.requirePrimaryKey ?? false
 
 		for (const tableName of this.tables) this.validateTableName(tableName)
 		for (const [tableName, cols] of Object.entries(this.excludeColumns)) {
@@ -176,7 +217,7 @@ export class PgHistory {
 			}
 
 			try {
-				await this.setupInternal()
+				await this.withSetupLock(() => this.setupInternal())
 				this.setupComplete = true
 			} catch (error) {
 				const errorMessage =
@@ -191,6 +232,34 @@ export class PgHistory {
 		})
 
 		return this.setupPromise
+	}
+
+	/**
+	 * Run `fn` while holding a session-level advisory lock keyed to the current
+	 * schema, so concurrent instances/processes serialize their DDL. The
+	 * partition and trigger creation use check-then-create without IF NOT EXISTS;
+	 * without this lock two replicas booting together can both pass the existence
+	 * check and the loser's CREATE fails with "already exists", crashing startup.
+	 */
+	private async withSetupLock<T>(fn: () => Promise<T>): Promise<T> {
+		// 73616469 = arbitrary stable namespace int, distinct from the archiver's.
+		const SETUP_LOCK_NAMESPACE = 73_616_469
+		const lockClient = await this.pool.connect()
+		try {
+			await lockClient.query(
+				`SELECT pg_advisory_lock(hashtextextended('pg-history:setup:' || current_schema(), $1::bigint))`,
+				[SETUP_LOCK_NAMESPACE],
+			)
+			return await fn()
+		} finally {
+			await lockClient
+				.query(
+					`SELECT pg_advisory_unlock(hashtextextended('pg-history:setup:' || current_schema(), $1::bigint))`,
+					[SETUP_LOCK_NAMESPACE],
+				)
+				.catch(() => {})
+			lockClient.release()
+		}
 	}
 
 	/**
@@ -213,6 +282,7 @@ export class PgHistory {
 		await this.setupPartitions()
 		await this.setupIndexes()
 		await this.setupTriggers()
+		if (this.appendOnly) await this.setupAppendOnlyGuard()
 
 		this.logger.info('Setup complete', {
 			schema: this.schema,
@@ -244,6 +314,14 @@ export class PgHistory {
 		}
 	}
 
+	/** Install the append-only guard trigger on audit_log (opt-in). */
+	private async setupAppendOnlyGuard(): Promise<void> {
+		this.logger.info('Setup phase: append-only guard on audit_log')
+		const { func, trigger } = buildAppendOnlyGuardSql(this.schema)
+		await this.pool.query(func)
+		await this.pool.query(trigger)
+	}
+
 	/** Create (or skip if already present) the audit trigger for one table. */
 	private async setupTableTrigger(tableName: string): Promise<void> {
 		const triggerName = triggerNameFor(tableName)
@@ -261,6 +339,21 @@ export class PgHistory {
 		}
 
 		const pkColumns = await this.getPrimaryKeyColumns(tableName)
+		if (pkColumns.length === 0) {
+			// No PK → per-row md5 record_id that changes every UPDATE, so entries
+			// can't be correlated into one record's timeline. Never silent: warn,
+			// and fail fast when the caller opted into requirePrimaryKey.
+			if (this.requirePrimaryKey) {
+				throw new Error(
+					`PgHistory: table "${tableName}" has no primary key and requirePrimaryKey is set. ` +
+						'Add a primary key (or a surrogate key) to get correlatable audit history.',
+				)
+			}
+			this.logger.warn(
+				'Table has no primary key; its audit history is NOT correlatable across UPDATEs (record_id is a per-row hash). Add a primary key or set requirePrimaryKey to enforce.',
+				{ table: tableName },
+			)
+		}
 		const tableExcludes = this.excludeColumns[tableName] ?? []
 		// Excluding a PK column would break revert (PK is needed in WHERE)
 		const pkSet = new Set(pkColumns)
@@ -324,6 +417,36 @@ export class PgHistory {
 				trigger: triggerName,
 				table: tableName,
 			})
+		}
+
+		// Statement-level TRUNCATE trigger — reuses the same function (which has a
+		// TG_OP='TRUNCATE' branch). Row triggers never fire on TRUNCATE, so without
+		// this a bulk table wipe would leave no audit record.
+		const truncateTriggerName = truncateTriggerNameFor(tableName)
+		const truncateTriggerExists = await this.pool.query(
+			`SELECT 1 FROM pg_trigger t
+			JOIN pg_class c ON c.oid = t.tgrelid
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE t.tgname = $1
+			AND c.relname = $2
+			AND n.nspname = $3`,
+			[truncateTriggerName, tableName, this.schema],
+		)
+		if (truncateTriggerExists.rows.length === 0) {
+			try {
+				const truncateDdl = await this.pool.query(
+					`SELECT format(
+						'CREATE TRIGGER %I AFTER TRUNCATE ON %I.%I FOR EACH STATEMENT EXECUTE FUNCTION %I.%I()',
+						$1::text, $2::text, $3::text, $4::text, $5::text
+					) AS ddl`,
+					[truncateTriggerName, this.schema, tableName, this.schema, funcName],
+				)
+				await this.pool.query(truncateDdl.rows[0].ddl)
+			} catch (error) {
+				throw new Error(
+					`Failed to create TRUNCATE trigger for table "${tableName}": ${error instanceof Error ? error.message : String(error)}`,
+				)
+			}
 		}
 	}
 
@@ -436,7 +559,7 @@ export class PgHistory {
 			if (order === 'desc') {
 				const whereClause = [...baseConditions, 'id < $3::bigint'].join(' AND ')
 				queryResult = await this.pool.query(
-					`SELECT id, table_name, record_id, operation, changed_at, old_data, new_data FROM ${this.auditTable}
+					`SELECT id, table_name, record_id, operation, changed_at, old_data, new_data, db_user, app_actor, client_addr FROM ${this.auditTable}
 					WHERE ${whereClause}
 					ORDER BY id DESC
 					LIMIT $4`,
@@ -445,7 +568,7 @@ export class PgHistory {
 			} else {
 				const whereClause = [...baseConditions, 'id > $3::bigint'].join(' AND ')
 				queryResult = await this.pool.query(
-					`SELECT id, table_name, record_id, operation, changed_at, old_data, new_data FROM ${this.auditTable}
+					`SELECT id, table_name, record_id, operation, changed_at, old_data, new_data, db_user, app_actor, client_addr FROM ${this.auditTable}
 					WHERE ${whereClause}
 					ORDER BY id ASC
 					LIMIT $4`,
@@ -457,7 +580,7 @@ export class PgHistory {
 			const whereClause = baseConditions.join(' AND ')
 			const sortDir = order === 'desc' ? 'DESC' : 'ASC'
 			queryResult = await this.pool.query(
-				`SELECT id, table_name, record_id, operation, changed_at, old_data, new_data FROM ${this.auditTable}
+				`SELECT id, table_name, record_id, operation, changed_at, old_data, new_data, db_user, app_actor, client_addr FROM ${this.auditTable}
 				WHERE ${whereClause}
 				ORDER BY id ${sortDir}
 				LIMIT $3`,
@@ -465,15 +588,7 @@ export class PgHistory {
 			)
 		}
 
-		const rows = queryResult.rows as Array<{
-			id: number
-			table_name: string
-			record_id: string
-			operation: string
-			changed_at: string
-			old_data: Record<string, unknown> | null
-			new_data: Record<string, unknown> | null
-		}>
+		const rows = queryResult.rows as AuditRow[]
 		const hasMore = rows.length > limit
 		const data = rows.slice(0, limit)
 		const entries = this.mapAuditRows(data)
@@ -619,25 +734,18 @@ export class PgHistory {
 	}
 
 	/** Map raw audit_log rows to typed AuditEntry objects. */
-	private mapAuditRows(
-		rows: Array<{
-			id: number
-			table_name: string
-			record_id: string
-			operation: string
-			changed_at: string
-			old_data: Record<string, unknown> | null
-			new_data: Record<string, unknown> | null
-		}>,
-	): AuditEntry[] {
+	private mapAuditRows(rows: AuditRow[]): AuditEntry[] {
 		return rows.map((row) => ({
 			id: row.id.toString(),
 			tableName: row.table_name,
 			recordId: row.record_id,
-			operation: row.operation as 'INSERT' | 'UPDATE' | 'DELETE',
+			operation: row.operation as 'INSERT' | 'UPDATE' | 'DELETE' | 'TRUNCATE',
 			changedAt: new Date(row.changed_at),
 			oldData: row.old_data,
 			newData: row.new_data,
+			dbUser: row.db_user ?? null,
+			appActor: row.app_actor ?? null,
+			clientAddr: row.client_addr ?? null,
 		}))
 	}
 
@@ -660,27 +768,41 @@ export class PgHistory {
 		const limit = this.validateLimit(options.limit, 100)
 		validateCursor(options.cursor)
 
-		const { conditions, params, paramIndex, usesIlike } =
-			await this.buildSearchConditions(options)
+		// Bound concurrent searches to leave pool headroom for reads/reverts/health.
+		// An unindexed ILIKE search pins a connection for seconds; without this a
+		// few concurrent searches exhaust a small pool and DoS the whole service.
+		if (
+			this.maxConcurrentSearches > 0 &&
+			this.activeSearches >= this.maxConcurrentSearches
+		) {
+			throw new SearchConcurrencyLimitError()
+		}
+		this.activeSearches++
+		try {
+			const { conditions, params, paramIndex, usesIlike } =
+				await this.buildSearchConditions(options)
 
-		const query = `
-			SELECT id, table_name, record_id, operation, changed_at, old_data, new_data FROM ${this.auditTable}
-			WHERE ${conditions.join(' AND ')}
-			ORDER BY id DESC
-			LIMIT $${paramIndex}
-		`
-		params.push(limit + 1)
+			const query = `
+				SELECT id, table_name, record_id, operation, changed_at, old_data, new_data, db_user, app_actor, client_addr FROM ${this.auditTable}
+				WHERE ${conditions.join(' AND ')}
+				ORDER BY id DESC
+				LIMIT $${paramIndex}
+			`
+			params.push(limit + 1)
 
-		const queryResult = await this.runSearchQuery(query, params, usesIlike)
-		const rows = queryResult.rows as Array<{
-			id: number
-			table_name: string
-			record_id: string
-			operation: string
-			changed_at: string
-			old_data: Record<string, unknown> | null
-			new_data: Record<string, unknown> | null
-		}>
+			const queryResult = await this.runSearchQuery(query, params, usesIlike)
+			return this.buildSearchResult(queryResult, limit)
+		} finally {
+			this.activeSearches--
+		}
+	}
+
+	/** Build the paginated search result from a raw query result. */
+	private buildSearchResult(
+		queryResult: { rows: unknown[] },
+		limit: number,
+	): SearchPaginatedResult<AuditEntry> {
+		const rows = queryResult.rows as AuditRow[]
 
 		const hasMore = rows.length > limit
 		const data = rows.slice(0, limit)
@@ -696,17 +818,18 @@ export class PgHistory {
 	/**
 	 * Revert a record to the state captured in an audit entry.
 	 *
-	 * IMPORTANT: Revert operations normally trigger their own audit entries
-	 * because the INSERT/UPDATE/DELETE on the user table fires the audit trigger.
-	 * This can create "revert of revert of revert" chains that grow the audit log.
+	 * IMPORTANT: Revert operations trigger their own audit entries because the
+	 * INSERT/UPDATE/DELETE on the user table fires the audit trigger.
 	 *
-	 * Pass `suppressAuditTriggers: true` (default) to skip audit rows for the
-	 * revert operation itself. This uses PostgreSQL's `session_replication_role`
-	 * which suppresses user-defined triggers for the session duration — scoped
-	 * to the transaction because we restore it before COMMIT.
+	 * Default: `suppressAuditTriggers: false` — reverts ARE recorded, so the
+	 * audit trail never silently loses the fact that data was changed back
+	 * (repudiation defense). This is also the least-privilege-friendly path: it
+	 * needs no special role.
 	 *
-	 * Pass `suppressAuditTriggers: false` to get an audit trail that includes
-	 * the revert operations themselves.
+	 * Pass `suppressAuditTriggers: true` to skip audit rows for the revert
+	 * operation itself (avoids "revert of revert" chains). This uses PostgreSQL's
+	 * `session_replication_role = 'replica'`, which requires SUPERUSER or the
+	 * `pg_replication` role (PostgreSQL 16+) and is scoped to the transaction.
 	 */
 	async revert(
 		tableName: string,
@@ -720,7 +843,7 @@ export class PgHistory {
 			throw new TableNotConfiguredError(tableName)
 		}
 
-		const suppressTriggers = options.suppressAuditTriggers ?? true
+		const suppressTriggers = options.suppressAuditTriggers ?? false
 
 		// Fetch PK columns before opening the transaction so we fail fast on
 		// a missing PK without holding a client connection.
@@ -768,6 +891,13 @@ export class PgHistory {
 				[triggerName, this.schema, tableName],
 			)
 			await this.pool.query(ddl.rows[0].ddl)
+
+			const truncateTriggerName = truncateTriggerNameFor(tableName)
+			const truncDdl = await this.pool.query(
+				`SELECT format('DROP TRIGGER IF EXISTS %I ON %I.%I', $1::text, $2::text, $3::text) AS ddl`,
+				[truncateTriggerName, this.schema, tableName],
+			)
+			await this.pool.query(truncDdl.rows[0].ddl)
 		}
 
 		for (const tableName of this.tables) {
@@ -779,20 +909,36 @@ export class PgHistory {
 			await this.pool.query(ddl.rows[0].ddl)
 		}
 
-		// Drop audit_log table (cascades to partitions)
+		// Drop audit_log table (cascades to partitions and the append-only guard
+		// trigger). The guard FUNCTION is not owned by the table, so drop it too.
 		await this.pool.query(`
 			DROP TABLE IF EXISTS ${this.auditTable} CASCADE
 		`)
+		const guardDdl = await this.pool.query(
+			`SELECT format('DROP FUNCTION IF EXISTS %I.%I() CASCADE', $1::text, $2::text) AS ddl`,
+			[this.schema, 'audit_log_append_guard'],
+		)
+		await this.pool.query(guardDdl.rows[0].ddl)
 
 		// Reset setup state so a subsequent setup() call re-runs DDL instead of
 		// short-circuiting. Without this, queries after teardown() would fail with
 		// obscure "relation does not exist" errors.
 		this.setupComplete = false
 		this.setupPromise = null
+		// Invalidate cached schema facts. audit_log is recreated by setup() WITHOUT
+		// the archiver's soft_deleted_at column; a stale cached "column exists"
+		// would make every getHistory/search append `soft_deleted_at IS NULL` and
+		// fail. Primary keys are re-derived on next use.
+		this.invalidateSoftDeleteColumnCache()
+		this.primaryKeyCache.clear()
 	}
 
 	async close(timeoutMs: number = 30_000): Promise<void> {
 		if (!this.ownConnection) return
+		// Idempotent: pg's Pool.end() rejects on a second call. Shutdown paths that
+		// fire SIGTERM+SIGINT, or call close() alongside shared cleanup, must not throw.
+		if (this.closed) return
+		this.closed = true
 		await endPoolWithTimeout(this.pool, timeoutMs, this.logger, 'PgHistory')
 	}
 }

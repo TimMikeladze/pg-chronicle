@@ -73,6 +73,7 @@ describe('Read-Only API Integration Test', () => {
 			pool,
 			port: 3001,
 			enableHistory: true,
+			allowUnauthenticated: true,
 			historyConfig: {
 				tables: ['users', 'posts'],
 			},
@@ -293,6 +294,7 @@ describe('Read-Only API Integration Test', () => {
 		const { app } = await createServer({
 			pool,
 			enableHistory: true,
+			allowUnauthenticated: true,
 			historyConfig: {
 				tables: ['products'],
 			},
@@ -351,6 +353,7 @@ describe('Read-Only API Integration Test', () => {
 			const { app } = await createServer({
 				pool,
 				enableHistory: true,
+				allowUnauthenticated: true,
 				historyConfig: {
 					tables: ['items'],
 				},

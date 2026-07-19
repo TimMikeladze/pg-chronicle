@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { cors } from 'hono/cors'
 import type { JwtVariables } from 'hono/jwt'
@@ -8,8 +8,10 @@ import { openAPIRouteHandler } from 'hono-openapi'
 import { createErrorResponse } from './api-helpers'
 import {
 	AuditEntryNotFoundError,
+	AuthorizationError,
 	PgHistoryError,
 	RevertError,
+	SearchConcurrencyLimitError,
 	SetupRequiredError,
 	TableNotConfiguredError,
 	ValidationError,
@@ -32,6 +34,28 @@ export async function createServer(config: ServerConfig): Promise<{
 }> {
 	const app = new Hono<{ Variables: Variables }>()
 	const logger: Logger = config.logger ?? consoleLogger
+
+	// Resolve JWT secret once. Trim to catch accidental empty-string values that
+	// would otherwise silently disable auth while `jwtSecret` is falsy.
+	const jwtSecret = process.env.PG_HISTORY_JWT_SECRET?.trim() || undefined
+
+	// FAIL CLOSED (C2): the history read API and the destructive
+	// POST /api/history/revert endpoint have no authentication unless a JWT
+	// secret is configured. Refuse to start rather than silently exposing them.
+	// `allowUnauthenticated: true` is the explicit opt-in for local dev / trusted
+	// private networks.
+	if (
+		config.enableHistory &&
+		!jwtSecret &&
+		config.allowUnauthenticated !== true
+	) {
+		throw new Error(
+			'Refusing to start: enableHistory is set but PG_HISTORY_JWT_SECRET is not configured. ' +
+				'The history read API and the destructive POST /api/history/revert endpoint would be ' +
+				'exposed without authentication. Set PG_HISTORY_JWT_SECRET, or pass ' +
+				'allowUnauthenticated: true to explicitly opt in (local development / trusted network only).',
+		)
+	}
 
 	// Instance-scoped state — not module-level globals, so multiple createServer()
 	// calls (tests, hot reload) each get their own isolated state.
@@ -82,13 +106,21 @@ export async function createServer(config: ServerConfig): Promise<{
 	})
 
 	// In-memory rate limiter — only useful in long-running processes, skip in serverless.
-	// NOTE: x-forwarded-for is client-spoofable. This rate limiter only works correctly
-	// behind a trusted reverse proxy that overwrites the header. For production, use
-	// API gateway-level rate limiting or ensure your proxy strips client-provided headers.
+	// SERVERLESS DEPLOYMENTS (e.g. Vercel) get NO application-layer rate limiting and
+	// MUST configure gateway/edge rate limiting. The mode-independent DoS backstop is
+	// the search-concurrency limit in PgHistory (maxConcurrentSearches).
+	// x-forwarded-for / x-real-ip are client-spoofable, so per-IP buckets are only
+	// meaningful behind a trusted proxy that overwrites them — gated on config.trustProxy.
+	// When trustProxy is false (default) we fall back to a single GLOBAL bucket: a coarse
+	// but unspoofable flood backstop, since a per-request-spoofed header would otherwise
+	// hand every request a fresh bucket and defeat the limiter entirely.
 	if (!config.serverless) {
 		const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
 		const RATE_LIMIT_WINDOW_MS = 60_000 // 1 minute
-		const RATE_LIMIT_MAX = 100 // requests per window
+		const RATE_LIMIT_MAX = 100 // per-IP requests per window (trustProxy mode)
+		// Global-bucket ceiling when we can't trust client identity. Higher than the
+		// per-IP cap because it is shared across ALL clients.
+		const RATE_LIMIT_MAX_GLOBAL = 1_000
 		const RATE_LIMIT_CLEANUP_INTERVAL_MS = 30_000 // sweep every 30s
 		// Cap map size to prevent memory exhaustion from a flood of unique IPs
 		// arriving between sweeps. When the cap is hit we evict the oldest
@@ -115,26 +147,32 @@ export async function createServer(config: ServerConfig): Promise<{
 		}
 
 		app.use('/api/*', async (c, next) => {
-			const ip =
-				c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
-				c.req.header('x-real-ip') ||
-				'unknown'
+			// Only trust client-supplied IP headers behind a trusted proxy;
+			// otherwise use one global bucket that cannot be spoofed away.
+			const key = config.trustProxy
+				? c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
+					c.req.header('x-real-ip') ||
+					'unknown'
+				: 'global'
+			const maxForKey = config.trustProxy
+				? RATE_LIMIT_MAX
+				: RATE_LIMIT_MAX_GLOBAL
 
 			const now = Date.now()
-			const entry = rateLimitMap.get(ip)
+			const entry = rateLimitMap.get(key)
 
 			if (!entry || now > entry.resetAt) {
 				if (rateLimitMap.size >= RATE_LIMIT_MAX_ENTRIES) {
 					const oldest = rateLimitMap.keys().next().value
 					if (oldest !== undefined) rateLimitMap.delete(oldest)
 				}
-				rateLimitMap.set(ip, {
+				rateLimitMap.set(key, {
 					count: 1,
 					resetAt: now + RATE_LIMIT_WINDOW_MS,
 				})
 			} else {
 				entry.count++
-				if (entry.count > RATE_LIMIT_MAX) {
+				if (entry.count > maxForKey) {
 					return c.json(
 						createErrorResponse(
 							'RATE_LIMITED',
@@ -246,8 +284,32 @@ export async function createServer(config: ServerConfig): Promise<{
 							logger.error('Table processing error', { err: error })
 						}
 
+						// orchestrator.run() NEVER rejects for per-table failures — it
+						// collects them in stats.errors and resolves. Treat a run where
+						// every table failed as a hard failure so the retry/backoff loop
+						// engages and /health reports 'degraded' instead of 'ok'.
+						const processErrors = stats.errors.filter(
+							(e) => e.operation === 'process_table',
+						)
+						const failedTables = new Set(processErrors.map((e) => e.table))
+						if (
+							stats.tables.length > 0 &&
+							failedTables.size >= stats.tables.length
+						) {
+							throw new Error(
+								`Archival failed for all ${stats.tables.length} table(s): ${processErrors
+									.map((e) => `${e.table}: ${e.error}`)
+									.join('; ')}`,
+							)
+						}
+
 						archivalHealth.status = 'completed'
-						archivalHealth.lastError = null
+						// Surface partial failures in /api/health/detailed rather than
+						// masking them behind a clean 'completed'.
+						archivalHealth.lastError =
+							processErrors.length > 0
+								? `Partial failure: ${processErrors.length} of ${stats.tables.length} table(s) failed`
+								: null
 						archivalHealth.lastCompletedAt = new Date()
 						// Reset attempts so this counter represents "retries since
 						// last success", not "lifetime archival count" — operators
@@ -348,12 +410,9 @@ export async function createServer(config: ServerConfig): Promise<{
 		}
 	}
 
-	// Conditionally apply JWT auth if PG_HISTORY_JWT_SECRET is set.
-	// When set, we also gate the /openapi endpoint by default unless the
-	// consumer explicitly opts into publicOpenApi.
-	// Trim to catch accidental empty-string values (would otherwise silently
-	// disable auth while `jwtSecret` is falsy).
-	const jwtSecret = process.env.PG_HISTORY_JWT_SECRET?.trim() || undefined
+	// Conditionally apply JWT auth if PG_HISTORY_JWT_SECRET is set (resolved once
+	// at the top of createServer). When set, we also gate the /openapi endpoint
+	// by default unless the consumer explicitly opts into publicOpenApi.
 	if (jwtSecret) {
 		// hono/jwt's supported algorithms. Default HS256 for backwards compat;
 		// allow asymmetric algs (RS256/ES256) for Vercel/Cloudflare deployments
@@ -412,6 +471,19 @@ export async function createServer(config: ServerConfig): Promise<{
 		? (config.archiveCronSecret || process.env.CRON_SECRET)?.trim() || undefined
 		: undefined
 
+	// Fail closed: the archiver stats / detailed-health endpoints leak table
+	// names, row volumes, and failure state. Only register them when SOME auth
+	// exists (JWT or cron secret) or the operator explicitly opted out. Without
+	// this, a deployment with neither secret served them anonymously.
+	const archiverEndpointsAuthorized =
+		!!jwtSecret || !!cronSecret || config.allowUnauthenticated === true
+	if (config.enableArchiver && !archiverEndpointsAuthorized) {
+		logger.warn(
+			'/api/stats and /api/health/detailed NOT registered: no authentication configured. ' +
+				'Set PG_HISTORY_JWT_SECRET or archiveCronSecret / CRON_SECRET, or pass allowUnauthenticated: true.',
+		)
+	}
+
 	async function verifyCronSecret(authHeader: string): Promise<boolean> {
 		if (!cronSecret) return true // not configured — JWT path is authoritative
 		const { createHmac } = await import('node:crypto')
@@ -423,8 +495,27 @@ export async function createServer(config: ServerConfig): Promise<{
 
 	// Public health endpoint — minimal surface. Returns only status to avoid
 	// leaking operational posture (last archival time, failure counts) to
-	// unauthenticated callers.
-	app.get('/health', (c) => {
+	// unauthenticated callers. Probes DB connectivity with a bounded SELECT 1 so
+	// the platform health check (fly.toml) fails over instead of routing traffic
+	// to an instance whose every /api/* request 500s.
+	app.get('/health', async (c) => {
+		let timer: ReturnType<typeof setTimeout> | undefined
+		try {
+			await Promise.race([
+				config.pool.query('SELECT 1'),
+				new Promise((_, reject) => {
+					timer = setTimeout(
+						() => reject(new Error('health check DB probe timed out')),
+						2_000,
+					)
+				}),
+			])
+		} catch (err) {
+			logger.error('health check DB probe failed', { err })
+			return c.json({ status: 'error' }, 503)
+		} finally {
+			if (timer) clearTimeout(timer)
+		}
 		const status =
 			config.enableArchiver && archivalHealth.status === 'failed'
 				? 'degraded'
@@ -434,7 +525,7 @@ export async function createServer(config: ServerConfig): Promise<{
 
 	// Detailed health endpoint — auth-gated via /api/* JWT middleware (when set)
 	// or cron secret. Exposes archival attempts and last completion time.
-	if (config.enableArchiver) {
+	if (config.enableArchiver && archiverEndpointsAuthorized) {
 		app.get('/api/health/detailed', async (c) => {
 			if (!jwtSecret && cronSecret) {
 				const ok = await verifyCronSecret(c.req.header('authorization') ?? '')
@@ -461,7 +552,7 @@ export async function createServer(config: ServerConfig): Promise<{
 	// already authenticated /api/* before reaching here. When only cron secret
 	// is configured, JWT middleware was not registered and we must verify the
 	// HMAC inline — otherwise this endpoint would be public.
-	if (config.enableArchiver) {
+	if (config.enableArchiver && archiverEndpointsAuthorized) {
 		app.get('/api/stats', async (c) => {
 			if (!jwtSecret && cronSecret) {
 				const ok = await verifyCronSecret(c.req.header('authorization') ?? '')
@@ -526,6 +617,52 @@ export async function createServer(config: ServerConfig): Promise<{
 				}
 			})
 		}
+	}
+
+	// Extract the actor (JWT `sub`) and full JWT payload from the request.
+	function getAuthContext(c: Context): {
+		actor: string | undefined
+		jwtPayload: Record<string, unknown> | undefined
+	} {
+		const jwtPayload = (c as unknown as { get(k: string): unknown }).get(
+			'jwtPayload',
+		) as Record<string, unknown> | undefined
+		const actor =
+			jwtPayload && typeof jwtPayload.sub === 'string'
+				? jwtPayload.sub
+				: undefined
+		return { actor, jwtPayload }
+	}
+
+	// Run the optional authorization hook. Authentication proves WHO the caller
+	// is; this proves they may touch THIS table/record. Without a hook the server
+	// grants any authenticated caller blanket access (no tenant isolation), so a
+	// multi-tenant deployment MUST supply config.authorize. Throws
+	// AuthorizationError (→ 403) on deny; a thrown hook is treated as deny.
+	async function authorizeOrThrow(
+		c: Context,
+		action: 'read' | 'search' | 'revert',
+		table: string,
+		recordId?: string,
+	): Promise<void> {
+		if (!config.authorize) return
+		const { actor, jwtPayload } = getAuthContext(c)
+		let allowed: boolean
+		try {
+			allowed = await config.authorize({
+				actor,
+				table,
+				recordId,
+				action,
+				jwtPayload,
+			})
+		} catch (err) {
+			logger.warn('authorize hook threw; denying request', { err })
+			throw new AuthorizationError(
+				err instanceof Error ? err.message : undefined,
+			)
+		}
+		if (!allowed) throw new AuthorizationError()
 	}
 
 	// History API endpoints (only if history enabled)
@@ -616,6 +753,7 @@ export async function createServer(config: ServerConfig): Promise<{
 			const order = (orderQuery || 'desc') as 'asc' | 'desc'
 
 			try {
+				await authorizeOrThrow(c, 'read', table, recordId)
 				const result = await pgHistory.getHistory(table, recordId, {
 					limit,
 					cursor,
@@ -623,6 +761,9 @@ export async function createServer(config: ServerConfig): Promise<{
 				})
 				return c.json(result)
 			} catch (error) {
+				if (error instanceof AuthorizationError) {
+					return c.json(createErrorResponse('FORBIDDEN', error.message), 403)
+				}
 				if (error instanceof TableNotConfiguredError) {
 					return c.json(
 						createErrorResponse('INVALID_TABLE', error.message),
@@ -685,9 +826,18 @@ export async function createServer(config: ServerConfig): Promise<{
 			}
 
 			try {
+				for (const t of options.tables) {
+					await authorizeOrThrow(c, 'search', t)
+				}
 				const result = await pgHistory.search(options)
 				return c.json(result)
 			} catch (error) {
+				if (error instanceof AuthorizationError) {
+					return c.json(createErrorResponse('FORBIDDEN', error.message), 403)
+				}
+				if (error instanceof SearchConcurrencyLimitError) {
+					return c.json(createErrorResponse('RATE_LIMITED', error.message), 429)
+				}
 				if (error instanceof TableNotConfiguredError) {
 					return c.json(
 						createErrorResponse('INVALID_TABLE', error.message),
@@ -730,7 +880,12 @@ export async function createServer(config: ServerConfig): Promise<{
 				)
 			}
 
-			let parsed: { table: string; recordId: string; auditEntryId: string }
+			let parsed: {
+				table: string
+				recordId: string
+				auditEntryId: string
+				suppressAuditTriggers?: boolean
+			}
 			try {
 				parsed = parseRevertBody(rawBody)
 			} catch (error) {
@@ -757,10 +912,14 @@ export async function createServer(config: ServerConfig): Promise<{
 			})
 
 			try {
+				await authorizeOrThrow(c, 'revert', parsed.table, parsed.recordId)
 				await pgHistory.revert(
 					parsed.table,
 					parsed.recordId,
 					parsed.auditEntryId,
+					parsed.suppressAuditTriggers !== undefined
+						? { suppressAuditTriggers: parsed.suppressAuditTriggers }
+						: undefined,
 				)
 				logger.info('revert completed', {
 					table: parsed.table,
@@ -770,6 +929,9 @@ export async function createServer(config: ServerConfig): Promise<{
 				})
 				return c.json({ success: true })
 			} catch (error) {
+				if (error instanceof AuthorizationError) {
+					return c.json(createErrorResponse('FORBIDDEN', error.message), 403)
+				}
 				if (error instanceof TableNotConfiguredError) {
 					return c.json(
 						createErrorResponse('INVALID_TABLE', error.message),

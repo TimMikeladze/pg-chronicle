@@ -22,6 +22,11 @@ import { validateIdentifier } from './pg-history-validators'
 import { setupArchiverSchema } from './schema'
 import type { ArchiverConfig } from './types'
 
+// Authorizes audit_log UPDATE/DELETE within the current transaction past the
+// optional append-only guard trigger (PgHistoryConfig.appendOnly). A no-op when
+// the guard is not installed. Must be issued inside a transaction (SET LOCAL).
+const MAINTENANCE_ON = "SET LOCAL pg_history.maintenance = 'on'"
+
 export class PgHistoryArchiver {
 	private pool!: Pool
 	private ownConnection: boolean
@@ -35,6 +40,8 @@ export class PgHistoryArchiver {
 	private schemaReady: boolean = false
 	private archiveSetupPromise: Promise<void> | null = null
 	private logger: Logger
+	/** Guards close() against a double pool.end(). */
+	private closed = false
 
 	constructor(config: ArchiverConfig) {
 		if (!Number.isFinite(config.gracePeriod) || config.gracePeriod < 1) {
@@ -268,6 +275,9 @@ export class PgHistoryArchiver {
 			// healthy partition; queries slower than this point to missing index
 			// or table bloat that needs operator attention, not silent waiting.
 			await claimClient.query('SET LOCAL statement_timeout = 60000')
+			// Authorize this txn's audit_log writes past the append-only guard
+			// (no-op when the guard isn't installed). Scoped to this transaction.
+			await claimClient.query(MAINTENANCE_ON)
 
 			// Find the earliest unclaimed/unarchived date for this table to pick a
 			// day boundary so each Parquet file covers exactly one calendar day.
@@ -304,6 +314,13 @@ export class PgHistoryArchiver {
 			// subquery causes concurrent claimants to skip rows briefly held by
 			// this transaction. The UPDATE sets claim_id, which subsequent calls
 			// filter out by predicate even after we COMMIT.
+			// $6 = cutoffDate re-applies the retention boundary INSIDE the day window.
+			// The peek picks the earliest eligible row's UTC day, but without this
+			// predicate the claim would also grab rows later in that same day that are
+			// still newer than the retention cutoff and archive them prematurely.
+			// old_data/new_data are cast to ::text so the exact serialized JSON bytes
+			// (including integers > 2^53) survive — node-postgres would otherwise
+			// JSON.parse jsonb into lossy IEEE-754 doubles before Parquet.
 			const claimResult = await claimClient.query(
 				`UPDATE ${this.auditTable} a
         SET claim_id = $5, claimed_at = NOW()
@@ -312,6 +329,7 @@ export class PgHistoryArchiver {
           WHERE table_name = $1
             AND changed_at >= $2
             AND changed_at < $3
+            AND changed_at < $6
             AND archived_at IS NULL
             AND claim_id IS NULL
           ORDER BY changed_at ASC
@@ -320,8 +338,8 @@ export class PgHistoryArchiver {
         ) picked
         WHERE a.id = picked.id
         RETURNING a.id, a.table_name, a.record_id, a.operation,
-                  a.changed_at, a.old_data, a.new_data`,
-				[tableName, dayStart, dayEnd, batchSize, claimId],
+                  a.changed_at, a.old_data::text AS old_data, a.new_data::text AS new_data`,
+				[tableName, dayStart, dayEnd, batchSize, claimId, cutoffDate],
 			)
 
 			records = claimResult.rows as Array<Record<string, unknown>>
@@ -340,14 +358,20 @@ export class PgHistoryArchiver {
 			// new_data and trim the tail once cumulative size crosses the limit.
 			// Trimmed rows have their claim released here (inside the same TX)
 			// so they reappear in the next run without waiting for the reaper.
-			const maxBatchBytes = this.config.maxBatchBytes ?? 256 * 1024 * 1024
+			// Default 64 MiB (not 256): the claimed rows live as decoded JS objects
+			// (several× their JSON size in the V8 heap), the Parquet buffer, and the
+			// whole-file Buffer read back for upload all coexist. On a 512 MB VM a
+			// 256 MB batch OOM-kills the process mid-archival. Budget ≈ batch × ~3.
+			const maxBatchBytes = this.config.maxBatchBytes ?? 64 * 1024 * 1024
 			let cumulative = 0
 			let cutoffIdx = records.length
 			for (let i = 0; i < records.length; i++) {
 				const r = records[i]
 				if (!r) continue
-				const oldSize = r.old_data ? JSON.stringify(r.old_data).length : 0
-				const newSize = r.new_data ? JSON.stringify(r.new_data).length : 0
+				// old_data/new_data arrive as JSON text (see ::text cast above), so
+				// their string length IS the serialized byte estimate.
+				const oldSize = typeof r.old_data === 'string' ? r.old_data.length : 0
+				const newSize = typeof r.new_data === 'string' ? r.new_data.length : 0
 				const rowSize = oldSize + newSize + 256 // +256 fudge for fixed columns
 				cumulative += rowSize
 				if (cumulative > maxBatchBytes && i > 0) {
@@ -392,11 +416,13 @@ export class PgHistoryArchiver {
 		// Phase 2: upload to S3 — no DB transaction or row lock held.
 		let s3Path = ''
 		let fileSize = 0
+		let checksumSha256 = ''
 		let uploadedToS3 = false
 		try {
 			const uploaded = await this.uploadBatchToS3(records, tableName, date)
 			s3Path = uploaded.s3Path
 			const sha256 = uploaded.sha256
+			checksumSha256 = sha256
 			uploadedToS3 = true
 
 			const headResult = await this.s3Client.send(
@@ -454,6 +480,7 @@ export class PgHistoryArchiver {
 		let raceLost = false
 		try {
 			await finalizeClient.query('BEGIN')
+			await finalizeClient.query(MAINTENANCE_ON)
 
 			const updateResult = await finalizeClient.query(
 				`UPDATE ${this.auditTable}
@@ -484,10 +511,17 @@ export class PgHistoryArchiver {
 				const archiveDate = date.toISOString().split('T')[0]
 				await finalizeClient.query(
 					`INSERT INTO ${this.metadataTable} (
-            table_name, archive_date, s3_path, record_count, file_size
-          ) VALUES ($1, $2, $3, $4, $5)
+            table_name, archive_date, s3_path, record_count, file_size, checksum_sha256
+          ) VALUES ($1, $2, $3, $4, $5, $6)
           ON CONFLICT (s3_path) DO NOTHING`,
-					[tableName, archiveDate, s3Path, archivedCount, fileSize],
+					[
+						tableName,
+						archiveDate,
+						s3Path,
+						archivedCount,
+						fileSize,
+						checksumSha256 || null,
+					],
 				)
 
 				await finalizeClient.query('COMMIT')
@@ -516,7 +550,11 @@ export class PgHistoryArchiver {
 					recordCount: 0,
 					fileSize: 0,
 					s3Path: '',
-					status: 'completed',
+					// 'reaped' (not 'completed'): the batch's rows were released back
+					// to the pending pool, not archived. The orchestrator must keep
+					// looping so they get re-claimed, instead of treating count===0 as
+					// "table done".
+					status: 'reaped',
 				}
 			}
 
@@ -571,14 +609,27 @@ export class PgHistoryArchiver {
 	 * prevents touching rows that were already finalized by a concurrent path.
 	 */
 	private async releaseClaim(claimId: string): Promise<void> {
-		await this.pool.query(
-			`UPDATE ${this.auditTable}
-       SET claim_id = NULL,
-           claimed_at = NULL
-       WHERE claim_id = $1
-         AND archived_at IS NULL`,
-			[claimId],
-		)
+		// Runs in a transaction so SET LOCAL pg_history.maintenance authorizes the
+		// UPDATE past the (optional) append-only guard without leaking onto the pool.
+		const client = await this.pool.connect()
+		try {
+			await client.query('BEGIN')
+			await client.query(MAINTENANCE_ON)
+			await client.query(
+				`UPDATE ${this.auditTable}
+         SET claim_id = NULL,
+             claimed_at = NULL
+         WHERE claim_id = $1
+           AND archived_at IS NULL`,
+				[claimId],
+			)
+			await client.query('COMMIT')
+		} catch (err) {
+			await client.query('ROLLBACK').catch(() => {})
+			throw err
+		} finally {
+			client.release()
+		}
 	}
 
 	/**
@@ -602,16 +653,28 @@ export class PgHistoryArchiver {
 				`reapStaleClaims: staleAfterMinutes must be a positive finite number (got: ${minutes})`,
 			)
 		}
-		const result = await this.pool.query(
-			`UPDATE ${this.auditTable}
-       SET claim_id = NULL,
-           claimed_at = NULL
-       WHERE claim_id IS NOT NULL
-         AND archived_at IS NULL
-         AND claimed_at < NOW() - ($1 * INTERVAL '1 minute')`,
-			[minutes],
-		)
-		return result.rowCount || 0
+		// Transaction + SET LOCAL authorizes the UPDATE past the append-only guard.
+		const client = await this.pool.connect()
+		try {
+			await client.query('BEGIN')
+			await client.query(MAINTENANCE_ON)
+			const result = await client.query(
+				`UPDATE ${this.auditTable}
+         SET claim_id = NULL,
+             claimed_at = NULL
+         WHERE claim_id IS NOT NULL
+           AND archived_at IS NULL
+           AND claimed_at < NOW() - ($1 * INTERVAL '1 minute')`,
+				[minutes],
+			)
+			await client.query('COMMIT')
+			return result.rowCount || 0
+		} catch (err) {
+			await client.query('ROLLBACK').catch(() => {})
+			throw err
+		} finally {
+			client.release()
+		}
 	}
 
 	/**
@@ -664,6 +727,16 @@ export class PgHistoryArchiver {
 		// HTTP layer above. Caller can pass a different cap and resume on the
 		// next invocation — orphan detection is idempotent.
 		const maxDeletions = opts.maxDeletions ?? 10_000
+
+		// Safety window: never delete an object younger than this. processBatch
+		// uploads to S3 (Phase 2) BEFORE it records the object in metadata (Phase 3
+		// finalize). A freshly-uploaded, not-yet-finalized object is absent from
+		// metadata and would otherwise look like an orphan — deleting it corrupts a
+		// batch that is about to mark its rows archived against a now-missing file.
+		// Tie the window to staleClaimMinutes (the max claim→finalize lifetime).
+		const minAgeMs = (this.config.staleClaimMinutes ?? 30) * 60_000
+		const nowMs = Date.now()
+
 		let continuationToken: string | undefined
 		let orphanCount = 0
 
@@ -676,8 +749,15 @@ export class PgHistoryArchiver {
 			const listResult = await this.s3Client.send(listCommand)
 
 			const pageKeys = (listResult.Contents || [])
+				.filter((obj) => {
+					if (!obj.Key?.endsWith('.parquet')) return false
+					// Skip objects still inside the in-flight safety window.
+					const lm = obj.LastModified
+					if (lm && nowMs - lm.getTime() < minAgeMs) return false
+					return true
+				})
 				.map((obj) => obj.Key)
-				.filter((key): key is string => !!key && key.endsWith('.parquet'))
+				.filter((key): key is string => !!key)
 
 			if (pageKeys.length > 0) {
 				const knownResult = await this.pool.query(
@@ -786,6 +866,7 @@ export class PgHistoryArchiver {
 		try {
 			await client.query('BEGIN')
 			await client.query('SET LOCAL statement_timeout = 60000')
+			await client.query(MAINTENANCE_ON)
 			const result = await client.query(
 				`UPDATE ${this.auditTable}
         SET soft_deleted_at = NOW()
@@ -879,6 +960,25 @@ export class PgHistoryArchiver {
 			}
 		}
 
+		// Look up the recorded SHA-256 for each path so verification compares
+		// BYTES, not just existence — a truncated/overwritten object with a wrong
+		// checksum is rejected and its rows are NOT deleted. Legacy rows without a
+		// stored checksum fall back to an existence check.
+		const pathChecksums = new Map<string, string>()
+		if (s3Paths.size > 0) {
+			const ckResult = await this.pool.query(
+				`SELECT s3_path, checksum_sha256 FROM ${this.metadataTable}
+        WHERE s3_path = ANY($1::text[]) AND checksum_sha256 IS NOT NULL`,
+				[[...s3Paths]],
+			)
+			for (const row of ckResult.rows as Array<{
+				s3_path: string
+				checksum_sha256: string
+			}>) {
+				pathChecksums.set(row.s3_path, row.checksum_sha256)
+			}
+		}
+
 		const verifiedPaths = new Set<string>()
 
 		// Verify S3 paths in parallel (bounded concurrency)
@@ -889,7 +989,10 @@ export class PgHistoryArchiver {
 			const batch = pathArray.slice(i, i + CONCURRENCY)
 			const results = await Promise.all(
 				batch.map(async (s3Path) => {
-					const exists = await this.verifyS3File(s3Path)
+					const exists = await this.verifyS3File(
+						s3Path,
+						pathChecksums.get(s3Path),
+					)
 					return { s3Path, exists }
 				}),
 			)
@@ -921,6 +1024,7 @@ export class PgHistoryArchiver {
 		const client = await this.pool.connect()
 		try {
 			await client.query('BEGIN')
+			await client.query(MAINTENANCE_ON)
 
 			// SELECT FOR UPDATE locks the rows. Re-filter by the exact verified s3_path
 			// values (not just IS NOT NULL) to close the TOCTOU window where the path
@@ -942,58 +1046,19 @@ export class PgHistoryArchiver {
 				return 0
 			}
 
-			// Re-verify S3 files exist *inside* the transaction, after acquiring
-			// row locks. The DB lock protects against concurrent UPDATE to s3_path,
-			// but cannot protect against external deletion of the S3 object between
-			// the pre-lock verifyS3File and the DELETE. Cap the in-TX verification
-			// set to bound lock duration: each HeadObject is ~50ms; verifying 10k
-			// paths × 50ms × (1/CONCURRENCY=10) = ~50s of lock-holding which would
-			// starve the connection pool on long-running archive backlogs.
-			const MAX_INLINE_VERIFY = 500
-			let pathsToReverify = verifiedPathsArray
-			if (pathsToReverify.length > MAX_INLINE_VERIFY) {
-				this.logger.info(
-					'hardDeletePurged trimming in-TX verification to bound lock duration',
-					{
-						total: pathsToReverify.length,
-						verifying: MAX_INLINE_VERIFY,
-					},
-				)
-				pathsToReverify = pathsToReverify.slice(0, MAX_INLINE_VERIFY)
-			}
-			const reverifiedPaths = new Set<string>()
-			for (let i = 0; i < pathsToReverify.length; i += CONCURRENCY) {
-				const batch = pathsToReverify.slice(i, i + CONCURRENCY)
-				const results = await Promise.all(
-					batch.map(async (s3Path) => ({
-						s3Path,
-						exists: await this.verifyS3File(s3Path),
-					})),
-				)
-				for (const { s3Path, exists } of results) {
-					if (exists) reverifiedPaths.add(s3Path)
-					else
-						this.logger.warn(
-							'S3 file disappeared between verify and delete, skipping',
-							{ s3Path },
-						)
-				}
-			}
-
-			if (reverifiedPaths.size === 0) {
-				await client.query('ROLLBACK')
-				return 0
-			}
-
-			// Final DELETE filters by the freshly-reverified path set so a row
-			// whose S3 file was deleted externally during the lock-acquisition
-			// window is left alone (will be retried on next run).
-			const reverifiedPathsArr = Array.from(reverifiedPaths)
+			// NO S3 network I/O inside the transaction. Step 2 already verified
+			// existence + checksum for every path in verifiedPaths, and the
+			// FOR UPDATE lock + s3_path filter above prevent a concurrent process
+			// from mutating these rows. We deliberately accept the small window
+			// where an external actor deletes the S3 object between the Step-2
+			// verify and this DELETE — cleanupOrphanedFiles and the next run
+			// reconcile it. Holding row locks (and a pool connection) across
+			// per-object HeadObject calls would starve the pool on large backlogs.
 			const deleteResult = await client.query(
 				`DELETE FROM ${this.auditTable}
         WHERE id = ANY($1::bigint[])
           AND s3_path = ANY($2::text[])`,
-				[lockedIds, reverifiedPathsArr],
+				[lockedIds, verifiedPathsArray],
 			)
 
 			await client.query('COMMIT')
@@ -1013,6 +1078,9 @@ export class PgHistoryArchiver {
 
 	async close(timeoutMs: number = 30_000): Promise<void> {
 		if (!this.ownConnection || !this.pool) return
+		// Idempotent: pg's Pool.end() rejects on a second call.
+		if (this.closed) return
+		this.closed = true
 		await endPoolWithTimeout(this.pool, timeoutMs, this.logger, 'Archiver')
 	}
 }
@@ -1021,6 +1089,6 @@ interface BatchResult {
 	recordCount: number
 	fileSize: number
 	s3Path: string
-	status: 'completed' | 'failed'
+	status: 'completed' | 'failed' | 'reaped'
 	errorMessage?: string
 }

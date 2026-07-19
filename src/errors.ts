@@ -41,3 +41,25 @@ export class RevertError extends PgHistoryError {
 		this.name = 'RevertError'
 	}
 }
+
+/**
+ * Thrown by {@link PgHistory.search} when the number of in-flight searches
+ * exceeds `maxConcurrentSearches`. API handlers translate this into 429.
+ */
+export class SearchConcurrencyLimitError extends PgHistoryError {
+	constructor() {
+		super('Too many concurrent search requests. Try again shortly.')
+		this.name = 'SearchConcurrencyLimitError'
+	}
+}
+
+/**
+ * Thrown when a request fails the server's authorization hook. API handlers
+ * translate this into 403.
+ */
+export class AuthorizationError extends PgHistoryError {
+	constructor(message = 'Not authorized for this resource') {
+		super(message)
+		this.name = 'AuthorizationError'
+	}
+}

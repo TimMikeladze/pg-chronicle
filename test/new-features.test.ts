@@ -102,6 +102,7 @@ describe('Serverless mode', () => {
 			pool,
 			serverless: true,
 			enableHistory: true,
+			allowUnauthenticated: true,
 			historyConfig: { tables: ['users'] },
 		})
 
@@ -128,6 +129,7 @@ describe('Serverless mode', () => {
 			pool,
 			serverless: true,
 			enableHistory: true,
+			allowUnauthenticated: true,
 			historyConfig: { tables: ['users'] },
 		})
 

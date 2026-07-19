@@ -149,6 +149,7 @@ describe('JWT alg env validation', () => {
 				createServer({
 					pool,
 					enableHistory: true,
+					allowUnauthenticated: true,
 					historyConfig: { tables: ['users'] },
 				}),
 			).rejects.toThrow(/not supported/)
@@ -168,6 +169,7 @@ describe('JWT alg env validation', () => {
 			const { app } = await createServer({
 				pool,
 				enableHistory: true,
+				allowUnauthenticated: true,
 				historyConfig: { tables: ['users'] },
 			})
 			expect(app).toBeDefined()
@@ -296,6 +298,7 @@ describe('CORS preflight bypasses JWT', () => {
 			const { app } = await createServer({
 				pool,
 				enableHistory: true,
+				allowUnauthenticated: true,
 				historyConfig: { tables: ['users'] },
 				cors: { origin: 'https://app.example.com' },
 			})

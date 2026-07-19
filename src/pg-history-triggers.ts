@@ -37,6 +37,41 @@ export interface BuildTriggerFunctionArgs {
 }
 
 /**
+ * Build the append-only guard for audit_log. The BEFORE UPDATE OR DELETE trigger
+ * rejects mutations unless the session set `pg_history.maintenance = 'on'` (which
+ * the archiver does for its own lifecycle operations). Schema is a validated
+ * identifier (caller responsibility).
+ */
+export function buildAppendOnlyGuardSql(schema: string): {
+	func: string
+	trigger: string
+	guardFuncName: string
+	guardTriggerName: string
+} {
+	const guardFuncName = 'audit_log_append_guard'
+	const guardTriggerName = 'audit_log_append_guard'
+	const func = `
+CREATE OR REPLACE FUNCTION "${schema}"."${guardFuncName}"()
+RETURNS TRIGGER AS $$
+BEGIN
+	IF current_setting('pg_history.maintenance', true) IS DISTINCT FROM 'on' THEN
+		RAISE EXCEPTION 'audit_log is append-only: % is not permitted outside pg-history maintenance context', TG_OP
+			USING ERRCODE = 'insufficient_privilege';
+	END IF;
+	IF (TG_OP = 'DELETE') THEN
+		RETURN OLD;
+	END IF;
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql
+SET search_path = pg_catalog, public;
+	`
+	// CREATE OR REPLACE TRIGGER (PG14+) keeps setup idempotent.
+	const trigger = `CREATE OR REPLACE TRIGGER "${guardTriggerName}" BEFORE UPDATE OR DELETE ON "${schema}"."audit_log" FOR EACH ROW EXECUTE FUNCTION "${schema}"."${guardFuncName}"()`
+	return { func, trigger, guardFuncName, guardTriggerName }
+}
+
+/**
  * Build the JSONB payload expression for OLD or NEW. When excludeColumns is
  * non-empty, columns are stripped via the `-` operator chain so audited
  * history never contains the listed columns. Identifier validation is the
@@ -70,6 +105,23 @@ export function buildTriggerFunctionSql(
 	const newPayload = jsonbPayload('NEW', excludeColumns)
 	const oldPayload = jsonbPayload('OLD', excludeColumns)
 
+	// Actor / "who" columns recorded on every audit row. These are appended to
+	// each INSERT's column list and VALUES list:
+	//   db_user     — current_user (the role that executed the DML)
+	//   app_actor   — current_setting('pg_history.actor', true): the application
+	//                 end-user, NULL unless the app runs SET LOCAL pg_history.actor
+	//   client_addr — inet_client_addr(): NULL for local socket connections
+	// current_setting(..., true) uses missing_ok=true so an unset actor yields
+	// NULL instead of raising. Values reference only pg_catalog builtins, so the
+	// pinned search_path keeps them safe under SECURITY DEFINER.
+	const actorCols = 'db_user, app_actor, client_addr'
+	// NULLIF(..., '') normalizes an unset/empty actor to NULL. current_setting
+	// with missing_ok=true returns NULL when the GUC was never referenced on the
+	// backend, but '' once the placeholder exists (e.g. a pooled connection that
+	// previously ran SET LOCAL) — both should record as "no actor".
+	const actorVals =
+		"current_user, NULLIF(current_setting('pg_history.actor', true), ''), inet_client_addr()"
+
 	if (pkColumns.length === 0) {
 		// No primary key: use md5 hash of the full row as record_id.
 		// NOTE: For UPDATE operations, record_id is md5(NEW row) — it changes on
@@ -81,9 +133,15 @@ export function buildTriggerFunctionSql(
 CREATE OR REPLACE FUNCTION "${schema}"."${funcName}"()
 RETURNS TRIGGER AS $$
 BEGIN
-	IF (TG_OP = 'DELETE') THEN
-		INSERT INTO ${auditTable} (table_name, record_id, operation, old_data)
-		VALUES (TG_TABLE_NAME, md5(row_to_json(OLD)::text), TG_OP, ${oldPayload});
+	IF (TG_OP = 'TRUNCATE') THEN
+		-- Statement-level TRUNCATE has no OLD/NEW rows; record a single marker
+		-- entry so bulk table wipes are never silently absent from the trail.
+		INSERT INTO ${auditTable} (table_name, record_id, operation, ${actorCols})
+		VALUES (TG_TABLE_NAME, '(truncate)', 'TRUNCATE', ${actorVals});
+		RETURN NULL;
+	ELSIF (TG_OP = 'DELETE') THEN
+		INSERT INTO ${auditTable} (table_name, record_id, operation, old_data, ${actorCols})
+		VALUES (TG_TABLE_NAME, md5(row_to_json(OLD)::text), TG_OP, ${oldPayload}, ${actorVals});
 		RETURN OLD;
 	ELSIF (TG_OP = 'UPDATE') THEN
 		-- Skip audit insert for idempotent updates (OLD == NEW). PostgreSQL
@@ -91,13 +149,13 @@ BEGIN
 		-- any column actually changed; without this guard, "UPDATE x SET c = c"
 		-- would bloat audit_log with no-op rows.
 		IF OLD IS DISTINCT FROM NEW THEN
-			INSERT INTO ${auditTable} (table_name, record_id, operation, old_data, new_data)
-			VALUES (TG_TABLE_NAME, md5(row_to_json(NEW)::text), TG_OP, ${oldPayload}, ${newPayload});
+			INSERT INTO ${auditTable} (table_name, record_id, operation, old_data, new_data, ${actorCols})
+			VALUES (TG_TABLE_NAME, md5(row_to_json(NEW)::text), TG_OP, ${oldPayload}, ${newPayload}, ${actorVals});
 		END IF;
 		RETURN NEW;
 	ELSIF (TG_OP = 'INSERT') THEN
-		INSERT INTO ${auditTable} (table_name, record_id, operation, new_data)
-		VALUES (TG_TABLE_NAME, md5(row_to_json(NEW)::text), TG_OP, ${newPayload});
+		INSERT INTO ${auditTable} (table_name, record_id, operation, new_data, ${actorCols})
+		VALUES (TG_TABLE_NAME, md5(row_to_json(NEW)::text), TG_OP, ${newPayload}, ${actorVals});
 		RETURN NEW;
 	END IF;
 END;
@@ -116,19 +174,25 @@ SET search_path = pg_catalog, public;
 CREATE OR REPLACE FUNCTION "${schema}"."${funcName}"()
 RETURNS TRIGGER AS $$
 BEGIN
-	IF (TG_OP = 'DELETE') THEN
-		INSERT INTO ${auditTable} (table_name, record_id, operation, old_data)
-		VALUES (TG_TABLE_NAME, OLD."${pkCol}"::text, TG_OP, ${oldPayload});
+	IF (TG_OP = 'TRUNCATE') THEN
+		-- Statement-level TRUNCATE has no OLD/NEW rows; record a single marker
+		-- entry so bulk table wipes are never silently absent from the trail.
+		INSERT INTO ${auditTable} (table_name, record_id, operation, ${actorCols})
+		VALUES (TG_TABLE_NAME, '(truncate)', 'TRUNCATE', ${actorVals});
+		RETURN NULL;
+	ELSIF (TG_OP = 'DELETE') THEN
+		INSERT INTO ${auditTable} (table_name, record_id, operation, old_data, ${actorCols})
+		VALUES (TG_TABLE_NAME, OLD."${pkCol}"::text, TG_OP, ${oldPayload}, ${actorVals});
 		RETURN OLD;
 	ELSIF (TG_OP = 'UPDATE') THEN
 		IF OLD IS DISTINCT FROM NEW THEN
-			INSERT INTO ${auditTable} (table_name, record_id, operation, old_data, new_data)
-			VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, ${oldPayload}, ${newPayload});
+			INSERT INTO ${auditTable} (table_name, record_id, operation, old_data, new_data, ${actorCols})
+			VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, ${oldPayload}, ${newPayload}, ${actorVals});
 		END IF;
 		RETURN NEW;
 	ELSIF (TG_OP = 'INSERT') THEN
-		INSERT INTO ${auditTable} (table_name, record_id, operation, new_data)
-		VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, ${newPayload});
+		INSERT INTO ${auditTable} (table_name, record_id, operation, new_data, ${actorCols})
+		VALUES (TG_TABLE_NAME, NEW."${pkCol}"::text, TG_OP, ${newPayload}, ${actorVals});
 		RETURN NEW;
 	END IF;
 END;
@@ -143,32 +207,41 @@ SET search_path = pg_catalog, public;
 	// text/varchar PK column values, preventing ambiguous record_id collisions
 	// (e.g. PK ('a|b','c') vs ('a','b|c')). COALESCE handles NULL PK parts.
 	// PG TEXT cannot hold NUL bytes so no extra stripping is required.
-	// LEFT(..., 200) bounds each component so the concatenated record_id stays
-	// under the 1000-char validateStringInput cap even with 5+ wide PK parts.
+	// Components are NOT truncated: truncating (formerly LEFT(...,200)) let two
+	// distinct keys agreeing in their first 200 chars collide onto one record_id.
+	// The full values are used so distinct composite keys always map to distinct
+	// record_ids. (A pathologically long key may exceed the API's record_id query
+	// cap, but it is still stored and correlated correctly — collision safety wins.)
 	const pkExpressionsNew = pkColumns
-		.map((col) => `LEFT(COALESCE(NEW."${col}"::text, ''), 200)`)
+		.map((col) => `COALESCE(NEW."${col}"::text, '')`)
 		.join(' || chr(31) || ')
 	const pkExpressionsOld = pkColumns
-		.map((col) => `LEFT(COALESCE(OLD."${col}"::text, ''), 200)`)
+		.map((col) => `COALESCE(OLD."${col}"::text, '')`)
 		.join(' || chr(31) || ')
 
 	return `
 CREATE OR REPLACE FUNCTION "${schema}"."${funcName}"()
 RETURNS TRIGGER AS $$
 BEGIN
-	IF (TG_OP = 'DELETE') THEN
-		INSERT INTO ${auditTable} (table_name, record_id, operation, old_data)
-		VALUES (TG_TABLE_NAME, ${pkExpressionsOld}, TG_OP, ${oldPayload});
+	IF (TG_OP = 'TRUNCATE') THEN
+		-- Statement-level TRUNCATE has no OLD/NEW rows; record a single marker
+		-- entry so bulk table wipes are never silently absent from the trail.
+		INSERT INTO ${auditTable} (table_name, record_id, operation, ${actorCols})
+		VALUES (TG_TABLE_NAME, '(truncate)', 'TRUNCATE', ${actorVals});
+		RETURN NULL;
+	ELSIF (TG_OP = 'DELETE') THEN
+		INSERT INTO ${auditTable} (table_name, record_id, operation, old_data, ${actorCols})
+		VALUES (TG_TABLE_NAME, ${pkExpressionsOld}, TG_OP, ${oldPayload}, ${actorVals});
 		RETURN OLD;
 	ELSIF (TG_OP = 'UPDATE') THEN
 		IF OLD IS DISTINCT FROM NEW THEN
-			INSERT INTO ${auditTable} (table_name, record_id, operation, old_data, new_data)
-			VALUES (TG_TABLE_NAME, ${pkExpressionsNew}, TG_OP, ${oldPayload}, ${newPayload});
+			INSERT INTO ${auditTable} (table_name, record_id, operation, old_data, new_data, ${actorCols})
+			VALUES (TG_TABLE_NAME, ${pkExpressionsNew}, TG_OP, ${oldPayload}, ${newPayload}, ${actorVals});
 		END IF;
 		RETURN NEW;
 	ELSIF (TG_OP = 'INSERT') THEN
-		INSERT INTO ${auditTable} (table_name, record_id, operation, new_data)
-		VALUES (TG_TABLE_NAME, ${pkExpressionsNew}, TG_OP, ${newPayload});
+		INSERT INTO ${auditTable} (table_name, record_id, operation, new_data, ${actorCols})
+		VALUES (TG_TABLE_NAME, ${pkExpressionsNew}, TG_OP, ${newPayload}, ${actorVals});
 		RETURN NEW;
 	END IF;
 END;

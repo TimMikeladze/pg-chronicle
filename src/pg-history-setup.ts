@@ -29,6 +29,10 @@ export function triggerNameFor(tableName: string): string {
 	return derivedIdentifier('audit_trigger_', tableName)
 }
 
+export function truncateTriggerNameFor(tableName: string): string {
+	return derivedIdentifier('audit_truncate_', tableName)
+}
+
 export function triggerFuncNameFor(tableName: string): string {
 	return derivedIdentifier('audit_trigger_func_', tableName)
 }
@@ -49,9 +53,27 @@ export async function setupAuditTable(
 			changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			old_data JSONB,
 			new_data JSONB,
+			db_user TEXT,
+			app_actor TEXT,
+			client_addr INET,
 			PRIMARY KEY (id, table_name)
 		) PARTITION BY LIST (table_name)
 	`)
+
+	// Actor columns capture WHO made each change — required for any audit trail.
+	// ADD COLUMN IF NOT EXISTS makes this idempotent and upgrades an audit_log
+	// created by an older version (pre-actor) in place. db_user = current_user,
+	// app_actor = current_setting('pg_history.actor'), client_addr =
+	// inet_client_addr(); populated by the generated trigger functions.
+	await pool.query(
+		`ALTER TABLE ${auditTable} ADD COLUMN IF NOT EXISTS db_user TEXT`,
+	)
+	await pool.query(
+		`ALTER TABLE ${auditTable} ADD COLUMN IF NOT EXISTS app_actor TEXT`,
+	)
+	await pool.query(
+		`ALTER TABLE ${auditTable} ADD COLUMN IF NOT EXISTS client_addr INET`,
+	)
 }
 
 export async function setupPartitions(

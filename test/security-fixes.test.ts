@@ -144,7 +144,11 @@ describe('HIGH-3: Generic error messages for database errors', () => {
 					match.includes('NOT_FOUND') ||
 					match.includes('NOT_CONFIGURED') ||
 					match.includes('VALIDATION_ERROR') ||
-					match.includes('REVERT_ERROR'),
+					match.includes('REVERT_ERROR') ||
+					// Controlled application errors — messages are library-authored,
+					// never raw DB output: AuthorizationError / SearchConcurrencyLimitError.
+					match.includes('FORBIDDEN') ||
+					match.includes('RATE_LIMITED'),
 			).toBe(true)
 		}
 	})
@@ -164,6 +168,7 @@ describe('HIGH-3: Generic error messages for database errors', () => {
 		const { app } = await createServer({
 			pool,
 			enableHistory: true,
+			allowUnauthenticated: true,
 			historyConfig: { tables: ['users'] },
 		})
 

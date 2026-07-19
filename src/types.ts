@@ -28,16 +28,61 @@ export interface PgHistoryConfig {
 	 * Pass silentLogger (from './logger') in tests to suppress output.
 	 */
 	logger?: Logger
+
+	/**
+	 * Maximum number of concurrent `search()` queries. `search()` can run
+	 * unindexed ILIKE full scans that pin a pool connection for seconds; without
+	 * a cap a handful of concurrent searches exhaust a small pool and starve every
+	 * other query (a cheap DoS). Excess searches reject with
+	 * {@link SearchConcurrencyLimitError} rather than queueing unbounded.
+	 * Default: 4. Set to 0 to disable the limit.
+	 */
+	maxConcurrentSearches?: number
+
+	/**
+	 * When true, `setup()` installs a `BEFORE UPDATE OR DELETE` guard trigger on
+	 * `audit_log` that rejects any UPDATE/DELETE unless the session set
+	 * `pg_history.maintenance = 'on'`. This makes the trail append-only for the
+	 * application, blocking accidental or casual tampering. The pg-history
+	 * archiver sets that flag automatically, so archival still works.
+	 *
+	 * NOTE: this is tamper-RESISTANCE, not cryptographic tamper-evidence — a role
+	 * that can write the table can also set the flag. For true WORM guarantees,
+	 * additionally `REVOKE UPDATE, DELETE, TRUNCATE ON audit_log` from the
+	 * application role (running the archiver under a separate privileged role) and
+	 * consider a per-row hash chain. Default: false (opt-in, so it never conflicts
+	 * with deployments that manage `audit_log` directly).
+	 */
+	appendOnly?: boolean
+
+	/**
+	 * When true, `setup()` refuses to install a trigger on a table that has no
+	 * primary key. Such tables get a per-row md5 `record_id` that changes on every
+	 * UPDATE, so their history entries cannot be correlated into a single record's
+	 * timeline. Default false: a table without a PK is still audited, but a warning
+	 * is logged (it is never silent). Set true to fail fast instead.
+	 */
+	requirePrimaryKey?: boolean
 }
 
 export interface AuditEntry {
 	id: string
 	tableName: string
 	recordId: string
-	operation: 'INSERT' | 'UPDATE' | 'DELETE'
+	operation: 'INSERT' | 'UPDATE' | 'DELETE' | 'TRUNCATE'
 	changedAt: Date
 	oldData: Record<string, unknown> | null
 	newData: Record<string, unknown> | null
+	/** Database role that performed the change (`current_user` at trigger time). */
+	dbUser: string | null
+	/**
+	 * Application-level actor, read from the `pg_history.actor` session setting.
+	 * NULL unless the application ran `SET LOCAL pg_history.actor = '<id>'`
+	 * before the DML statement.
+	 */
+	appActor: string | null
+	/** Client network address (`inet_client_addr()`), NULL for local socket connections. */
+	clientAddr: string | null
 }
 
 export interface PaginatedResult<T> {
@@ -117,7 +162,9 @@ export interface ArchiverConfig {
 	 * cumulative serialized size are released back to be re-claimed on the next
 	 * run. Defends against OOM on tables with very large jsonb payloads —
 	 * batchSize alone is insufficient because a single row's old_data/new_data
-	 * can be megabytes. Default: 256 MiB.
+	 * can be megabytes. Default: 64 MiB. Peak process memory is roughly this ×3
+	 * (decoded JS objects + Parquet buffer + whole-file upload buffer), so keep
+	 * it well under the VM memory limit.
 	 */
 	maxBatchBytes?: number
 
@@ -174,6 +221,31 @@ export interface RetentionConfig {
 	/** Per-table overrides */
 	tables?: Record<string, number>
 }
+
+/**
+ * Context passed to {@link ServerConfig.authorize} for every history request.
+ * `operation` is the API action, not the audited SQL operation.
+ */
+export interface AuthorizeContext {
+	/** JWT `sub` claim when a token was presented, otherwise undefined. */
+	actor: string | undefined
+	/** Target table (already validated against the configured allowlist). */
+	table: string
+	/** Target record id — present for reads and reverts, absent for search. */
+	recordId?: string
+	/** The API action being authorized. */
+	action: 'read' | 'search' | 'revert'
+	/** Full decoded JWT payload when available, for custom claim checks. */
+	jwtPayload?: Record<string, unknown>
+}
+
+/**
+ * Authorization callback. Return `false` (or throw) to deny a request with 403.
+ * Without this hook the server performs authentication only — any valid token
+ * can access every record of every configured table. Provide it to enforce
+ * per-tenant / per-record ownership.
+ */
+export type AuthorizeFn = (ctx: AuthorizeContext) => boolean | Promise<boolean>
 
 export interface ServerConfig {
 	/** PostgreSQL connection pool */
@@ -263,6 +335,31 @@ export interface ServerConfig {
 	logger?: Logger
 
 	/**
+	 * Allow the history/revert endpoints to be served without authentication.
+	 * `createServer` FAILS CLOSED: when `enableHistory` is true and no
+	 * `PG_HISTORY_JWT_SECRET` is configured, it throws at startup unless this is
+	 * explicitly set to `true`. Use only for local development or a fully trusted
+	 * private network. Never enable on a public deployment.
+	 */
+	allowUnauthenticated?: boolean
+
+	/**
+	 * Authorization hook invoked before every history read/search/revert. Return
+	 * false or throw to reject with 403. Without it, authentication grants blanket
+	 * access to all records of all configured tables (no tenant isolation).
+	 */
+	authorize?: AuthorizeFn
+
+	/**
+	 * Trust the `x-forwarded-for` / `x-real-ip` headers for per-client rate
+	 * limiting. These headers are client-spoofable, so they may only be trusted
+	 * behind a reverse proxy that overwrites them. Default false: when false the
+	 * rate limiter falls back to a single global bucket (a coarse but
+	 * unspoofable backstop) instead of per-IP buckets.
+	 */
+	trustProxy?: boolean
+
+	/**
 	 * Expose /openapi endpoint unauthenticated (default: false).
 	 * When false, the OpenAPI schema requires the same JWT as /api/* routes
 	 * to prevent leaking the API shape to unauthenticated callers.
@@ -304,6 +401,8 @@ export interface TableStats {
 	recordsSoftDeleted: number
 	recordsHardDeleted: number
 	durationMs: number
+	/** True when the table was skipped because another instance held its lock. */
+	skipped?: boolean
 }
 
 export interface ErrorResponse {

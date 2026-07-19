@@ -91,6 +91,7 @@ export class Orchestrator {
 			const client = new pg.Client({
 				connectionString: this.lockConnectionString,
 			})
+			this.attachClientErrorHandler(client)
 			await client.connect()
 			return client
 		}
@@ -116,8 +117,24 @@ export class Orchestrator {
 			database: poolOpts.database,
 			ssl: poolOpts.ssl,
 		})
+		this.attachClientErrorHandler(client)
 		await client.connect()
 		return client
+	}
+
+	/**
+	 * Attach an 'error' listener to a standalone lock client. A node-postgres
+	 * Client is an EventEmitter that emits 'error' on any backend/connection
+	 * fatality (idle timeout, server-side termination, failover, network reset).
+	 * Because this client is held open across long S3 uploads, an 'error' with
+	 * no listener would be re-thrown by Node and crash the entire process. We
+	 * log and swallow — the lock is released when the connection dies, and the
+	 * surrounding query will reject and abort the run cleanly.
+	 */
+	private attachClientErrorHandler(client: pg.Client): void {
+		client.on('error', (err) => {
+			this.logger.error('Advisory-lock client connection error', { err })
+		})
 	}
 
 	async discoverTables(pool: Pool): Promise<string[]> {
@@ -195,8 +212,12 @@ export class Orchestrator {
 				// Update archival stats OUTSIDE the advisory lock (held by processTable).
 				// updateArchivalStats scans audit_log with FILTER aggregates which can be
 				// expensive on large tables — we don't want to hold the lock for it.
-				// Also skip in dry-run mode since nothing actually changed.
-				if (!options.dryRun) {
+				// Skip in dry-run mode (nothing changed) and when this table was
+				// skipped due to lock contention (another instance is already
+				// processing it and will update the stats — running the expensive
+				// full-partition scan + upsert here would just waste I/O and contend
+				// on the same stats row).
+				if (!options.dryRun && !tableStats.skipped) {
 					try {
 						const retentionDays =
 							this.retentionConfig.tables?.[table] ??
@@ -265,6 +286,7 @@ export class Orchestrator {
 				})
 				await lockClient.end().catch(() => {})
 				stats.durationMs = Date.now() - startTime
+				stats.skipped = true
 				return stats
 			}
 		} catch (error) {
@@ -379,6 +401,9 @@ export class Orchestrator {
 			// Archive old records in batches
 			let hasMore = true
 			let batchNumber = 0
+			// Bound reaper-race retries so a pathological repeat can't loop forever.
+			let reapedRetries = 0
+			const MAX_REAPED_RETRIES = 5
 
 			while (hasMore) {
 				batchNumber++
@@ -388,9 +413,22 @@ export class Orchestrator {
 
 					stats.recordsArchived += batchResult.recordCount
 
-					if (batchResult.recordCount === 0) {
+					if (batchResult.status === 'reaped') {
+						// The batch's rows were released back to pending (a reaper reset
+						// the claim mid-upload), NOT "no work left". Keep looping so they
+						// get re-claimed, but cap retries to avoid an infinite loop.
+						reapedRetries++
+						if (reapedRetries > MAX_REAPED_RETRIES) {
+							this.logger.warn(
+								'Aborting table archival after repeated reaper races; remaining rows will be picked up next run',
+								{ table: tableName, retries: reapedRetries },
+							)
+							hasMore = false
+						}
+					} else if (batchResult.recordCount === 0) {
 						hasMore = false
 					} else {
+						reapedRetries = 0
 						this.logger.info('Batch archived', {
 							table: tableName,
 							batch: batchNumber,

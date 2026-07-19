@@ -111,12 +111,14 @@ export function parseRevertBody(body: unknown): {
 	table: string
 	recordId: string
 	auditEntryId: string
+	suppressAuditTriggers?: boolean
 } {
 	if (!isPlainObject(body)) {
 		throw new ValidationError('request body must be a JSON object')
 	}
 
-	const { table, recordId, auditEntryId } = body as Record<string, unknown>
+	const { table, recordId, auditEntryId, suppressAuditTriggers } =
+		body as Record<string, unknown>
 
 	if (typeof table !== 'string' || table.length === 0) {
 		throw new ValidationError(
@@ -143,8 +145,28 @@ export function parseRevertBody(body: unknown): {
 	if (auditEntryId.length > 100) {
 		throw new ValidationError('auditEntryId must not exceed 100 characters')
 	}
+	// auditEntryId is an audit_log id (bigint). Validate numeric here so a
+	// malformed value returns 400, not a 500 from the `$1::bigint` cast downstream.
+	if (!/^\d+$/.test(auditEntryId)) {
+		throw new ValidationError('auditEntryId must be a numeric id')
+	}
 
-	return { table, recordId, auditEntryId }
+	// Optional: opt into suppressing the revert's own audit entries. Requires the
+	// pg_replication role / SUPERUSER on the DB (see PgHistory.revert). Default
+	// (undefined → false) records the revert, which works on least-privilege roles.
+	if (
+		suppressAuditTriggers !== undefined &&
+		typeof suppressAuditTriggers !== 'boolean'
+	) {
+		throw new ValidationError('suppressAuditTriggers must be a boolean')
+	}
+
+	return {
+		table,
+		recordId,
+		auditEntryId,
+		suppressAuditTriggers: suppressAuditTriggers as boolean | undefined,
+	}
 }
 
 function parseOptionalDate(

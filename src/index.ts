@@ -1,7 +1,9 @@
 export {
 	AuditEntryNotFoundError,
+	AuthorizationError,
 	PgHistoryError,
 	RevertError,
+	SearchConcurrencyLimitError,
 	SetupRequiredError,
 	TableNotConfiguredError,
 	ValidationError,
@@ -20,6 +22,8 @@ export { createServer } from './server'
 export type {
 	ArchiverConfig,
 	AuditEntry,
+	AuthorizeContext,
+	AuthorizeFn,
 	GetHistoryOptions,
 	OrchestratorConfig,
 	OrchestratorStats,

@@ -47,6 +47,7 @@ describe('Server API Types', () => {
 			pool,
 			port: 3001,
 			enableHistory: true,
+			allowUnauthenticated: true,
 			historyConfig: {
 				tables: ['users'],
 			},
@@ -66,6 +67,7 @@ describe('GET /api/history/:table/:recordId', () => {
 		const { app } = await createServer({
 			pool,
 			enableHistory: true,
+			allowUnauthenticated: true,
 			historyConfig: { tables: ['users'] },
 		})
 
@@ -90,6 +92,7 @@ describe('GET /api/history/:table/:recordId', () => {
 		const { app } = await createServer({
 			pool,
 			enableHistory: true,
+			allowUnauthenticated: true,
 			historyConfig: { tables: ['users'] },
 		})
 
@@ -139,6 +142,7 @@ describe('POST /api/history/search', () => {
 		const { app } = await createServer({
 			pool,
 			enableHistory: true,
+			allowUnauthenticated: true,
 			historyConfig: { tables: ['users', 'posts'] },
 		})
 
@@ -164,6 +168,7 @@ describe('POST /api/history/search', () => {
 		const { app } = await createServer({
 			pool,
 			enableHistory: true,
+			allowUnauthenticated: true,
 			historyConfig: { tables: ['users'] },
 		})
 

@@ -14,6 +14,18 @@ function toBigInt(value: unknown): bigint {
 	throw new Error(`Cannot convert value to bigint: ${String(value)}`)
 }
 
+/**
+ * Serialize a jsonb payload for the Parquet STRING column. The archiver selects
+ * old_data/new_data as ::text, so `value` is already exact JSON text — pass it
+ * through verbatim to preserve integers > 2^53. Objects (from other callers /
+ * tests) are stringified as a fallback. NULL stays NULL.
+ */
+function toJsonText(value: unknown): string | null {
+	if (value == null) return null
+	if (typeof value === 'string') return value
+	return JSON.stringify(value)
+}
+
 function requireString(value: unknown, field: string): string {
 	if (typeof value !== 'string') {
 		throw new Error(
@@ -64,16 +76,12 @@ export async function writeParquet(
 		},
 		{
 			name: 'old_data',
-			data: records.map((r) =>
-				r.old_data == null ? null : JSON.stringify(r.old_data),
-			),
+			data: records.map((r) => toJsonText(r.old_data)),
 			type: 'STRING' as const,
 		},
 		{
 			name: 'new_data',
-			data: records.map((r) =>
-				r.new_data == null ? null : JSON.stringify(r.new_data),
-			),
+			data: records.map((r) => toJsonText(r.new_data)),
 			type: 'STRING' as const,
 		},
 	]

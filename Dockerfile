@@ -1,5 +1,6 @@
-# Use official Bun image
-FROM oven/bun:latest AS base
+# Use official Bun image, pinned to a minor version for reproducible builds
+# (a mutable :latest can silently change Bun/OpenSSL/glibc under a running deploy).
+FROM oven/bun:1.3 AS base
 WORKDIR /app
 
 # Install dependencies into temp directory
@@ -27,5 +28,11 @@ COPY --from=prerelease /app/package.json .
 # Expose the health/API port
 EXPOSE 8080
 
-# Run the app with the config path
-CMD ["bun", "run", "dist/server.js"]
+# Drop root — the oven/bun image ships an unprivileged `bun` user (uid 1000).
+# Port 8080 is >1024 so a non-root process can bind it.
+USER bun
+
+# Run the app. dist/main.js is the runnable bootstrap that binds the HTTP
+# port and wires history/archiver from env (dist/server.js only exports
+# createServer and starts nothing).
+CMD ["bun", "run", "dist/main.js"]

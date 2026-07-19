@@ -3,3 +3,7 @@ linker = "hoisted"
 
 [test]
 preload = ["./test/archiver/globalSetup.ts"]
+# Coverage floor enforced when tests run with --coverage (CI via `test:coverage`).
+# Set below current (~85% lines / ~91% funcs) so it catches regressions without
+# being brittle. Raise as coverage improves.
+coverageThreshold = { line = 0.80, function = 0.85 }

@@ -29,9 +29,21 @@ function getApp(): Promise<App> {
 				`PG_HISTORY_POOL_MAX must be a positive integer (got: ${process.env.PG_HISTORY_POOL_MAX})`,
 			)
 		}
+		// Bound every pool query so a stuck connection can't wedge a warm
+		// serverless instance. See main.ts for PG_HISTORY_STATEMENT_TIMEOUT_MS.
+		const statementTimeoutMs = Number.parseInt(
+			process.env.PG_HISTORY_STATEMENT_TIMEOUT_MS || '30000',
+			10,
+		)
 		const pool = new pg.default.Pool({
 			connectionString: databaseUrl,
 			max: poolMax,
+			connectionTimeoutMillis: 10_000,
+			idleTimeoutMillis: 30_000,
+			statement_timeout: Number.isFinite(statementTimeoutMs)
+				? statementTimeoutMs
+				: 30_000,
+			idle_in_transaction_session_timeout: 60_000,
 		})
 
 		const tables =
