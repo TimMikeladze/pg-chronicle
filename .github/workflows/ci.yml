@@ -54,7 +54,7 @@ jobs:
           timeout 60 bash -c 'until curl -f http://localhost:9000/minio/health/live; do sleep 2; done' || { echo "MinIO failed to start"; docker logs minio || true; exit 1; }
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
