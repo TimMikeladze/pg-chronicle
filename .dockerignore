@@ -44,37 +44,8 @@
 .worktrees/s3-archival/**/.turbo
 .worktrees/s3-archival/**/.worktrees
 
-# flyctl launch added from docs/.gitignore
-# deps
-docs/node_modules
-
-# generated content
-docs/**/.source
-
-# test & build
-docs/coverage
-docs/.next
-docs/out
-docs/build
-docs/**/*.tsbuildinfo
-
-# misc
-docs/**/.DS_Store
-docs/**/*.pem
-docs/.pnp
-docs/**/.pnp.js
-docs/**/npm-debug.log*
-docs/**/yarn-debug.log*
-docs/**/yarn-error.log*
-
-# others
-docs/**/.env*.local
-docs/**/.vercel
-docs/**/next-env.d.ts
-
-# Exclude test files and docs from Docker build
+# Exclude test files from Docker build
 test
-docs
 *.md
 !README.md
 .git

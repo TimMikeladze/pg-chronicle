@@ -25,11 +25,5 @@
 	},
 
 	"include": ["**/*.ts"],
-	"exclude": [
-		"node_modules",
-		"dist",
-		"bunup.config.ts",
-		"docs",
-		"examples/vercel"
-	]
+	"exclude": ["node_modules", "dist", "bunup.config.ts", "examples/vercel"]
 }
