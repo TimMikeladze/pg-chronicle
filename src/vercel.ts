@@ -72,9 +72,10 @@ function getApp(): Promise<App> {
 				process.env.PG_HISTORY_GRACE_PERIOD_DAYS || '7',
 				10,
 			)
-			if (!Number.isFinite(gracePeriod) || gracePeriod < 1) {
+			// gracePeriod may be 0 (no grace — purge once the S3 backup is confirmed).
+			if (!Number.isFinite(gracePeriod) || gracePeriod < 0) {
 				throw new Error(
-					`PG_HISTORY_GRACE_PERIOD_DAYS must be a positive integer (got: ${process.env.PG_HISTORY_GRACE_PERIOD_DAYS})`,
+					`PG_HISTORY_GRACE_PERIOD_DAYS must be an integer >= 0 (got: ${process.env.PG_HISTORY_GRACE_PERIOD_DAYS})`,
 				)
 			}
 

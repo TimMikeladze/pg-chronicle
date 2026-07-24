@@ -4,7 +4,7 @@
  * Reads connection and feature config from environment variables and starts
  * the Hono HTTP server. Not imported by library consumers.
  */
-import { consoleLogger } from './logger'
+import { consoleLogger, endPoolWithTimeout } from './logger'
 import { createServer } from './server'
 
 interface BunServer {
@@ -68,14 +68,18 @@ declare const Bun: BunRuntime
 	// Optionally wire the S3 archiver when a bucket is configured.
 	let archiverConfig: Parameters<typeof createServer>[0]['archiverConfig']
 	if (process.env.PG_HISTORY_S3_BUCKET) {
-		const positiveInt = (envVar: string, fallback: number): number => {
+		const boundedInt = (
+			envVar: string,
+			fallback: number,
+			min: number,
+		): number => {
 			const parsed = Number.parseInt(
 				process.env[envVar] || String(fallback),
 				10,
 			)
-			if (!Number.isFinite(parsed) || parsed < 1) {
+			if (!Number.isFinite(parsed) || parsed < min) {
 				throw new Error(
-					`${envVar} must be a positive integer (got: ${process.env[envVar]})`,
+					`${envVar} must be an integer >= ${min} (got: ${process.env[envVar]})`,
 				)
 			}
 			return parsed
@@ -88,9 +92,10 @@ declare const Bun: BunRuntime
 				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
 				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
 			},
-			retention: { default: positiveInt('PG_HISTORY_RETENTION_DAYS', 90) },
-			gracePeriod: positiveInt('PG_HISTORY_GRACE_PERIOD_DAYS', 7),
-			batchSize: positiveInt('PG_HISTORY_BATCH_SIZE', 10000),
+			retention: { default: boundedInt('PG_HISTORY_RETENTION_DAYS', 90, 1) },
+			// gracePeriod may be 0 (no grace — purge once the S3 backup is confirmed).
+			gracePeriod: boundedInt('PG_HISTORY_GRACE_PERIOD_DAYS', 7, 0),
+			batchSize: boundedInt('PG_HISTORY_BATCH_SIZE', 10000, 1),
 		}
 	}
 
@@ -123,7 +128,9 @@ declare const Bun: BunRuntime
 		try {
 			server.stop()
 			await dispose(SHUTDOWN_DRAIN_TIMEOUT_MS)
-			await pool.end()
+			// Bounded: a bare pool.end() waits forever on a client still held by a
+			// hung query, which would blow past Fly's kill_timeout and get SIGKILLed.
+			await endPoolWithTimeout(pool, 10_000, startupLogger, 'main')
 		} catch (err) {
 			startupLogger.error('Error during shutdown', { err })
 			exitCode = 1
