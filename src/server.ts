@@ -959,31 +959,47 @@ export async function createServer(config: ServerConfig): Promise<{
 		})
 	}
 
-	// OpenAPI documentation endpoint (no auth required)
-	app.get(
-		'/openapi',
-		openAPIRouteHandler(app, {
-			documentation: {
-				info: {
-					title: 'pg-history Archiver API',
-					version: '1.0.0',
-					description: 'API for managing audit log archival',
-				},
-				servers: [
-					{
-						// Prefer an explicit baseUrl, then Vercel deployment URL,
-						// then fall back to localhost for local dev.
-						url:
-							config.baseUrl ||
-							(process.env.VERCEL_URL
-								? `https://${process.env.VERCEL_URL}`
-								: `http://localhost:${config.port || 3001}`),
-						description: 'API Server',
+	// OpenAPI documentation endpoint. The JWT gate above only applies when a JWT
+	// secret is configured, so in a cron-only deployment `publicOpenApi: false`
+	// would otherwise silently still serve the spec. Fail closed: only register it
+	// when it is explicitly public, JWT-gated, or unauthenticated access was opted
+	// into. Same contract as /api/stats and /api/health/detailed.
+	const exposeOpenApi =
+		config.publicOpenApi === true ||
+		!!jwtSecret ||
+		config.allowUnauthenticated === true
+	if (!exposeOpenApi) {
+		logger.warn(
+			'/openapi NOT registered: publicOpenApi is false and no JWT is configured. ' +
+				'Set PG_HISTORY_JWT_SECRET, publicOpenApi: true, or allowUnauthenticated: true.',
+		)
+	}
+	if (exposeOpenApi) {
+		app.get(
+			'/openapi',
+			openAPIRouteHandler(app, {
+				documentation: {
+					info: {
+						title: 'pg-history Archiver API',
+						version: '1.0.0',
+						description: 'API for managing audit log archival',
 					},
-				],
-			},
-		}),
-	)
+					servers: [
+						{
+							// Prefer an explicit baseUrl, then Vercel deployment URL,
+							// then fall back to localhost for local dev.
+							url:
+								config.baseUrl ||
+								(process.env.VERCEL_URL
+									? `https://${process.env.VERCEL_URL}`
+									: `http://localhost:${config.port || 3001}`),
+							description: 'API Server',
+						},
+					],
+				},
+			}),
+		)
+	}
 
 	/**
 	 * Graceful shutdown: wait for in-flight requests to drain, then cancel the

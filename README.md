@@ -286,7 +286,7 @@ await archiver.setup()                 // idempotent — adds claim/archive colu
 |--------|---------|
 | `processBatch(table, cutoffDate)` | Claim → upload → finalize one day-bounded batch. Returns `{recordCount, fileSize, s3Path, status}`. |
 | `softDeleteArchived(table)` | Set `soft_deleted_at` on rows past grace period with confirmed S3 backup. |
-| `hardDeletePurged(table)` | Re-verify S3 inside TX, then DELETE rows past second grace period. |
+| `hardDeletePurged(table)` | Verify S3 existence + checksum, then DELETE rows past second grace period inside a locked TX (no network I/O under lock). |
 | `reapStaleClaims(minutes?)` | Release claims older than `staleClaimMinutes` (worker-crash recovery). |
 | `cleanupOrphanedFiles(table, {maxDeletions=10000})` | Delete S3 files not referenced in `audit_archive_metadata`. |
 | `pruneArchive(table, olderThan)` | Paired DELETE of metadata + S3 for archives past compliance retention. |
@@ -398,7 +398,7 @@ Bun.serve({ port: 3001, fetch: app.fetch })
 |--------|------|------|-------------|
 | `GET` | `/health` | No | Minimal liveness probe (`{status}` only) |
 | `GET` | `/api/health/detailed` | JWT or cron | Archival status + attempts + last completion |
-| `GET` | `/openapi` | JWT (unless `publicOpenApi: true`) | OpenAPI spec |
+| `GET` | `/openapi` | JWT (unless `publicOpenApi: true`); not registered at all when neither is configured | OpenAPI spec |
 | `GET` | `/api/stats` | JWT or cron | Archival stats (requires `enableArchiver`) |
 | `GET` | `/api/history/:table/:recordId` | JWT | Record history |
 | `POST` | `/api/history/search` | JWT | Search history |
@@ -410,7 +410,7 @@ Bun.serve({ port: 3001, fetch: app.fetch })
 - Set `PG_HISTORY_JWT_SECRET` to enable JWT on `/api/*`. Algorithm via `PG_HISTORY_JWT_ALG` (default `HS256`; supports `HS256/384/512`, `RS256/384/512`, `ES256/384/512`).
 - **Authorization** is separate from authentication: supply an `authorize` hook to scope access per tenant/record (returning `false` → `403`). Without it, any valid token can reach any configured table's history.
 - Set `archiveCronSecret` (or `CRON_SECRET` env) to authenticate `/api/archive`, `/api/stats`, and `/api/health/detailed` via timing-safe HMAC. In cron-only deployments (no JWT), these endpoints still require the bearer secret — and are **not registered at all** when neither JWT nor cron secret is configured (unless `allowUnauthenticated: true`).
-- `/health` and `/openapi` (when `publicOpenApi: true`) are public.
+- `/health` is always public. `/openapi` is public only with `publicOpenApi: true`; it is JWT-gated when a JWT secret is set, and **not registered at all** when neither a JWT secret, `publicOpenApi`, nor `allowUnauthenticated` is configured (so a cron-only deployment doesn't leak the API shape).
 - `OPTIONS` preflight bypasses JWT so CORS works.
 
 ### Health Check
@@ -620,7 +620,8 @@ const app = await createServer({
       default: 90,
       tables: { logs: 7, sessions: 30 },
     },
-    gracePeriod: 7,
+    gracePeriod: 7,   // days between archive→soft-delete and soft→hard-delete.
+                      // 0 = no grace (purge once the S3 backup is confirmed).
     batchSize: 10000,
   },
   // Optional: cap batch memory by serialized payload size (default 64 MiB).
@@ -711,7 +712,7 @@ const stats = await orchestrator.run(pool, { dryRun: true })
 | `PG_HISTORY_S3_BUCKET` | Archival | S3 bucket |
 | `PG_HISTORY_ARCHIVAL_INTERVAL_MS` | No | Background archival interval (default `3600000` / 1 hour) |
 | `PG_HISTORY_RETENTION_DAYS` | No | Default retention period (default `90`) |
-| `PG_HISTORY_GRACE_PERIOD_DAYS` | No | Grace period before hard delete (default `7`) |
+| `PG_HISTORY_GRACE_PERIOD_DAYS` | No | Grace period before hard delete (default `7`; `0` = no grace, purge once the S3 backup is confirmed) |
 | `PG_HISTORY_BATCH_SIZE` | No | Archival batch size (default `10000`) |
 | `CRON_SECRET` | Vercel cron | Protects `POST /api/archive` endpoint |
 
