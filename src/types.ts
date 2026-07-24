@@ -151,7 +151,7 @@ export interface ArchiverConfig {
 	/** Retention policies */
 	retention: RetentionConfig
 
-	/** Grace period before deletion (days) */
+	/** Grace period before deletion (days). 0 = no grace (purge as soon as the S3 backup is confirmed). */
 	gracePeriod: number
 
 	/** Batch size for processing (default: 10000) */

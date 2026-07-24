@@ -37,10 +37,14 @@ async function main() {
     )
   `)
 
-	// Create server in serverless mode with archiver enabled
+	// Create server in serverless mode with archiver enabled.
+	// This local demo opts out of JWT (createServer fails closed without one);
+	// /api/archive below is still protected by the cron secret. In production set
+	// PG_HISTORY_JWT_SECRET and an `authorize` hook instead.
 	const { app } = await createServer({
 		pool,
 		serverless: true,
+		allowUnauthenticated: true,
 		enableHistory: true,
 		historyConfig: { tables: ['events'] },
 		enableArchiver: true,

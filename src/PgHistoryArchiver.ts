@@ -44,9 +44,9 @@ export class PgHistoryArchiver {
 	private closed = false
 
 	constructor(config: ArchiverConfig) {
-		if (!Number.isFinite(config.gracePeriod) || config.gracePeriod < 1) {
+		if (!Number.isFinite(config.gracePeriod) || config.gracePeriod < 0) {
 			throw new Error(
-				`PgHistoryArchiver: gracePeriod must be a positive finite number (got: ${config.gracePeriod})`,
+				`PgHistoryArchiver: gracePeriod must be a non-negative finite number of days (got: ${config.gracePeriod})`,
 			)
 		}
 		this.config = config

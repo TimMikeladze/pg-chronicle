@@ -99,6 +99,9 @@ async function main() {
 		console.log(`   - Records soft deleted:   ${stats.totalRecordsSoftDeleted}`)
 		console.log(`   - Records hard deleted:   ${stats.totalRecordsHardDeleted}`)
 		console.log(`   - Errors:                 ${stats.errors.length}`)
+		for (const e of stats.errors) {
+			console.log(`     • [${e.table}/${e.operation}] ${e.error}`)
+		}
 		console.log(`   - Duration:               ${stats.durationMs}ms`)
 
 		// ── 3. Check what's left ─────────────────────────────
