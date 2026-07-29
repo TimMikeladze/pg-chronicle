@@ -10,16 +10,16 @@
 	--sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
 	--mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-	/* slate in dark, warm ledger paper in light */
-	--bg: light-dark(#fbfaf7, #0a0b0d);
-	--bg-raised: light-dark(#f4f1ea, #101216);
-	--bg-code: light-dark(#f8f6f1, #0c0e12);
-	--bg-inset: light-dark(#efebe2, #14171c);
-	--border: light-dark(#e2dcd0, #1f242c);
+	/* true black in dark, warm ledger paper in light */
+	--bg: light-dark(#fbfaf7, #000000);
+	--bg-raised: light-dark(#f4f1ea, #0b0d10);
+	--bg-code: light-dark(#f8f6f1, #07080a);
+	--bg-inset: light-dark(#efebe2, #121419);
+	--border: light-dark(#e2dcd0, #272d36);
 	--border-soft: light-dark(#ece7dd, #171b21);
-	--text: light-dark(#3a352d, #c2c7ce);
-	--text-dim: light-dark(#7a7368, #79828e);
-	--text-bright: light-dark(#17150f, #f2f4f7);
+	--text: light-dark(#3a352d, #d5dae1);
+	--text-dim: light-dark(#6b6459, #969fac);
+	--text-bright: light-dark(#17150f, #ffffff);
 
 	--accent: light-dark(#a8620d, #e8a33d);
 	--accent-soft: light-dark(#c07d24, #f5bb62);
@@ -29,14 +29,32 @@
 	--radius: 10px;
 	--measure: 46rem;
 	--nav-h: 3.5rem;
+
+	/*
+	 * light-dark() only accepts colors, so numeric per-scheme values have to be
+	 * switched with real selectors below. Defaults here are the dark values.
+	 */
+	--grain-opacity: 0.035;
+	--rules-opacity: 0.75;
+}
+
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme="dark"]) {
+		--grain-opacity: 0.38;
+		--rules-opacity: 0.9;
+	}
 }
 
 :root[data-theme="light"] {
 	color-scheme: light;
+	--grain-opacity: 0.38;
+	--rules-opacity: 0.9;
 }
 
 :root[data-theme="dark"] {
 	color-scheme: dark;
+	--grain-opacity: 0.035;
+	--rules-opacity: 0.75;
 }
 
 *,
@@ -61,14 +79,17 @@ body {
 	-webkit-font-smoothing: antialiased;
 }
 
-/* Fine grain over everything — paper tooth in light, sensor noise in dark. */
+/*
+ * Paper tooth in light. Kept to a whisper in dark — this noise composites far
+ * heavier than its opacity suggests and was lifting true blacks to ~#262628.
+ */
 body::before {
 	content: "";
 	position: fixed;
 	inset: 0;
 	z-index: 9999;
 	pointer-events: none;
-	opacity: light-dark(0.38, 0.12);
+	opacity: var(--grain-opacity);
 	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.32'/%3E%3C/svg%3E");
 }
 
@@ -262,7 +283,7 @@ a:hover {
 		transparent 2.25rem
 	);
 	mask-image: linear-gradient(to bottom, #000 10%, transparent 92%);
-	opacity: light-dark(0.9, 0.75);
+	opacity: var(--rules-opacity);
 }
 
 .hero-glow {
