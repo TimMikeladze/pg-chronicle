@@ -26,13 +26,87 @@ function readHero(md: string) {
 }
 
 /**
- * Drop the leading title/tagline/badges — the hero renders those — and point
+ * Drop the leading title/tagline/badges and the README's own Table of Contents
+ * — the hero and the generated section grid cover those — and point
  * repo-relative links at GitHub so they resolve off-repo.
  */
 function prepareBody(md: string) {
 	const tocIndex = md.indexOf('## Table of Contents')
-	const body = tocIndex === -1 ? md : md.slice(tocIndex)
+	const afterToc = md.indexOf('\n## ', tocIndex + 1)
+	const body = tocIndex === -1 || afterToc === -1 ? md : md.slice(afterToc + 1)
 	return body.replace(/\]\(\.\/([^)]+)\)/g, `](${REPO}/blob/main/$1)`)
+}
+
+/** The section list the README itself curates, in its order. */
+function parseToc(md: string) {
+	const start = md.indexOf('## Table of Contents')
+	if (start === -1) return []
+	const end = md.indexOf('\n## ', start + 1)
+	const block = md.slice(start, end === -1 ? undefined : end)
+	return [...block.matchAll(/^-\s*\[([^\]]+)\]\(#([^)]+)\)/gm)].map((m) => ({
+		text: m[1] ?? '',
+		anchor: m[2] ?? '',
+	}))
+}
+
+/**
+ * The intro prose sitting directly under each `##`, before any `###`. Used as
+ * the section-grid descriptions, so the cards stay in sync with the docs.
+ */
+function sectionIntros(md: string) {
+	const lines = md.split(/\r?\n/)
+	const marks: { line: number; slug: string }[] = []
+	lines.forEach((line, i) => {
+		if (line.startsWith('## ')) {
+			marks.push({ line: i, slug: slugify(line.slice(3).trim()) })
+		}
+	})
+
+	const intros = new Map<string, string>()
+	marks.forEach(({ line, slug }, i) => {
+		const end = marks[i + 1]?.line ?? lines.length
+		const paragraphs: string[] = []
+		let inFence = false
+		for (const raw of lines.slice(line + 1, end)) {
+			const s = raw.trim()
+			if (s.startsWith('```')) {
+				inFence = !inFence
+				continue
+			}
+			if (inFence) continue
+			if (s.startsWith('###')) break
+			// Skip tables, lists, quotes and badge rows — not descriptive prose.
+			if (!s || /^[|\-*>]/.test(s)) continue
+			paragraphs.push(s)
+			if (paragraphs.join(' ').length > 200) break
+		}
+		const intro = summarise(paragraphs.join(' '))
+		if (intro) intros.set(slug, intro)
+	})
+	return intros
+}
+
+/** First sentence or two of a paragraph, flattened to plain text. */
+function summarise(text: string) {
+	const plain = text
+		.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1') // links → their label
+		.replace(/\*\*([^*]+)\*\*/g, '$1') // bold only; bare _ and * are identifiers
+		.replace(/`/g, '')
+		.trim()
+	if (!plain) return ''
+
+	// Split only where a terminator is followed by a capital, so "Node.js" and
+	// "Fly.io" survive intact.
+	const sentences = plain.split(/(?<=[.!?])\s+(?=[A-Z])/)
+	let out = ''
+	for (const sentence of sentences) {
+		out = out ? `${out} ${sentence}` : sentence
+		if (out.length >= 60) break
+	}
+	out = out.trim().replace(/:$/, '.')
+	if (out.length <= 165) return out
+	const cut = out.slice(0, 165)
+	return `${cut.slice(0, cut.lastIndexOf(' ')).replace(/[,;:]$/, '')}…`
 }
 
 /** GitHub's heading slug algorithm, so the README's own TOC anchors resolve. */
@@ -120,6 +194,19 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 		)
 		.join('')
 
+	// Section grid: the README's own contents list, each entry carrying the
+	// intro sentence from the section it points at.
+	const intros = sectionIntros(readme)
+	const sections = parseToc(readme)
+		.map(({ text, anchor }) => {
+			const intro = intros.get(anchor)
+			return `<a class="section-card" href="#${escapeHtml(anchor)}">
+				<span class="section-name">${escapeHtml(text)}</span>
+				${intro ? `<span class="section-desc">${escapeHtml(intro)}</span>` : ''}
+			</a>`
+		})
+		.join('')
+
 	const html = `<a class="skip" href="#content">Skip to content</a>
 	<header class="nav">
 		<div class="nav-inner">
@@ -165,7 +252,10 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 		</section>
 
 		<div class="layout">
-			<article class="prose" id="content">${body}</article>
+			<article class="prose" id="content">
+				<nav class="sections" aria-label="Sections">${sections}</nav>
+				${body}
+			</article>
 			<aside class="rail" aria-label="On this page">
 				<p class="rail-head">On this page</p>
 				<ul>${rail}</ul>

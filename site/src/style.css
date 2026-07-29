@@ -759,51 +759,70 @@ a:hover {
 	border-bottom: none;
 }
 
-/* ---------- the README's own Table of Contents ---------- */
+/* ---------- section grid (generated from the README's contents) ---------- */
 
-.prose h2#table-of-contents {
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	overflow: hidden;
-	clip-path: inset(50%);
-	white-space: nowrap;
-}
-
-.prose h2#table-of-contents + ul {
+.sections {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
-	gap: 0;
+	grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+	gap: 1px;
 	margin: 0 0 1rem;
-	padding: 0;
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
-	background: var(--bg-raised);
-	list-style: none;
+	background: var(--border-soft);
 	overflow: hidden;
 }
 
-.prose h2#table-of-contents + ul li {
-	margin: 0;
-	border-top: 1px solid var(--border-soft);
-	border-right: 1px solid var(--border-soft);
-}
-
-.prose h2#table-of-contents + ul a {
-	display: block;
-	padding: 0.6rem 0.9rem;
+.section-card {
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+	padding: 1rem 1.1rem 1.15rem;
+	background: var(--bg-raised);
 	color: var(--text);
-	font-family: var(--mono);
-	font-size: 0.8rem;
-	transition:
-		background 0.12s ease,
-		color 0.12s ease;
+	transition: background 0.14s ease;
 }
 
-.prose h2#table-of-contents + ul a:hover {
+.section-card:hover {
 	background: var(--accent-wash);
-	color: var(--accent);
 	text-decoration: none;
+}
+
+.section-name {
+	display: flex;
+	align-items: baseline;
+	gap: 0.4rem;
+	color: var(--text-bright);
+	font-family: var(--mono);
+	font-size: 0.85rem;
+	font-weight: 500;
+	transition: color 0.14s ease;
+}
+
+/* Arrow slides out on hover. */
+.section-name::after {
+	content: "→";
+	color: var(--accent);
+	opacity: 0;
+	transform: translateX(-3px);
+	transition:
+		opacity 0.14s ease,
+		transform 0.14s ease;
+}
+
+.section-card:hover .section-name {
+	color: var(--accent);
+}
+
+.section-card:hover .section-name::after {
+	opacity: 1;
+	transform: translateX(0);
+}
+
+.section-desc {
+	color: var(--text-dim);
+	font-size: 0.8rem;
+	line-height: 1.5;
+	text-wrap: pretty;
 }
 
 /*
@@ -814,7 +833,7 @@ a:hover {
 @media (min-width: 60rem) {
 	.code-block,
 	.table-wrap,
-	.prose h2#table-of-contents + ul {
+	.sections {
 		margin-inline: -3rem;
 	}
 }
@@ -822,7 +841,7 @@ a:hover {
 @media (min-width: 72rem) {
 	.code-block,
 	.table-wrap,
-	.prose h2#table-of-contents + ul {
+	.sections {
 		margin-inline: 0 -6rem;
 	}
 }

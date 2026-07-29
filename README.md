@@ -152,6 +152,8 @@ Advisory locks prevent concurrent archival of the same table. Each step verifies
 
 ## Architecture
 
+How audit rows are stored on disk: the table layout, the partitioning scheme, and how primary keys of any shape become a single `record_id`.
+
 ### audit_log Schema
 
 One partitioned `audit_log` table — partitioned by `LIST (table_name)` so queries against one table don't scan others. You can query it directly if you want, but the typed `getHistory` / `search` API is recommended.
@@ -188,6 +190,8 @@ When the archiver is enabled, additional columns track lifecycle: `archived_at`,
 | None | `md5(row_to_json(...)::text)` — the value changes on every UPDATE, so `getHistory` cannot correlate INSERT with later UPDATEs. A warning is logged at setup; pass `requirePrimaryKey: true` to reject PK-less tables outright. Use tables with a PK for full history. |
 
 ## API Reference
+
+Every exported class, method and type: `PgHistory` for reading and reverting, `PgHistoryArchiver` and `Orchestrator` for archival, and `createServer` for the REST layer.
 
 ### `PgHistory`
 
@@ -372,6 +376,8 @@ All types exported from `pg-history` root: `ArchiverConfig`, `AuditEntry`, `Auth
 
 ## Server & REST API
 
+A ready-made Hono server exposing the audit trail over HTTP, with JWT or cron-secret auth on every endpoint that reads data.
+
 ```typescript
 import { Pool } from 'pg'
 import { createServer } from 'pg-history'
@@ -446,6 +452,8 @@ PG_HISTORY_DATABASE_URL=postgres://localhost:5432/mydb bun run src/server.ts
 ```
 
 ## Deployment
+
+Running the server for real — as a long-lived process on Fly.io, as serverless functions on Vercel, or anywhere else that runs a container.
 
 ### Fly.io
 
@@ -695,6 +703,8 @@ const stats = await orchestrator.run(pool, { dryRun: true })
 
 ## Environment Variables
 
+Every `PG_HISTORY_*` variable the library and server read, which ones are required for which deployment, and their defaults.
+
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `PG_HISTORY_DATABASE_URL` | Standalone server | PostgreSQL connection string |
@@ -796,6 +806,8 @@ try {
 ```
 
 ## Limitations
+
+What this deliberately does not do, and the sharp edges worth knowing before you adopt it.
 
 - **TRUNCATE is audited** as a single marker entry (`operation: 'TRUNCATE'`, `record_id: '(truncate)'`) — it has no per-row before/after images.
 - **DDL not audited.** `ALTER TABLE`, `DROP TABLE`, etc.
