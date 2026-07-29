@@ -1,0 +1,887 @@
+/*
+ * pg-history — "append-only ledger"
+ * Ink-on-slate, amber phosphor accent, ledger rules. Archival, not SaaS.
+ */
+
+:root {
+	color-scheme: light dark;
+
+	--display: "Martian Mono", ui-monospace, monospace;
+	--sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+	--mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+	/* slate in dark, warm ledger paper in light */
+	--bg: light-dark(#fbfaf7, #0a0b0d);
+	--bg-raised: light-dark(#f4f1ea, #101216);
+	--bg-code: light-dark(#f8f6f1, #0c0e12);
+	--bg-inset: light-dark(#efebe2, #14171c);
+	--border: light-dark(#e2dcd0, #1f242c);
+	--border-soft: light-dark(#ece7dd, #171b21);
+	--text: light-dark(#3a352d, #c2c7ce);
+	--text-dim: light-dark(#7a7368, #79828e);
+	--text-bright: light-dark(#17150f, #f2f4f7);
+
+	--accent: light-dark(#a8620d, #e8a33d);
+	--accent-soft: light-dark(#c07d24, #f5bb62);
+	--on-accent: light-dark(#fffaf2, #17120a);
+	--accent-wash: light-dark(rgba(168, 98, 13, 0.09), rgba(232, 163, 61, 0.13));
+
+	--radius: 10px;
+	--measure: 46rem;
+	--nav-h: 3.5rem;
+}
+
+:root[data-theme="light"] {
+	color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+	color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	scroll-behavior: smooth;
+	scroll-padding-top: calc(var(--nav-h) + 1.5rem);
+	-webkit-text-size-adjust: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	font-family: var(--sans);
+	font-size: 16px;
+	line-height: 1.7;
+	-webkit-font-smoothing: antialiased;
+}
+
+/* Fine grain over everything — paper tooth in light, sensor noise in dark. */
+body::before {
+	content: "";
+	position: fixed;
+	inset: 0;
+	z-index: 9999;
+	pointer-events: none;
+	opacity: light-dark(0.38, 0.12);
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.32'/%3E%3C/svg%3E");
+}
+
+a {
+	color: var(--accent);
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+	border-radius: 3px;
+}
+
+.skip {
+	position: absolute;
+	left: 1rem;
+	top: -4rem;
+	z-index: 100;
+	padding: 0.6rem 1rem;
+	border-radius: var(--radius);
+	background: var(--accent);
+	color: var(--on-accent);
+	transition: top 0.2s ease;
+}
+
+.skip:focus {
+	top: 1rem;
+	text-decoration: none;
+}
+
+/* ---------- nav ---------- */
+
+.nav {
+	position: sticky;
+	top: 0;
+	z-index: 50;
+	border-bottom: 1px solid transparent;
+	transition:
+		border-color 0.25s ease,
+		background 0.25s ease;
+}
+
+.nav.is-stuck {
+	border-bottom-color: var(--border);
+	background: color-mix(in srgb, var(--bg) 82%, transparent);
+	backdrop-filter: blur(12px) saturate(140%);
+}
+
+.nav-inner {
+	display: flex;
+	align-items: center;
+	gap: 0.85rem;
+	max-width: 78rem;
+	margin: 0 auto;
+	height: var(--nav-h);
+	padding: 0 1.5rem;
+}
+
+.brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.55rem;
+	color: var(--text-bright);
+	font-family: var(--display);
+	font-size: 0.82rem;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+.brand:hover {
+	text-decoration: none;
+}
+
+/* Three stacked bars — an audit record accreting rows. */
+.brand-mark {
+	position: relative;
+	width: 15px;
+	height: 15px;
+	flex: none;
+}
+
+.brand-mark::before,
+.brand-mark::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 3px;
+	border-radius: 1px;
+	background: var(--accent);
+}
+
+.brand-mark::before {
+	top: 0;
+	box-shadow: 0 6px 0 var(--accent-wash);
+}
+
+.brand-mark::after {
+	bottom: 0;
+	opacity: 0.55;
+}
+
+.version {
+	padding: 0.15rem 0.5rem;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--bg-raised);
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.7rem;
+	letter-spacing: 0.01em;
+}
+
+.nav-links {
+	display: flex;
+	gap: 1.25rem;
+	margin-left: auto;
+	font-size: 0.875rem;
+}
+
+.nav-links a {
+	color: var(--text-dim);
+	transition: color 0.15s ease;
+}
+
+.nav-links a:hover {
+	color: var(--text-bright);
+	text-decoration: none;
+}
+
+.theme-toggle {
+	display: grid;
+	place-items: center;
+	width: 2rem;
+	height: 2rem;
+	padding: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-raised);
+	cursor: pointer;
+	transition: border-color 0.15s ease;
+}
+
+.theme-toggle:hover {
+	border-color: var(--accent);
+}
+
+/* Crescent in dark, full disc in light. */
+.theme-icon {
+	width: 13px;
+	height: 13px;
+	border-radius: 50%;
+	background: var(--accent);
+	box-shadow: inset -4px -2px 0 0 var(--bg-raised);
+	transition: box-shadow 0.25s ease;
+}
+
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme="dark"]) .theme-icon {
+		box-shadow: inset 0 0 0 0 var(--bg-raised);
+	}
+}
+
+:root[data-theme="light"] .theme-icon {
+	box-shadow: inset 0 0 0 0 var(--bg-raised);
+}
+
+/* ---------- hero ---------- */
+
+.hero {
+	position: relative;
+	overflow: hidden;
+	border-bottom: 1px solid var(--border);
+}
+
+/* Ledger rules: ruled paper that fades as it falls away. */
+.hero-rules {
+	position: absolute;
+	inset: 0;
+	background-image: repeating-linear-gradient(
+		to bottom,
+		var(--border-soft) 0,
+		var(--border-soft) 1px,
+		transparent 1px,
+		transparent 2.25rem
+	);
+	mask-image: linear-gradient(to bottom, #000 10%, transparent 92%);
+	opacity: light-dark(0.9, 0.75);
+}
+
+.hero-glow {
+	position: absolute;
+	inset: -30% 0 auto 0;
+	height: 70%;
+	background: radial-gradient(
+		ellipse 55% 100% at 50% 50%,
+		var(--accent-wash),
+		transparent 70%
+	);
+	pointer-events: none;
+}
+
+.hero-inner {
+	position: relative;
+	z-index: 1;
+	max-width: 52rem;
+	margin: 0 auto;
+	padding: 6.5rem 1.5rem 5.5rem;
+	text-align: center;
+}
+
+.eyebrow {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin: 0 0 1.75rem;
+	padding: 0.3rem 0.85rem 0.3rem 0.6rem;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--bg-raised);
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.75rem;
+	letter-spacing: 0.02em;
+}
+
+.eyebrow-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-wash);
+}
+
+.hero-title {
+	margin: 0;
+	font-family: var(--display);
+	font-size: clamp(2rem, 6.5vw, 3.75rem);
+	font-weight: 700;
+	letter-spacing: -0.055em;
+	line-height: 1.02;
+	color: var(--text-bright);
+}
+
+.hero-tagline {
+	margin: 1.5rem auto 2.5rem;
+	max-width: 30rem;
+	font-size: clamp(1.05rem, 2.2vw, 1.35rem);
+	line-height: 1.45;
+	color: var(--text-dim);
+	text-wrap: balance;
+}
+
+.hero-actions {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 1.5rem;
+}
+
+.install {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.6rem;
+	padding: 0.7rem 0.75rem 0.7rem 1rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-code);
+	color: var(--text);
+	font-family: var(--mono);
+	font-size: 0.9rem;
+	cursor: pointer;
+	transition: border-color 0.15s ease;
+}
+
+.install:hover {
+	border-color: var(--accent);
+}
+
+.install .prompt {
+	color: var(--accent);
+	user-select: none;
+}
+
+.install code {
+	color: var(--text-bright);
+}
+
+.install .copy-state,
+.code-copy {
+	padding: 0.2rem 0.5rem;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--bg-inset);
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.68rem;
+	text-transform: uppercase;
+	letter-spacing: 0.07em;
+	min-width: 4.1rem;
+	text-align: center;
+	transition:
+		color 0.15s ease,
+		border-color 0.15s ease;
+}
+
+.install.is-copied .copy-state,
+.code-copy.is-copied {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+
+.hero-links {
+	display: flex;
+	justify-content: center;
+	gap: 0.6rem;
+}
+
+.btn {
+	padding: 0.6rem 1.5rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	color: var(--text);
+	font-size: 0.9rem;
+	font-weight: 500;
+	transition:
+		border-color 0.15s ease,
+		background 0.15s ease,
+		color 0.15s ease;
+}
+
+.btn:hover {
+	text-decoration: none;
+	border-color: var(--accent);
+	color: var(--text-bright);
+}
+
+.btn-primary {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: var(--on-accent);
+}
+
+.btn-primary:hover {
+	background: var(--accent-soft);
+	border-color: var(--accent-soft);
+	color: var(--on-accent);
+}
+
+/* staggered entrance */
+@media (prefers-reduced-motion: no-preference) {
+	.eyebrow,
+	.hero-title,
+	.hero-tagline,
+	.hero-actions {
+		animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+	}
+
+	.hero-title {
+		animation-delay: 0.06s;
+	}
+
+	.hero-tagline {
+		animation-delay: 0.12s;
+	}
+
+	.hero-actions {
+		animation-delay: 0.18s;
+	}
+}
+
+@keyframes rise {
+	from {
+		opacity: 0;
+		transform: translateY(10px);
+	}
+}
+
+/* ---------- layout ---------- */
+
+.layout {
+	max-width: 78rem;
+	margin: 0 auto;
+	padding: 0 1.5rem;
+}
+
+.rail {
+	display: none;
+}
+
+@media (min-width: 72rem) {
+	.layout {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 13rem;
+		gap: 3.5rem;
+	}
+
+	.rail {
+		display: block;
+		position: sticky;
+		top: calc(var(--nav-h) + 2.5rem);
+		align-self: start;
+		max-height: calc(100vh - var(--nav-h) - 4rem);
+		overflow-y: auto;
+		margin-top: 4rem;
+		padding-left: 1.1rem;
+		border-left: 1px solid var(--border);
+	}
+}
+
+.rail-head {
+	margin: 0 0 0.75rem;
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.68rem;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+}
+
+.rail ul {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.rail a {
+	display: block;
+	padding: 0.28rem 0;
+	color: var(--text-dim);
+	font-size: 0.82rem;
+	line-height: 1.4;
+	transition: color 0.15s ease;
+}
+
+.rail a:hover {
+	color: var(--text-bright);
+	text-decoration: none;
+}
+
+.rail a.is-active {
+	color: var(--accent);
+}
+
+/* ---------- prose ---------- */
+
+.prose {
+	max-width: var(--measure);
+	padding: 4rem 0 6rem;
+	overflow-wrap: break-word;
+}
+
+.prose h2,
+.prose h3,
+.prose h4 {
+	position: relative;
+	color: var(--text-bright);
+	letter-spacing: -0.025em;
+	line-height: 1.25;
+}
+
+.prose h2 {
+	margin: 4.5rem 0 1.25rem;
+	padding-top: 2.5rem;
+	border-top: 1px solid var(--border-soft);
+	font-size: 1.6rem;
+	font-weight: 600;
+}
+
+.prose > h2:first-child {
+	margin-top: 0;
+	padding-top: 0;
+	border-top: none;
+}
+
+.prose h3 {
+	margin: 2.75rem 0 0.9rem;
+	font-size: 1.15rem;
+	font-weight: 600;
+}
+
+.prose h4 {
+	margin: 2rem 0 0.75rem;
+	font-size: 0.95rem;
+	font-weight: 600;
+}
+
+.anchor {
+	position: absolute;
+	left: -1.25rem;
+	color: var(--border);
+	font-weight: 400;
+	opacity: 0;
+	transition:
+		opacity 0.15s ease,
+		color 0.15s ease;
+}
+
+.prose h2:hover .anchor,
+.prose h3:hover .anchor,
+.prose h4:hover .anchor {
+	opacity: 1;
+}
+
+.anchor:hover {
+	color: var(--accent);
+	text-decoration: none;
+}
+
+.prose p {
+	margin: 1.15rem 0;
+}
+
+.prose ul,
+.prose ol {
+	margin: 1.15rem 0;
+	padding-left: 1.35rem;
+}
+
+.prose li {
+	margin: 0.4rem 0;
+}
+
+.prose li::marker {
+	color: var(--accent);
+}
+
+.prose blockquote {
+	margin: 1.5rem 0;
+	padding: 0.25rem 0 0.25rem 1.15rem;
+	border-left: 2px solid var(--accent);
+	color: var(--text-dim);
+}
+
+.prose hr {
+	margin: 3rem 0;
+	border: none;
+	border-top: 1px solid var(--border-soft);
+}
+
+.prose img {
+	max-width: 100%;
+	vertical-align: middle;
+}
+
+.prose strong {
+	color: var(--text-bright);
+	font-weight: 600;
+}
+
+.prose :not(pre) > code {
+	padding: 0.12em 0.38em;
+	border: 1px solid var(--border-soft);
+	border-radius: 5px;
+	background: var(--bg-inset);
+	color: var(--text-bright);
+	font-family: var(--mono);
+	font-size: 0.84em;
+}
+
+/* ---------- code blocks ---------- */
+
+.code-block {
+	margin: 1.75rem 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-code);
+	overflow: hidden;
+}
+
+.code-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.45rem 0.6rem 0.45rem 0.9rem;
+	border-bottom: 1px solid var(--border-soft);
+	background: var(--bg-raised);
+}
+
+.code-lang {
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.68rem;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+}
+
+.code-copy {
+	cursor: pointer;
+}
+
+.code-copy:hover {
+	color: var(--text-bright);
+	border-color: var(--accent);
+}
+
+.code-block pre.shiki {
+	margin: 0;
+	padding: 1.1rem 1.25rem;
+	background: transparent;
+	overflow-x: auto;
+	font-size: 0.85rem;
+	line-height: 1.7;
+	tab-size: 2;
+}
+
+.code-block pre.shiki code {
+	display: block;
+	width: fit-content;
+	min-width: 100%;
+	font-family: var(--mono);
+}
+
+.shiki,
+.shiki span {
+	color: light-dark(var(--shiki-light), var(--shiki-dark));
+}
+
+/* ---------- tables: ledger rows ---------- */
+
+.table-wrap {
+	margin: 1.75rem 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	overflow-x: auto;
+}
+
+.prose table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.88rem;
+}
+
+.prose th,
+.prose td {
+	padding: 0.6rem 0.9rem;
+	text-align: left;
+	border-bottom: 1px solid var(--border-soft);
+	vertical-align: top;
+}
+
+.prose thead th {
+	background: var(--bg-raised);
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.68rem;
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: 0.09em;
+	white-space: nowrap;
+}
+
+.prose tbody tr {
+	transition: background 0.12s ease;
+}
+
+.prose tbody tr:hover {
+	background: var(--accent-wash);
+}
+
+.prose tbody tr:last-child td {
+	border-bottom: none;
+}
+
+/* ---------- the README's own Table of Contents ---------- */
+
+.prose h2#table-of-contents {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+.prose h2#table-of-contents + ul {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+	gap: 0;
+	margin: 0 0 1rem;
+	padding: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-raised);
+	list-style: none;
+	overflow: hidden;
+}
+
+.prose h2#table-of-contents + ul li {
+	margin: 0;
+	border-top: 1px solid var(--border-soft);
+	border-right: 1px solid var(--border-soft);
+}
+
+.prose h2#table-of-contents + ul a {
+	display: block;
+	padding: 0.6rem 0.9rem;
+	color: var(--text);
+	font-family: var(--mono);
+	font-size: 0.8rem;
+	transition:
+		background 0.12s ease,
+		color 0.12s ease;
+}
+
+.prose h2#table-of-contents + ul a:hover {
+	background: var(--accent-wash);
+	color: var(--accent);
+	text-decoration: none;
+}
+
+/*
+ * Code samples and API tables run wider than comfortable prose, so on roomy
+ * screens they break out past the text measure. Declared after the margin
+ * shorthands above so it wins.
+ */
+@media (min-width: 60rem) {
+	.code-block,
+	.table-wrap,
+	.prose h2#table-of-contents + ul {
+		margin-inline: -3rem;
+	}
+}
+
+@media (min-width: 72rem) {
+	.code-block,
+	.table-wrap,
+	.prose h2#table-of-contents + ul {
+		margin-inline: 0 -6rem;
+	}
+}
+
+/* ---------- footer ---------- */
+
+.footer {
+	border-top: 1px solid var(--border);
+	background: var(--bg-raised);
+}
+
+.footer-inner {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 1rem;
+	max-width: 78rem;
+	margin: 0 auto;
+	padding: 2.25rem 1.5rem 2.5rem;
+	color: var(--text-dim);
+	font-size: 0.85rem;
+}
+
+.footer-mark {
+	color: var(--text-bright);
+	font-family: var(--display);
+	font-size: 0.8rem;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+.footer-meta {
+	font-family: var(--mono);
+	font-size: 0.78rem;
+}
+
+.footer-links {
+	display: flex;
+	gap: 1.25rem;
+	margin-left: auto;
+}
+
+.footer-links a {
+	color: var(--text-dim);
+}
+
+.footer-links a:hover {
+	color: var(--text-bright);
+	text-decoration: none;
+}
+
+/* ---------- small screens ---------- */
+
+@media (max-width: 40rem) {
+	.nav-links {
+		gap: 0.9rem;
+		font-size: 0.82rem;
+	}
+
+	.version {
+		display: none;
+	}
+
+	.hero-inner {
+		padding: 4rem 1.25rem 3.5rem;
+	}
+
+	.install {
+		font-size: 0.8rem;
+	}
+
+	.prose {
+		padding: 2.5rem 0 4rem;
+	}
+
+	.anchor {
+		display: none;
+	}
+
+	.footer-links {
+		margin-left: 0;
+	}
+}

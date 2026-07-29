@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>pg-history</title>
+		<meta name="description" content="" />
+		<meta property="og:title" content="pg-history" />
+		<meta property="og:description" content="" />
+		<meta property="og:type" content="website" />
+		<meta name="twitter:card" content="summary" />
+		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+		<script>
+			// Apply the saved theme before first paint so there is no flash.
+			try {
+				const saved = localStorage.getItem('theme')
+				if (saved === 'light' || saved === 'dark') {
+					document.documentElement.dataset.theme = saved
+				}
+			} catch {}
+		</script>
+	</head>
+	<body>
+		<div id="app"><!--app-html--></div>
+		<script type="module" src="/src/main.ts"></script>
+	</body>
+</html>
