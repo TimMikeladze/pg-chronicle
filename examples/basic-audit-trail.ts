@@ -12,6 +12,7 @@
 
 import { Client, Pool } from 'pg'
 import { PgHistory } from '../src'
+import { assert, assertEqual, run } from './_assert'
 
 const DB_NAME = `pg_history_example_${Date.now()}`
 const ADMIN_URL =
@@ -88,6 +89,31 @@ async function main() {
 		console.log('─'.repeat(60))
 		console.log(`hasMore: ${result.hasMore}, nextCursor: ${result.nextCursor}`)
 
+		// ── Verify what we just demonstrated ──────────────────────
+		assertEqual(result.data.length, 4, 'expected 4 audit entries for users:1')
+		assertEqual(
+			result.data.map((e) => e.operation).join(','),
+			'DELETE,UPDATE,UPDATE,INSERT',
+			'entries should be newest-first',
+		)
+		assertEqual(result.hasMore, false, 'all entries fit in one page')
+
+		const insert = result.data[3]
+		assert(insert?.oldData == null, 'INSERT has no oldData')
+		assertEqual(
+			(insert?.newData as Record<string, unknown>)?.role,
+			'member',
+			'Alice started as a member',
+		)
+
+		const del = result.data[0]
+		assert(del?.newData == null, 'DELETE has no newData')
+		assertEqual(
+			(del?.oldData as Record<string, unknown>)?.email,
+			'alice@newdomain.com',
+			'DELETE captured the final email',
+		)
+
 		// ── 6. Clean up ───────────────────────────────────────────
 		await history.teardown()
 		await pool.end()
@@ -108,4 +134,4 @@ async function main() {
 	}
 }
 
-main().catch(console.error)
+run(main)

@@ -12,6 +12,7 @@
 
 import { Client, Pool } from 'pg'
 import { createServer } from '../src/server'
+import { assert, assertEqual, run } from './_assert'
 
 const DB_NAME = `pg_history_api_${Date.now()}`
 const ADMIN_URL =
@@ -64,6 +65,11 @@ async function main() {
 		// ── Health check ───────────────────────────────────────
 		const health = await fetch(`${base}/health`).then((r) => r.json())
 		console.log('GET /health →', health)
+		assertEqual(
+			(health as { status?: string }).status,
+			'ok',
+			'/health should report ok',
+		)
 
 		// ── Insert some data via SQL ───────────────────────────
 		await pool.query(`INSERT INTO tasks (title) VALUES ('Buy groceries')`)
@@ -77,11 +83,19 @@ async function main() {
 		const historyRes = await fetch(`${base}/api/history/tasks/1`).then((r) =>
 			r.json(),
 		)
-		for (const entry of (
+		const historyData = (
 			historyRes as { data: Array<{ operation: string; newData: unknown }> }
-		).data) {
+		).data
+		for (const entry of historyData) {
 			console.log(`  ${entry.operation}: ${JSON.stringify(entry.newData)}`)
 		}
+
+		// Task #1 was inserted then updated.
+		assertEqual(
+			historyData.map((e) => e.operation).join(','),
+			'UPDATE,INSERT',
+			'task #1 history over the REST API',
+		)
 
 		// ── POST /api/history/search ───────────────────────────
 		console.log('\n=== POST /api/history/search ===\n')
@@ -99,6 +113,7 @@ async function main() {
 			data: Array<{ recordId: string; newData: unknown }>
 		}
 		console.log(`  Found ${searchData.data.length} INSERT entries`)
+		assertEqual(searchData.data.length, 2, 'both tasks produced an INSERT')
 
 		// ── POST /api/history/revert ───────────────────────────
 		console.log('\n=== POST /api/history/revert ===\n')
@@ -119,26 +134,32 @@ async function main() {
 		// Revert the UPDATE (done=true → done=false) by targeting the UPDATE entry
 		const updateEntry = entries.find((e) => e.operation === 'UPDATE')
 
-		if (updateEntry) {
-			console.log(`  Reverting UPDATE entry ${updateEntry.id}...`)
+		assert(updateEntry, 'expected an UPDATE entry to revert')
 
-			const revertRes = await fetch(`${base}/api/history/revert`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					table: 'tasks',
-					recordId: '1',
-					auditEntryId: updateEntry.id,
-				}),
-			}).then((r) => r.json())
+		console.log(`  Reverting UPDATE entry ${updateEntry.id}...`)
 
-			console.log('  Revert result:', revertRes)
+		const revertRes = await fetch(`${base}/api/history/revert`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				table: 'tasks',
+				recordId: '1',
+				auditEntryId: updateEntry.id,
+			}),
+		}).then((r) => r.json())
 
-			const after = await pool.query(`SELECT * FROM tasks WHERE id = 1`)
-			console.log(
-				`  Task #1 after revert: done=${after.rows[0].done} (was true, now false)`,
-			)
-		}
+		console.log('  Revert result:', revertRes)
+		assertEqual(
+			(revertRes as { success?: boolean }).success,
+			true,
+			'revert endpoint should report success',
+		)
+
+		const after = await pool.query(`SELECT * FROM tasks WHERE id = 1`)
+		console.log(
+			`  Task #1 after revert: done=${after.rows[0].done} (was true, now false)`,
+		)
+		assertEqual(after.rows[0].done, false, 'revert undid done=true')
 
 		console.log('\nDone.')
 	} finally {
@@ -154,4 +175,4 @@ async function main() {
 	}
 }
 
-main().catch(console.error)
+run(main)

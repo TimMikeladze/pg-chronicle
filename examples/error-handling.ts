@@ -18,6 +18,7 @@ import {
 	SetupRequiredError,
 	TableNotConfiguredError,
 } from '../src/errors'
+import { assertThrows, run } from './_assert'
 
 const DB_NAME = `pg_history_errors_${Date.now()}`
 const ADMIN_URL =
@@ -45,13 +46,14 @@ async function main() {
 		console.log('1. Calling getHistory() before setup()...')
 		const history = new PgHistory({ pool, tables: ['users'] })
 
-		try {
-			await history.getHistory('users', '1')
-		} catch (error) {
-			if (error instanceof SetupRequiredError) {
-				console.log(`   Caught SetupRequiredError: ${error.message}`)
-			}
-		}
+		// assertThrows fails the example if the call *succeeds* or throws the
+		// wrong error type — a silent `catch` would hide both.
+		const setupErr = await assertThrows(
+			() => history.getHistory('users', '1'),
+			(e) => e instanceof SetupRequiredError,
+			'getHistory() before setup() should throw SetupRequiredError',
+		)
+		console.log(`   Caught SetupRequiredError: ${(setupErr as Error).message}`)
 
 		// Now set up properly
 		await history.setup()
@@ -60,56 +62,55 @@ async function main() {
 		// ── 2. TableNotConfiguredError ────────────────────────
 		console.log('2. Querying a table not in the configured list...')
 
-		try {
-			await history.getHistory('orders', '1')
-		} catch (error) {
-			if (error instanceof TableNotConfiguredError) {
-				console.log(`   Caught TableNotConfiguredError: ${error.message}`)
-			}
-		}
+		const tableErr = await assertThrows(
+			() => history.getHistory('orders', '1'),
+			(e) => e instanceof TableNotConfiguredError,
+			'unconfigured table should throw TableNotConfiguredError',
+		)
+		console.log(
+			`   Caught TableNotConfiguredError: ${(tableErr as Error).message}`,
+		)
 
 		// ── 3. AuditEntryNotFoundError ───────────────────────
 		console.log('\n3. Reverting with a non-existent audit entry ID...')
 
 		await pool.query(`INSERT INTO users (name) VALUES ('Alice')`)
 
-		try {
-			await history.revert('users', '1', '99999')
-		} catch (error) {
-			if (error instanceof AuditEntryNotFoundError) {
-				console.log(`   Caught AuditEntryNotFoundError: ${error.message}`)
-			}
-		}
+		const revertErr = await assertThrows(
+			() => history.revert('users', '1', '99999'),
+			(e) => e instanceof AuditEntryNotFoundError,
+			'unknown audit entry should throw AuditEntryNotFoundError',
+		)
+		console.log(
+			`   Caught AuditEntryNotFoundError: ${(revertErr as Error).message}`,
+		)
 
 		// ── 4. Catching any pg-history error ─────────────────
 		console.log('\n4. Using the base PgHistoryError class...')
 
-		try {
-			await history.search({
-				tables: ['nonexistent'],
-			})
-		} catch (error) {
-			if (error instanceof PgHistoryError) {
-				console.log(
-					`   Caught PgHistoryError (${error.constructor.name}): ${error.message}`,
-				)
-			}
-		}
+		const baseErr = await assertThrows(
+			() => history.search({ tables: ['nonexistent'] }),
+			(e) => e instanceof PgHistoryError,
+			'every pg-history error extends PgHistoryError',
+		)
+		console.log(
+			`   Caught PgHistoryError (${(baseErr as Error).constructor.name}): ${(baseErr as Error).message}`,
+		)
 
 		// ── 5. Invalid operation validation ──────────────────
 		console.log('\n5. Passing an invalid operation to search...')
 
-		try {
-			await history.search({
-				tables: ['users'],
-				// @ts-expect-error intentionally passing invalid operation
-				operation: 'TRUNCATE',
-			})
-		} catch (error) {
-			if (error instanceof Error) {
-				console.log(`   Caught Error: ${error.message}`)
-			}
-		}
+		const opErr = await assertThrows(
+			() =>
+				history.search({
+					tables: ['users'],
+					// @ts-expect-error intentionally passing invalid operation
+					operation: 'TRUNCATE',
+				}),
+			(e) => e instanceof Error && e.message.includes('Invalid operation'),
+			'an unknown operation should be rejected',
+		)
+		console.log(`   Caught Error: ${(opErr as Error).message}`)
 
 		console.log('\nAll error cases handled gracefully.')
 		await history.teardown()
@@ -123,4 +124,4 @@ async function main() {
 	}
 }
 
-main().catch(console.error)
+run(main)

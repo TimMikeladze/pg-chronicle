@@ -13,6 +13,7 @@
 
 import { Client, Pool } from 'pg'
 import { createServer } from '../src/server'
+import { assertEqual, run } from './_assert'
 
 const DB_NAME = `pg_history_cron_${Date.now()}`
 const ADMIN_URL =
@@ -80,6 +81,7 @@ async function main() {
 		console.log(`   Status: ${noAuthRes.status} (expected 401)`)
 		const noAuthBody = await noAuthRes.json()
 		console.log(`   Response: ${JSON.stringify(noAuthBody)}\n`)
+		assertEqual(noAuthRes.status, 401, 'archive must reject unauthenticated')
 
 		// ── 2. Try with wrong secret ─────────────────────────
 		console.log('2. POST /api/archive with wrong secret...')
@@ -88,6 +90,7 @@ async function main() {
 			headers: { authorization: 'Bearer wrong-secret' },
 		})
 		console.log(`   Status: ${wrongRes.status} (expected 401)\n`)
+		assertEqual(wrongRes.status, 401, 'archive must reject a wrong secret')
 
 		// ── 3. Trigger archival with correct secret ──────────
 		console.log('3. POST /api/archive with correct secret...')
@@ -98,12 +101,27 @@ async function main() {
 		console.log(`   Status: ${archiveRes.status}`)
 		const archiveBody = await archiveRes.json()
 		console.log(`   Response: ${JSON.stringify(archiveBody, null, 2)}\n`)
+		assertEqual(
+			archiveRes.status,
+			200,
+			'correct cron secret should be accepted',
+		)
+		assertEqual(
+			(archiveBody as { success?: boolean }).success,
+			true,
+			'archival run should report success',
+		)
 
 		// ── 4. Check health for archival status ──────────────
 		console.log('4. GET /health...')
 		const healthRes = await app.request('/health')
 		const health = await healthRes.json()
 		console.log(`   ${JSON.stringify(health, null, 2)}`)
+		assertEqual(
+			(health as { status?: string }).status,
+			'ok',
+			'/health should report ok after archival',
+		)
 
 		console.log('\nDone.')
 	} finally {
@@ -116,4 +134,4 @@ async function main() {
 	}
 }
 
-main().catch(console.error)
+run(main)

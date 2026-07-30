@@ -12,6 +12,7 @@
 
 import { Client, Pool } from 'pg'
 import { PgHistory } from '../src'
+import { assert, assertEqual, run } from './_assert'
 
 const DB_NAME = `pg_history_multi_table_${Date.now()}`
 const ADMIN_URL =
@@ -97,6 +98,11 @@ async function main() {
 			)
 		}
 
+		// 4 INSERTs + 3 UPDATEs + 1 DELETE across the three tables.
+		assertEqual(allChanges.data.length, 8, 'expected 8 entries across 3 tables')
+		const tablesSeen = new Set(allChanges.data.map((e) => e.tableName))
+		assertEqual(tablesSeen.size, 3, 'all three tables should appear in search')
+
 		// ── Composite PK history ─────────────────────────────────
 		// Composite PKs are joined with chr(31) (ASCII unit separator), not a
 		// human-readable delimiter — build the record_id the same way.
@@ -116,6 +122,10 @@ async function main() {
 			)
 		}
 
+		// The 'enterprise' tag was only inserted, never removed.
+		assertEqual(tagHistory.data.length, 1, 'enterprise tag has one entry')
+		assertEqual(tagHistory.data[0]?.operation, 'INSERT', 'and it is the INSERT')
+
 		console.log(
 			'\n=== Composite PK: customer_tags history for (1, priority) ===\n',
 		)
@@ -130,17 +140,38 @@ async function main() {
 			)
 		}
 
+		// The 'priority' tag was inserted then deleted — proves the chr(31)
+		// composite record_id round-trips for both operations.
+		assertEqual(
+			removedTagHistory.data.map((e) => e.operation).join(','),
+			'DELETE,INSERT',
+			'priority tag should have a DELETE and an INSERT',
+		)
+
 		// ── Invoice lifecycle ────────────────────────────────────
 		console.log('\n=== Invoice #1 full lifecycle ===\n')
 
 		const invoiceHistory = await history.getHistory('invoices', '1', {
 			order: 'asc',
 		})
+		const statuses: unknown[] = []
 		for (const entry of invoiceHistory.data) {
 			const status =
 				(entry.newData as Record<string, unknown>)?.status ?? '(deleted)'
+			statuses.push(status)
 			console.log(`  ${entry.operation.padEnd(6)} → status: ${status}`)
 		}
+
+		// order: 'asc' means oldest-first, so the lifecycle reads forward.
+		assertEqual(
+			statuses.join(','),
+			'draft,sent,paid',
+			'invoice lifecycle in ascending order',
+		)
+		assert(
+			invoiceHistory.data[0]?.operation === 'INSERT',
+			'ascending order starts with the INSERT',
+		)
 
 		// ── Clean up ─────────────────────────────────────────────
 		await history.teardown()
@@ -162,4 +193,4 @@ async function main() {
 	}
 }
 
-main().catch(console.error)
+run(main)

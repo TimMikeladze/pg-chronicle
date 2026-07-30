@@ -13,6 +13,7 @@
 
 import { Client, Pool } from 'pg'
 import { PgHistory } from '../src'
+import { assert, assertEqual, run } from './_assert'
 
 const DB_NAME = `pg_history_search_revert_${Date.now()}`
 const ADMIN_URL =
@@ -74,6 +75,18 @@ async function main() {
 			console.log(`  ${entry.operation} order #${entry.recordId}`)
 		}
 
+		// Only Alice's order was refunded — one matching UPDATE entry.
+		assertEqual(
+			refundedOrders.data.length,
+			1,
+			'containment search should match the single refunded order',
+		)
+		assertEqual(
+			refundedOrders.data[0]?.recordId,
+			'1',
+			'refunded order is order #1 (Alice)',
+		)
+
 		console.log('\n=== Text search ===\n')
 
 		// Plain text search — falls back to ILIKE
@@ -83,6 +96,17 @@ async function main() {
 		})
 		console.log(`Entries mentioning "Alice": ${aliceResults.data.length}`)
 
+		// 1 INSERT + 2 UPDATEs all mention Alice.
+		assertEqual(
+			aliceResults.data.length,
+			3,
+			'text search should match 3 entries',
+		)
+		assert(
+			aliceResults.data.every((e) => e.recordId === '1'),
+			'every Alice match belongs to order #1',
+		)
+
 		console.log('\n=== Filter by operation ===\n')
 
 		const updates = await history.search({
@@ -90,6 +114,13 @@ async function main() {
 			operation: 'UPDATE',
 		})
 		console.log(`Total UPDATE entries: ${updates.data.length}`)
+
+		// 2 shipped + 1 refund.
+		assertEqual(updates.data.length, 3, 'expected 3 UPDATE entries')
+		assert(
+			updates.data.every((e) => e.operation === 'UPDATE'),
+			'operation filter should exclude INSERTs',
+		)
 
 		// ── Revert Alice's order back to "shipped" state ─────────
 		console.log('\n=== Revert ===\n')
@@ -105,26 +136,32 @@ async function main() {
 				(e.newData as Record<string, unknown>)?.status === 'shipped',
 		)
 
-		if (shippedEntry) {
-			console.log('Current state:')
-			const current = await pool.query(`SELECT * FROM orders WHERE id = 1`)
-			console.log(`  ${JSON.stringify(current.rows[0])}`)
+		assert(shippedEntry, 'expected an UPDATE entry with status "shipped"')
 
-			console.log(`\nReverting order #1 to audit entry ${shippedEntry.id}...`)
-			await history.revert('orders', '1', shippedEntry.id)
+		console.log('Current state:')
+		const current = await pool.query(`SELECT * FROM orders WHERE id = 1`)
+		console.log(`  ${JSON.stringify(current.rows[0])}`)
+		assertEqual(current.rows[0].status, 'refunded', 'order starts out refunded')
 
-			const after = await pool.query(`SELECT * FROM orders WHERE id = 1`)
-			console.log(`\nAfter revert:`)
-			console.log(`  ${JSON.stringify(after.rows[0])}`)
+		console.log(`\nReverting order #1 to audit entry ${shippedEntry.id}...`)
+		await history.revert('orders', '1', shippedEntry.id)
 
-			// The revert itself is audited
-			const postRevert = await history.getHistory('orders', '1', { limit: 1 })
-			const revertEntry = postRevert.data[0]
-			if (revertEntry) {
-				console.log(`\nRevert audit entry:`)
-				console.log(`  operation: ${revertEntry.operation}`)
-			}
-		}
+		const after = await pool.query(`SELECT * FROM orders WHERE id = 1`)
+		console.log(`\nAfter revert:`)
+		console.log(`  ${JSON.stringify(after.rows[0])}`)
+
+		// revert() restores the state *before* the target entry — the UPDATE that
+		// set status='shipped' had oldData status='pending', total=150.
+		assertEqual(after.rows[0].status, 'pending', 'revert restored the status')
+		assertEqual(after.rows[0].total, '150.00', 'revert restored the total')
+
+		// The revert itself is audited
+		const postRevert = await history.getHistory('orders', '1', { limit: 1 })
+		const revertEntry = postRevert.data[0]
+		assert(revertEntry, 'the revert should produce its own audit entry')
+		console.log(`\nRevert audit entry:`)
+		console.log(`  operation: ${revertEntry.operation}`)
+		assertEqual(revertEntry.operation, 'UPDATE', 'revert is recorded as UPDATE')
 
 		// ── Clean up ─────────────────────────────────────────────
 		await history.teardown()
@@ -146,4 +183,4 @@ async function main() {
 	}
 }
 
-main().catch(console.error)
+run(main)

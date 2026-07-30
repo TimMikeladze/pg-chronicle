@@ -96,6 +96,8 @@ docker compose up -d
 bun examples/basic-audit-trail.ts
 ```
 
+Examples assert their own output, so they exit non-zero if the behavior they document ever changes. `bun test` runs all of them (see [`test/examples.test.ts`](./test/examples.test.ts)); the archival examples are skipped when MinIO isn't reachable.
+
 | Example | What it shows |
 |---------|---------------|
 | [basic-audit-trail.ts](./examples/basic-audit-trail.ts) | Setup, INSERT/UPDATE/DELETE tracking, history retrieval |

@@ -16,6 +16,7 @@ import { Client, Pool } from 'pg'
 import { PgHistory } from '../src'
 import { Orchestrator } from '../src/orchestrator'
 import { setupArchiverSchema } from '../src/schema'
+import { assert, assertEqual, run } from './_assert'
 
 const DB_NAME = `pg_history_archival_${Date.now()}`
 const ADMIN_URL =
@@ -68,6 +69,11 @@ async function main() {
 		console.log(
 			`   ${countResult.rows[0].count} audit records created and backdated\n`,
 		)
+		assertEqual(
+			Number(countResult.rows[0].count),
+			30,
+			'30 INSERTs should produce 30 audit records',
+		)
 
 		// ── 2. Run the orchestrator ──────────────────────────
 		console.log('2. Running orchestrator (dry run first)...\n')
@@ -90,6 +96,16 @@ async function main() {
 		const dryStats = await orchestrator.run(pool, { dryRun: true })
 		console.log(`   Dry run found ${dryStats.tables.length} tables\n`)
 
+		// A dry run must leave the audit log untouched.
+		const afterDryRun = await pool.query(
+			`SELECT COUNT(*) as count FROM "public"."audit_log"`,
+		)
+		assertEqual(
+			Number(afterDryRun.rows[0].count),
+			30,
+			'dry run must not delete anything',
+		)
+
 		// Real run — actually archives
 		console.log('3. Running orchestrator (real)...\n')
 		const stats = await orchestrator.run(pool)
@@ -104,12 +120,30 @@ async function main() {
 		}
 		console.log(`   - Duration:               ${stats.durationMs}ms`)
 
+		assertEqual(stats.errors.length, 0, 'archival run should have no errors')
+		assertEqual(stats.totalRecordsArchived, 30, 'all 30 records archived to S3')
+		assertEqual(
+			stats.totalRecordsSoftDeleted,
+			30,
+			'all 30 records soft deleted',
+		)
+		assertEqual(
+			stats.totalRecordsHardDeleted,
+			30,
+			'all 30 records hard deleted',
+		)
+
 		// ── 3. Check what's left ─────────────────────────────
 		const remaining = await pool.query(
 			`SELECT COUNT(*) as count FROM "public"."audit_log"`,
 		)
 		console.log(
 			`\n4. Remaining audit records in database: ${remaining.rows[0].count}`,
+		)
+		assertEqual(
+			Number(remaining.rows[0].count),
+			0,
+			'hard delete should empty the audit log',
 		)
 
 		// Check S3 metadata
@@ -125,6 +159,24 @@ async function main() {
 			)
 		}
 
+		// batchSize 10 over 30 records → 3 Parquet files, 10 records each.
+		assertEqual(metadata.rows.length, 3, 'batchSize 10 should produce 3 files')
+		assertEqual(
+			metadata.rows.reduce(
+				(sum: number, r: { record_count: string }) =>
+					sum + Number(r.record_count),
+				0,
+			),
+			30,
+			'archive metadata should account for all 30 records',
+		)
+		assert(
+			metadata.rows.every(
+				(r: { file_size: string }) => Number(r.file_size) > 0,
+			),
+			'every Parquet file should be non-empty',
+		)
+
 		console.log('\nDone.')
 		await history.teardown()
 	} finally {
@@ -137,4 +189,4 @@ async function main() {
 	}
 }
 
-main().catch(console.error)
+run(main)
