@@ -322,6 +322,7 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 								.join('')}
 							<div class="ledger-row ledger-row--pending" style="--i:4">
 								<span class="ledger-caret" aria-hidden="true"></span>
+								<span class="ledger-wait">watching for next change&hellip;</span>
 							</div>
 						</div>
 					</div>

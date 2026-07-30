@@ -354,7 +354,7 @@ a:hover {
 	border: 1px solid var(--border);
 	border-radius: 6px;
 	background: var(--bg-inset);
-	color: var(--text-dim);
+	color: var(--text);
 	font-family: var(--mono);
 	font-size: 0.68rem;
 	text-transform: uppercase;
@@ -364,6 +364,12 @@ a:hover {
 	transition:
 		color 0.15s ease,
 		border-color 0.15s ease;
+}
+
+.install:hover .copy-state,
+.code-copy:hover {
+	color: var(--text-bright);
+	border-color: var(--accent);
 }
 
 .install.is-copied .copy-state,
@@ -381,15 +387,15 @@ a:hover {
 
 .pm-tabs {
 	display: inline-flex;
-	gap: 0.2rem;
-	padding: 0.2rem;
+	gap: 0.3rem;
+	padding: 0.25rem;
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
 	background: var(--bg-raised);
 }
 
 .pm-tab {
-	padding: 0.3rem 0.75rem;
+	padding: 0.3rem 0.85rem;
 	border: none;
 	border-radius: calc(var(--radius) - 4px);
 	background: transparent;
@@ -565,7 +571,9 @@ a:hover {
 }
 
 .ledger-row--pending {
-	grid-template-columns: 1fr;
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
 	padding-top: 0.4rem;
 	padding-bottom: 0.65rem;
 }
@@ -575,6 +583,12 @@ a:hover {
 	width: 0.5rem;
 	height: 0.95rem;
 	background: var(--accent);
+	flex: none;
+}
+
+.ledger-wait {
+	color: var(--text-dim);
+	opacity: 0.65;
 }
 
 @media (prefers-reduced-motion: no-preference) {
