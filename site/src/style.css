@@ -1,6 +1,6 @@
 /*
  * pg-history — "append-only ledger"
- * Ink-on-slate, amber phosphor accent, ledger rules. Archival, not SaaS.
+ * Ink-on-slate, black-and-white accent, ledger rules. Archival, not SaaS.
  */
 
 :root {
@@ -21,10 +21,10 @@
 	--text-dim: light-dark(#6b6459, #969fac);
 	--text-bright: light-dark(#17150f, #ffffff);
 
-	--accent: light-dark(#a8620d, #e8a33d);
-	--accent-soft: light-dark(#c07d24, #f5bb62);
-	--on-accent: light-dark(#fffaf2, #17120a);
-	--accent-wash: light-dark(rgba(168, 98, 13, 0.09), rgba(232, 163, 61, 0.13));
+	--accent: light-dark(#17150f, #ffffff);
+	--accent-soft: light-dark(#3a352d, #d5dae1);
+	--on-accent: light-dark(#fffaf2, #000000);
+	--accent-wash: light-dark(rgba(23, 21, 15, 0.07), rgba(255, 255, 255, 0.12));
 
 	--radius: 10px;
 	--measure: 46rem;
@@ -169,33 +169,11 @@ a:hover {
 	text-decoration: none;
 }
 
-/* Three stacked bars — an audit record accreting rows. */
 .brand-mark {
-	position: relative;
-	width: 15px;
-	height: 15px;
+	width: 18px;
+	height: 18px;
 	flex: none;
-}
-
-.brand-mark::before,
-.brand-mark::after {
-	content: "";
-	position: absolute;
-	left: 0;
-	right: 0;
-	height: 3px;
-	border-radius: 1px;
-	background: var(--accent);
-}
-
-.brand-mark::before {
-	top: 0;
-	box-shadow: 0 6px 0 var(--accent-wash);
-}
-
-.brand-mark::after {
-	bottom: 0;
-	opacity: 0.55;
+	color: var(--text-bright);
 }
 
 .version {
