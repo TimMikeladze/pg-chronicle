@@ -60,6 +60,21 @@ wireCopy(
 	must<HTMLElement>('.copy-state', installButton),
 )
 
+const installCode = must<HTMLElement>('code', installButton)
+for (const tab of document.querySelectorAll<HTMLButtonElement>('.pm-tab')) {
+	tab.addEventListener('click', () => {
+		const pm = tab.dataset.pm ?? 'bun'
+		const command = installButton.dataset[`install${pm[0]?.toUpperCase()}${pm.slice(1)}`]
+		if (!command) return
+		installButton.dataset.copy = command
+		installCode.textContent = command
+		for (const other of document.querySelectorAll<HTMLButtonElement>('.pm-tab')) {
+			other.classList.toggle('is-active', other === tab)
+			other.setAttribute('aria-selected', String(other === tab))
+		}
+	})
+}
+
 for (const block of document.querySelectorAll<HTMLElement>('.code-block')) {
 	const button = must<HTMLButtonElement>('.code-copy', block)
 	wireCopy(button, () => block.querySelector('pre')?.textContent ?? '', button)

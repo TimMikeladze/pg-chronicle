@@ -169,24 +169,6 @@ a:hover {
 	text-decoration: none;
 }
 
-.brand-mark {
-	width: 18px;
-	height: 18px;
-	flex: none;
-	color: var(--text-bright);
-}
-
-.version {
-	padding: 0.15rem 0.5rem;
-	border: 1px solid var(--border);
-	border-radius: 999px;
-	background: var(--bg-raised);
-	color: var(--text-dim);
-	font-family: var(--mono);
-	font-size: 0.7rem;
-	letter-spacing: 0.01em;
-}
-
 .nav-links {
 	display: flex;
 	gap: 1.25rem;
@@ -386,6 +368,45 @@ a:hover {
 	border-color: var(--accent);
 }
 
+.install-group {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.6rem;
+}
+
+.pm-tabs {
+	display: inline-flex;
+	gap: 0.2rem;
+	padding: 0.2rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-raised);
+}
+
+.pm-tab {
+	padding: 0.3rem 0.75rem;
+	border: none;
+	border-radius: calc(var(--radius) - 4px);
+	background: transparent;
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.78rem;
+	cursor: pointer;
+	transition:
+		background 0.15s ease,
+		color 0.15s ease;
+}
+
+.pm-tab:hover {
+	color: var(--text-bright);
+}
+
+.pm-tab.is-active {
+	background: var(--accent);
+	color: var(--on-accent);
+}
+
 .hero-links {
 	display: flex;
 	justify-content: center;
@@ -393,6 +414,9 @@ a:hover {
 }
 
 .btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
 	padding: 0.6rem 1.5rem;
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
@@ -403,6 +427,12 @@ a:hover {
 		border-color 0.15s ease,
 		background 0.15s ease,
 		color 0.15s ease;
+}
+
+.btn-icon {
+	width: 16px;
+	height: 16px;
+	flex: none;
 }
 
 .btn:hover {
@@ -833,9 +863,8 @@ a:hover {
 
 .footer-inner {
 	display: flex;
-	flex-wrap: wrap;
+	justify-content: center;
 	align-items: center;
-	gap: 1rem;
 	max-width: 78rem;
 	margin: 0 auto;
 	padding: 2.25rem 1.5rem 2.5rem;
@@ -843,23 +872,9 @@ a:hover {
 	font-size: 0.85rem;
 }
 
-.footer-mark {
-	color: var(--text-bright);
-	font-family: var(--display);
-	font-size: 0.8rem;
-	font-weight: 700;
-	letter-spacing: -0.02em;
-}
-
-.footer-meta {
-	font-family: var(--mono);
-	font-size: 0.78rem;
-}
-
 .footer-links {
 	display: flex;
 	gap: 1.25rem;
-	margin-left: auto;
 }
 
 .footer-links a {
@@ -879,10 +894,6 @@ a:hover {
 		font-size: 0.82rem;
 	}
 
-	.version {
-		display: none;
-	}
-
 	.hero-inner {
 		padding: 4rem 1.25rem 3.5rem;
 	}
@@ -897,9 +908,5 @@ a:hover {
 
 	.anchor {
 		display: none;
-	}
-
-	.footer-links {
-		margin-left: 0;
 	}
 }

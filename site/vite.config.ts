@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
-import { renderPage } from './prerender'
+import { renderLlmsTxt, renderPage } from './prerender'
 
 const siteDir = import.meta.dirname
 const repoRoot = path.resolve(siteDir, '..')
@@ -35,6 +35,17 @@ function prerenderReadme(): Plugin {
 				if (sources.includes(file)) {
 					server.ws.send({ type: 'full-reload' })
 				}
+			})
+			server.middlewares.use('/llms.txt', async (_req, res) => {
+				res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+				res.end(await renderLlmsTxt(siteDir))
+			})
+		},
+		async generateBundle() {
+			this.emitFile({
+				type: 'asset',
+				fileName: 'llms.txt',
+				source: await renderLlmsTxt(siteDir),
 			})
 		},
 	}

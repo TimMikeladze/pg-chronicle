@@ -20,8 +20,13 @@ function readHero(md: string) {
 		.split(/\r?\n/)
 		.slice(1)
 		.find((l) => l.trim() && !l.startsWith('['))
-	const install =
-		/```bash\n(bun add [^\n]+)\n```/.exec(md)?.[1] ?? 'bun add pg-history'
+	const pkg =
+		/```bash\nbun add ([^\n]+)\n```/.exec(md)?.[1] ?? 'pg-history'
+	const install = {
+		bun: `bun add ${pkg}`,
+		npm: `npm install ${pkg}`,
+		pnpm: `pnpm add ${pkg}`,
+	}
 	return { title, tagline: tagline?.trim() ?? '', install }
 }
 
@@ -133,16 +138,45 @@ export interface RenderedPage {
 }
 
 /**
+ * llms.txt (see llmstxt.org): a plain-text map of the docs for LLMs to read
+ * instead of scraping the rendered page. Built from the same README sections
+ * as the on-page section grid, so the two stay in sync.
+ */
+export async function renderLlmsTxt(siteDir: string): Promise<string> {
+	const repoRoot = path.resolve(siteDir, '..')
+	const readme = await readFile(path.join(repoRoot, 'README.md'), 'utf8')
+	const { title, tagline } = readHero(readme)
+	const intros = sectionIntros(readme)
+	const sections = parseToc(readme)
+		.map(({ text, anchor }) => {
+			const intro = intros.get(anchor)
+			return `- [${text}](${REPO}/blob/main/README.md#${anchor})${intro ? `: ${intro}` : ''}`
+		})
+		.join('\n')
+
+	return `# ${title}
+
+> ${tagline}
+
+## Docs
+
+${sections}
+
+## Links
+
+- [Full README](${REPO}/blob/main/README.md)
+- [GitHub](${REPO})
+- [npm](${NPM})
+`
+}
+
+/**
  * Renders the whole page to static HTML at build time. Nothing here ships to
  * the browser — the client bundle only wires up the interactive bits.
  */
 export async function renderPage(siteDir: string): Promise<RenderedPage> {
 	const repoRoot = path.resolve(siteDir, '..')
-	const [readme, pkgRaw] = await Promise.all([
-		readFile(path.join(repoRoot, 'README.md'), 'utf8'),
-		readFile(path.join(repoRoot, 'package.json'), 'utf8'),
-	])
-	const version = (JSON.parse(pkgRaw) as { version: string }).version
+	const readme = await readFile(path.join(repoRoot, 'README.md'), 'utf8')
 
 	const highlighter = await createHighlighterCore({
 		themes: [vitesseDark, vitesseLight],
@@ -211,24 +245,13 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 	<header class="nav">
 		<div class="nav-inner">
 			<a class="brand" href="#top">
-				<svg class="brand-mark" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
-					<ellipse cx="19" cy="10.5" rx="3.4" ry="4" />
-					<ellipse cx="13" cy="17.5" rx="7.5" ry="6.3" />
-					<circle cx="21.5" cy="14" r="5.3" />
-					<path d="M25.6 15.5c1.6 2.7 1.1 6.1-1.6 7.6 1.7-2.8 1.2-5.3.2-7.1z" />
-					<rect x="8" y="22.3" width="2.2" height="5" rx="1.1" />
-					<rect x="11.4" y="23" width="2.2" height="5" rx="1.1" />
-					<rect x="16.4" y="23" width="2.2" height="5" rx="1.1" />
-					<rect x="19.8" y="22.3" width="2.2" height="5" rx="1.1" />
-					<path d="M6.3 15.2c-1.6 1-1.7 3.5-.2 4.9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-				</svg>
 				<span class="brand-name">${escapeHtml(title)}</span>
 			</a>
-			<span class="version">v${escapeHtml(version)}</span>
 			<nav class="nav-links">
 				<a href="#quick-start">Docs</a>
 				<a href="${REPO}">GitHub</a>
 				<a href="${NPM}">npm</a>
+				<a href="/llms.txt">llms.txt</a>
 			</nav>
 			<button class="theme-toggle" type="button" aria-label="Toggle color theme">
 				<span class="theme-icon" aria-hidden="true"></span>
@@ -248,14 +271,28 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 				<h1 class="hero-title">${escapeHtml(title)}</h1>
 				<p class="hero-tagline">${escapeHtml(tagline)}</p>
 				<div class="hero-actions">
-					<button class="install" type="button" data-copy="${escapeHtml(install)}">
-						<span class="prompt" aria-hidden="true">$</span>
-						<code>${escapeHtml(install)}</code>
-						<span class="copy-state">copy</span>
-					</button>
+					<div class="install-group">
+						<div class="pm-tabs" role="tablist" aria-label="Package manager">
+							${(['bun', 'npm', 'pnpm'] as const)
+								.map(
+									(pm, i) =>
+										`<button class="pm-tab${i === 0 ? ' is-active' : ''}" type="button" role="tab" aria-selected="${i === 0}" data-pm="${pm}">${pm}</button>`,
+								)
+								.join('')}
+						</div>
+						<button class="install" type="button" data-copy="${escapeHtml(install.bun)}" data-install-bun="${escapeHtml(install.bun)}" data-install-npm="${escapeHtml(install.npm)}" data-install-pnpm="${escapeHtml(install.pnpm)}">
+							<span class="prompt" aria-hidden="true">$</span>
+							<code>${escapeHtml(install.bun)}</code>
+							<span class="copy-state">copy</span>
+						</button>
+					</div>
 					<div class="hero-links">
-						<a class="btn btn-primary" href="${REPO}">GitHub</a>
-						<a class="btn" href="${NPM}">npm</a>
+						<a class="btn btn-primary" href="${REPO}">
+							<svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
+								<path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+							</svg>
+							GitHub
+						</a>
 					</div>
 				</div>
 			</div>
@@ -275,12 +312,9 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 
 	<footer class="footer">
 		<div class="footer-inner">
-			<span class="footer-mark">${escapeHtml(title)}</span>
-			<span class="footer-meta">MIT · © Tim Mikeladze</span>
 			<nav class="footer-links">
-				<a href="${REPO}">GitHub</a>
-				<a href="${NPM}">npm</a>
-				<a href="${REPO}/issues">Issues</a>
+				<a href="https://x.com/linesofcode">X</a>
+				<a href="https://www.linkedin.com/in/tim-mikeladze">LinkedIn</a>
 			</nav>
 		</div>
 	</footer>`
