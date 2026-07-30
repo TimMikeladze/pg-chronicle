@@ -20,8 +20,7 @@ function readHero(md: string) {
 		.split(/\r?\n/)
 		.slice(1)
 		.find((l) => l.trim() && !l.startsWith('['))
-	const pkg =
-		/```bash\nbun add ([^\n]+)\n```/.exec(md)?.[1] ?? 'pg-history'
+	const pkg = /```bash\nbun add ([^\n]+)\n```/.exec(md)?.[1] ?? 'pg-history'
 	const install = {
 		bun: `bun add ${pkg}`,
 		npm: `npm install ${pkg}`,
@@ -305,10 +304,34 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 						</div>
 						<div class="ledger-rows">
 							${[
-								{ op: '+', kind: 'INSERT', table: 'orders', actor: 'api-worker-2', time: '09:40:55.771' },
-								{ op: '-', kind: 'DELETE', table: 'sessions', actor: 'svc-auth', time: '09:40:59.220' },
-								{ op: '~', kind: 'UPDATE', table: 'invoices', actor: 'admin@acme', time: '09:41:04.902' },
-								{ op: '~', kind: 'UPDATE', table: 'orders', actor: 'svc-billing', time: '09:41:07.114' },
+								{
+									op: '+',
+									kind: 'INSERT',
+									table: 'orders',
+									actor: 'api-worker-2',
+									time: '09:40:55.771',
+								},
+								{
+									op: '-',
+									kind: 'DELETE',
+									table: 'sessions',
+									actor: 'svc-auth',
+									time: '09:40:59.220',
+								},
+								{
+									op: '~',
+									kind: 'UPDATE',
+									table: 'invoices',
+									actor: 'admin@acme',
+									time: '09:41:04.902',
+								},
+								{
+									op: '~',
+									kind: 'UPDATE',
+									table: 'orders',
+									actor: 'svc-billing',
+									time: '09:41:07.114',
+								},
 							]
 								.map(
 									(row, i) => `<div class="ledger-row" style="--i:${i}">

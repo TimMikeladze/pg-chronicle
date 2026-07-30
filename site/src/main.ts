@@ -64,11 +64,14 @@ const installCode = must<HTMLElement>('code', installButton)
 for (const tab of document.querySelectorAll<HTMLButtonElement>('.pm-tab')) {
 	tab.addEventListener('click', () => {
 		const pm = tab.dataset.pm ?? 'bun'
-		const command = installButton.dataset[`install${pm[0]?.toUpperCase()}${pm.slice(1)}`]
+		const command =
+			installButton.dataset[`install${pm[0]?.toUpperCase()}${pm.slice(1)}`]
 		if (!command) return
 		installButton.dataset.copy = command
 		installCode.textContent = command
-		for (const other of document.querySelectorAll<HTMLButtonElement>('.pm-tab')) {
+		for (const other of document.querySelectorAll<HTMLButtonElement>(
+			'.pm-tab',
+		)) {
 			other.classList.toggle('is-active', other === tab)
 			other.setAttribute('aria-selected', String(other === tab))
 		}
