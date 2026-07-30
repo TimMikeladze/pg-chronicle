@@ -264,36 +264,68 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 			<div class="hero-rules" aria-hidden="true"></div>
 			<div class="hero-glow" aria-hidden="true"></div>
 			<div class="hero-inner">
-				<p class="eyebrow">
-					<span class="eyebrow-dot" aria-hidden="true"></span>
-					PostgreSQL · append-only audit log
-				</p>
-				<h1 class="hero-title">${escapeHtml(title)}</h1>
-				<p class="hero-tagline">${escapeHtml(tagline)}</p>
-				<div class="hero-actions">
-					<div class="install-group">
-						<div class="pm-tabs" role="tablist" aria-label="Package manager">
-							${(['bun', 'npm', 'pnpm'] as const)
+				<div class="hero-copy">
+					<p class="eyebrow">
+						<span class="eyebrow-dot" aria-hidden="true"></span>
+						PostgreSQL · append-only audit log
+					</p>
+					<h1 class="hero-title">${escapeHtml(title)}</h1>
+					<p class="hero-tagline">${escapeHtml(tagline)}</p>
+					<div class="hero-actions">
+						<div class="install-group">
+							<div class="pm-tabs" role="tablist" aria-label="Package manager">
+								${(['bun', 'npm', 'pnpm'] as const)
+									.map(
+										(pm, i) =>
+											`<button class="pm-tab${i === 0 ? ' is-active' : ''}" type="button" role="tab" aria-selected="${i === 0}" data-pm="${pm}">${pm}</button>`,
+									)
+									.join('')}
+							</div>
+							<button class="install" type="button" data-copy="${escapeHtml(install.bun)}" data-install-bun="${escapeHtml(install.bun)}" data-install-npm="${escapeHtml(install.npm)}" data-install-pnpm="${escapeHtml(install.pnpm)}">
+								<span class="prompt" aria-hidden="true">$</span>
+								<code>${escapeHtml(install.bun)}</code>
+								<span class="copy-state">copy</span>
+							</button>
+						</div>
+						<div class="hero-links">
+							<a class="btn btn-primary" href="${REPO}">
+								<svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
+									<path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+								</svg>
+								GitHub
+							</a>
+						</div>
+					</div>
+				</div>
+				<div class="hero-visual" aria-hidden="true">
+					<div class="ledger-card">
+						<div class="ledger-bar">
+							<span class="ledger-label">audit.orders</span>
+							<span class="ledger-live"><span class="ledger-live-dot"></span>tailing</span>
+						</div>
+						<div class="ledger-rows">
+							${[
+								{ op: '+', kind: 'INSERT', table: 'orders', actor: 'api-worker-2', time: '09:40:55.771' },
+								{ op: '-', kind: 'DELETE', table: 'sessions', actor: 'svc-auth', time: '09:40:59.220' },
+								{ op: '~', kind: 'UPDATE', table: 'invoices', actor: 'admin@acme', time: '09:41:04.902' },
+								{ op: '~', kind: 'UPDATE', table: 'orders', actor: 'svc-billing', time: '09:41:07.114' },
+							]
 								.map(
-									(pm, i) =>
-										`<button class="pm-tab${i === 0 ? ' is-active' : ''}" type="button" role="tab" aria-selected="${i === 0}" data-pm="${pm}">${pm}</button>`,
+									(row, i) => `<div class="ledger-row" style="--i:${i}">
+								<span class="ledger-op ledger-op--${row.op === '+' ? 'ins' : row.op === '-' ? 'del' : 'upd'}">${row.op}</span>
+								<span class="ledger-kind">${row.kind}</span>
+								<span class="ledger-table">${row.table}</span>
+								<span class="ledger-actor">${row.actor}</span>
+								<span class="ledger-time">${row.time}</span>
+							</div>`,
 								)
 								.join('')}
+							<div class="ledger-row ledger-row--pending" style="--i:4">
+								<span class="ledger-caret" aria-hidden="true"></span>
+							</div>
 						</div>
-						<button class="install" type="button" data-copy="${escapeHtml(install.bun)}" data-install-bun="${escapeHtml(install.bun)}" data-install-npm="${escapeHtml(install.npm)}" data-install-pnpm="${escapeHtml(install.pnpm)}">
-							<span class="prompt" aria-hidden="true">$</span>
-							<code>${escapeHtml(install.bun)}</code>
-							<span class="copy-state">copy</span>
-						</button>
 					</div>
-					<div class="hero-links">
-						<a class="btn btn-primary" href="${REPO}">
-							<svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
-								<path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
-							</svg>
-							GitHub
-						</a>
-					</div>
+					<p class="ledger-note">Nothing is ever overwritten. Every row grows the log.</p>
 				</div>
 			</div>
 		</section>
