@@ -1,3 +1,4 @@
+// `hono/vercel` is Hono's Next.js App Router adapter, despite the name.
 import { handle } from 'hono/vercel'
 import { consoleLogger } from './logger'
 import { createServer } from './server'
@@ -139,7 +140,7 @@ function getApp(): Promise<App> {
 	return initPromise
 }
 
-// Vercel expects named exports per HTTP method
+// Next.js App Router expects named exports per HTTP method
 // Initialize on first request, then reuse cached app
 function errorResponse(error: unknown): Response {
 	// Log the real error server-side — never echo internal messages (connection

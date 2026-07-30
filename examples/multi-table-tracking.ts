@@ -46,7 +46,7 @@ async function main() {
       )
     `)
 
-		// Composite PK table — record_id will be "customer_id|tag"
+		// Composite PK table — record_id is customer_id || chr(31) || tag
 		await pool.query(`
       CREATE TABLE customer_tags (
         customer_id INT REFERENCES customers(id),
@@ -98,11 +98,18 @@ async function main() {
 		}
 
 		// ── Composite PK history ─────────────────────────────────
+		// Composite PKs are joined with chr(31) (ASCII unit separator), not a
+		// human-readable delimiter — build the record_id the same way.
+		const compositeId = (...parts: string[]) => parts.join('\x1f')
+
 		console.log(
-			'\n=== Composite PK: customer_tags history for "1|enterprise" ===\n',
+			'\n=== Composite PK: customer_tags history for (1, enterprise) ===\n',
 		)
 
-		const tagHistory = await history.getHistory('customer_tags', '1|enterprise')
+		const tagHistory = await history.getHistory(
+			'customer_tags',
+			compositeId('1', 'enterprise'),
+		)
 		for (const entry of tagHistory.data) {
 			console.log(
 				`  ${entry.operation}: ${JSON.stringify(entry.newData || entry.oldData)}`,
@@ -110,12 +117,12 @@ async function main() {
 		}
 
 		console.log(
-			'\n=== Composite PK: customer_tags history for "1|priority" ===\n',
+			'\n=== Composite PK: customer_tags history for (1, priority) ===\n',
 		)
 
 		const removedTagHistory = await history.getHistory(
 			'customer_tags',
-			'1|priority',
+			compositeId('1', 'priority'),
 		)
 		for (const entry of removedTagHistory.data) {
 			console.log(

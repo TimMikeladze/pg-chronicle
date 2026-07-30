@@ -97,9 +97,9 @@ describe('CRIT-2: /api/stats requires JWT when secret is set', () => {
 // ─────────────────────────────────────────────────────────
 
 describe('HIGH-2: PG_HISTORY_TABLES sanitization', () => {
-	test('vercel.ts trims and filters table names', async () => {
+	test('next.ts trims and filters table names', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/vercel.ts', 'utf-8')
+		const source = await fs.readFile('./src/next.ts', 'utf-8')
 
 		expect(source).toContain('.trim()')
 		expect(source).toContain('.filter(Boolean)')

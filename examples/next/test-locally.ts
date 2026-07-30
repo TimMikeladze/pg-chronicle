@@ -1,22 +1,23 @@
 #!/usr/bin/env bun
 /**
- * Vercel Deployment — Local Test
+ * Next.js Deployment — Local Test
  *
- * Simulates the full Vercel deployment locally:
+ * Simulates the full Next.js-on-Vercel deployment locally:
  *   - Serverless mode (no background archival, no in-memory rate limiting)
- *   - History API endpoints (GET /api/history, POST /api/search, POST /api/revert)
+ *   - History API endpoints (GET /api/history/:table/:recordId,
+ *     POST /api/history/search, POST /api/history/revert)
  *   - Cron-triggered archival (POST /api/archive with CRON_SECRET auth)
  *   - Health endpoint with archival status
  *
  * Run:
  *   docker compose up -d    # from repo root
- *   bun examples/vercel/test-locally.ts
+ *   bun examples/next/test-locally.ts
  */
 
 import { Client, Pool } from 'pg'
 import { createServer } from '../../src/server'
 
-const DB_NAME = `pg_history_vercel_${Date.now()}`
+const DB_NAME = `pg_history_next_${Date.now()}`
 const ADMIN_URL =
 	process.env.DATABASE_URL ||
 	'postgres://postgres:postgres@localhost:5432/postgres'
@@ -40,11 +41,14 @@ async function main() {
     )
   `)
 
-	// Create server in serverless mode (same as pg-history/vercel entry point)
+	// Create server in serverless mode (same as pg-history/next entry point)
 	const { app } = await createServer({
 		pool,
 		serverless: true,
 		enableHistory: true,
+		// Local-only opt-in. In a real deployment set PG_HISTORY_JWT_SECRET
+		// instead — `pg-history/next` refuses to start without it.
+		allowUnauthenticated: true,
 		historyConfig: { tables: ['users'] },
 		enableArchiver: true,
 		archiverConfig: {
@@ -112,15 +116,17 @@ async function main() {
 		console.log(`\nPOST /api/history/search → ${search.data.length} matches`)
 
 		// POST /api/history/revert
-		const insertEntry = history.data.find((e) => e.operation === 'INSERT')
-		if (insertEntry) {
+		// Revert undoes the chosen entry: an UPDATE entry restores its old_data.
+		// (Reverting an INSERT entry would delete the row instead.)
+		const updateEntry = history.data.find((e) => e.operation === 'UPDATE')
+		if (updateEntry) {
 			const revertRes = await app.request('/api/history/revert', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					table: 'users',
 					recordId: '1',
-					auditEntryId: (insertEntry as { id: string }).id,
+					auditEntryId: (updateEntry as { id: string }).id,
 				}),
 			})
 			const revert = await revertRes.json()

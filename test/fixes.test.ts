@@ -8,10 +8,10 @@ import { cleanDatabase, getTestConnection, setupTestDatabase } from './helpers'
 setupTestDatabase()
 
 // ─────────────────────────────────────────────────────────
-// Fix #1 + #9: vercel.ts — init promise reset & error responses
+// Fix #1 + #9: next.ts — init promise reset & error responses
 // ─────────────────────────────────────────────────────────
 
-describe('Fix #1 + #9: Vercel handler error recovery', () => {
+describe('Fix #1 + #9: Next.js handler error recovery', () => {
 	const originalEnv = { ...process.env }
 
 	afterEach(() => {
@@ -26,7 +26,7 @@ describe('Fix #1 + #9: Vercel handler error recovery', () => {
 		delete process.env.PG_HISTORY_TABLES
 
 		// Dynamic import to get fresh module state
-		const mod = await import('../src/vercel')
+		const mod = await import('../src/next')
 		const res = await mod.GET(new Request('http://localhost/health'))
 
 		expect(res.status).toBe(500)
@@ -40,7 +40,7 @@ describe('Fix #1 + #9: Vercel handler error recovery', () => {
 		delete process.env.PG_HISTORY_DATABASE_URL
 		delete process.env.PG_HISTORY_TABLES
 
-		const mod = await import('../src/vercel')
+		const mod = await import('../src/next')
 		const res = await mod.POST(
 			new Request('http://localhost/api/archive', { method: 'POST' }),
 		)
@@ -53,7 +53,7 @@ describe('Fix #1 + #9: Vercel handler error recovery', () => {
 	test('error response has correct Content-Type header', async () => {
 		delete process.env.PG_HISTORY_DATABASE_URL
 
-		const mod = await import('../src/vercel')
+		const mod = await import('../src/next')
 		const res = await mod.GET(new Request('http://localhost/health'))
 
 		expect(res.headers.get('Content-Type')).toBe('application/json')

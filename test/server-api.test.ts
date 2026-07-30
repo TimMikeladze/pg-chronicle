@@ -220,13 +220,13 @@ describe('Review Fix #20: Bun.serve is gated', () => {
 	test('main.ts is isolated as a Bun-only entrypoint', async () => {
 		const fs = await import('node:fs/promises')
 		// The Bun entrypoint was extracted to src/main.ts so server.ts stays
-		// importable by Node/Vercel without referencing Bun globals.
+		// importable by Node/Next.js without referencing Bun globals.
 		// main.ts is not in the package exports map and not imported anywhere —
 		// its isolation is structural (not a typeof guard at runtime).
 		const source = await fs.readFile('./src/main.ts', 'utf-8')
 		const serverSource = await fs.readFile('./src/server.ts', 'utf-8')
 
-		// server.ts must NOT reference Bun globals — it's imported in Node/Vercel
+		// server.ts must NOT reference Bun globals — it's imported in Node/Next.js
 		expect(serverSource).not.toContain('Bun.serve')
 		// main.ts declares the Bun type explicitly (not as a global assumption)
 		expect(source).toContain('declare const Bun')

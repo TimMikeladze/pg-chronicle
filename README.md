@@ -10,6 +10,7 @@ PostgreSQL audit trails with automated S3 archival.
 - [Quick Start](#quick-start)
 - [Installation](#installation)
 - [Examples](#examples)
+- [How It Works](#how-it-works)
 - [Architecture](#architecture)
 - [API Reference](#api-reference)
 - [Server & REST API](#server--rest-api)
@@ -51,13 +52,13 @@ const found = await history.search({
   query: '{"email": "alice@example.com"}',
 })
 
-// Revert to a previous state
-await history.revert('users', '1', result.data[2].id) // back to original INSERT state
+// Revert to a previous state — reverting an UPDATE entry restores its `oldData`
+await history.revert('users', '1', result.data[1].id) // back to name 'Alice'
+// (reverting the INSERT entry would DELETE the row instead — see the revert table below)
 
-await history.close()
+await history.close()   // ends only a pool pg-history created itself
+await pool.end()        // your pool stays yours to close
 ```
-
-3 lines to set up, then query with `getHistory` / `search` / `revert`.
 
 **Skip auditing secrets/PII** by listing the columns to strip per table:
 
@@ -82,7 +83,7 @@ new PgHistory({ pool, tables: ['users'], logger: pino() })
 bun add pg-history
 ```
 
-Peer dependency: `pg`.
+`pg`, `hono`, and the S3/Parquet libraries ship as regular dependencies — nothing else to install.
 
 Requires PostgreSQL 12+, Node.js 18+ or Bun. The optional `appendOnly` guard needs PostgreSQL 14+.
 
@@ -104,7 +105,7 @@ bun examples/basic-audit-trail.ts
 | [cron-archival.ts](./examples/cron-archival.ts) | POST /api/archive endpoint, cron secret auth, health status |
 | [archival-lifecycle.ts](./examples/archival-lifecycle.ts) | Full S3 archival pipeline: archive, soft delete, hard delete |
 | [error-handling.ts](./examples/error-handling.ts) | Typed error classes, catching specific errors |
-| [vercel/](./examples/vercel) | Deployable Vercel project: serverless API + cron archival + local test |
+| [next/](./examples/next) | Files to copy into a Next.js app: catch-all route handler, `vercel.json` cron, plus `test-locally.ts` that exercises the serverless setup against Docker |
 
 ## How It Works
 
@@ -139,20 +140,9 @@ The `PgHistory` class provides methods to read back the audit trail:
 
 ### 4. Archival lifecycle (optional)
 
-For tables that accumulate millions of audit records, the archiver moves old data to S3 as compressed Parquet files:
-
-```
-Day 0    Record written to audit_log
-Day 90   Upload to S3 as Parquet → mark archived_at
-Day 90   Soft delete (only if S3 backup confirmed)
-Day 97   Hard delete (only after re-verifying S3 file + checksum)
-```
-
-Advisory locks prevent concurrent archival of the same table. Each step verifies the previous one succeeded before proceeding — no data is deleted without a confirmed backup.
+For tables that accumulate millions of audit records, the archiver moves old data to S3 as compressed Parquet files, then deletes it in stages. No row is deleted without a verified backup. See [Archiver](#archiver).
 
 ## Architecture
-
-How audit rows are stored on disk: the table layout, the partitioning scheme, and how primary keys of any shape become a single `record_id`.
 
 ### audit_log Schema
 
@@ -186,12 +176,10 @@ When the archiver is enabled, additional columns track lifecycle: `archived_at`,
 | PK Type | `record_id` |
 |---------|-------------|
 | Single column | PK value cast to text |
-| Composite | Each part joined with `chr(31)` (ASCII unit separator), full value — not truncated, so distinct keys can't collide |
+| Composite | Each part joined with `chr(31)` (ASCII unit separator), full value — not truncated, so distinct keys can't collide. Build the same string client-side to look it up: `` `${customerId}\x1f${tag}` `` (see [multi-table-tracking.ts](./examples/multi-table-tracking.ts)) |
 | None | `md5(row_to_json(...)::text)` — the value changes on every UPDATE, so `getHistory` cannot correlate INSERT with later UPDATEs. A warning is logged at setup; pass `requirePrimaryKey: true` to reject PK-less tables outright. Use tables with a PK for full history. |
 
 ## API Reference
-
-Every exported class, method and type: `PgHistory` for reading and reverting, `PgHistoryArchiver` and `Orchestrator` for archival, and `createServer` for the REST layer.
 
 ### `PgHistory`
 
@@ -333,9 +321,7 @@ const { app, dispose } = await createServer({
 
 `dispose(drainTimeoutMs=15_000)` cancels intervals, drains in-flight requests, aborts pending retry sleeps, and awaits any running archival.
 
-**Fail-closed auth:** `createServer` **throws at startup** when `enableHistory: true` and no `PG_HISTORY_JWT_SECRET` is set, unless you pass `allowUnauthenticated: true`. This prevents accidentally exposing the history read API and the destructive `revert` endpoint unauthenticated.
-
-**Authorization:** authentication only proves *who* the caller is. Without an `authorize` hook, any valid token can read/search/revert *any* record of *any* configured table. Supply `authorize` to enforce per-tenant / per-record ownership — it runs before every read, search, and revert; returning `false` (or throwing) responds `403`.
+Auth is fail-closed and `authorize` is what gives you per-tenant scoping — see [Auth resolution](#endpoints).
 
 ### Types
 
@@ -390,9 +376,7 @@ const { app } = await createServer({
   historyConfig: { tables: ['users', 'orders'] },
   enableArchiver: true,
   archiverConfig: { /* see Archiver section */ },
-  // In production set PG_HISTORY_JWT_SECRET (and an `authorize` hook). Without a
-  // secret, createServer throws unless you explicitly opt out here:
-  allowUnauthenticated: !process.env.PG_HISTORY_JWT_SECRET,
+  allowUnauthenticated: !process.env.PG_HISTORY_JWT_SECRET,  // dev only
 })
 
 Bun.serve({ port: 3001, fetch: app.fetch })
@@ -403,21 +387,39 @@ Bun.serve({ port: 3001, fetch: app.fetch })
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `GET` | `/health` | No | Minimal liveness probe (`{status}` only) |
-| `GET` | `/api/health/detailed` | JWT or cron | Archival status + attempts + last completion |
+| `GET` | `/api/health/detailed` | JWT or cron | Archival status + attempts + last completion (requires `enableArchiver`) |
 | `GET` | `/openapi` | JWT (unless `publicOpenApi: true`); not registered at all when neither is configured | OpenAPI spec |
 | `GET` | `/api/stats` | JWT or cron | Archival stats (requires `enableArchiver`) |
-| `GET` | `/api/history/:table/:recordId` | JWT | Record history |
-| `POST` | `/api/history/search` | JWT | Search history |
-| `POST` | `/api/history/revert` | JWT | Revert a record |
-| `POST` | `/api/archive` | JWT or cron secret | Trigger archival on demand |
+| `GET` | `/api/history/:table/:recordId` | JWT | Record history (requires `enableHistory`) |
+| `POST` | `/api/history/search` | JWT | Search history (requires `enableHistory`) |
+| `POST` | `/api/history/revert` | JWT | Revert a record (requires `enableHistory`) |
+| `POST` | `/api/archive` | Cron secret when configured, else JWT | Trigger archival on demand (requires `enableArchiver`) |
 
 **Auth resolution:**
 - **Fail-closed:** with `enableHistory: true` and no `PG_HISTORY_JWT_SECRET`, `createServer` throws at startup unless `allowUnauthenticated: true` is passed.
 - Set `PG_HISTORY_JWT_SECRET` to enable JWT on `/api/*`. Algorithm via `PG_HISTORY_JWT_ALG` (default `HS256`; supports `HS256/384/512`, `RS256/384/512`, `ES256/384/512`).
 - **Authorization** is separate from authentication: supply an `authorize` hook to scope access per tenant/record (returning `false` → `403`). Without it, any valid token can reach any configured table's history.
-- Set `archiveCronSecret` (or `CRON_SECRET` env) to authenticate `/api/archive`, `/api/stats`, and `/api/health/detailed` via timing-safe HMAC. In cron-only deployments (no JWT), these endpoints still require the bearer secret — and are **not registered at all** when neither JWT nor cron secret is configured (unless `allowUnauthenticated: true`).
-- `/health` is always public. `/openapi` is public only with `publicOpenApi: true`; it is JWT-gated when a JWT secret is set, and **not registered at all** when neither a JWT secret, `publicOpenApi`, nor `allowUnauthenticated` is configured (so a cron-only deployment doesn't leak the API shape).
+- Set `archiveCronSecret` (or `CRON_SECRET` env) to authenticate the three archiver endpoints via timing-safe HMAC. `/api/archive` checks it whenever it is set — so with both secrets configured, the caller needs the cron bearer token *and* passes the JWT middleware first. `/api/stats` and `/api/health/detailed` fall back to it only when no JWT secret is set.
+- Archiver endpoints also need `enableArchiver: true` with a valid `archiverConfig`; without that, or without any auth at all, they are never registered.
+- `/health` is always public. `/openapi` is public with `publicOpenApi: true`, JWT-gated when a JWT secret is set, and unregistered otherwise — so a cron-only deployment doesn't leak the API shape.
 - `OPTIONS` preflight bypasses JWT so CORS works.
+
+### Request & Response Shapes
+
+`GET /api/history/:table/:recordId` takes `?limit=&cursor=&order=`. The two POST bodies:
+
+```jsonc
+// POST /api/history/search — tables required, everything else optional
+{ "tables": ["users"], "query": "{\"email\":\"a@b.com\"}", "operation": "UPDATE",
+  "dateFrom": "2026-01-01T00:00:00Z", "dateTo": "2026-02-01T00:00:00Z",
+  "limit": 100, "cursor": "12345" }
+
+// POST /api/history/revert — auditEntryId is a numeric audit_log id
+{ "table": "users", "recordId": "1", "auditEntryId": "42",
+  "suppressAuditTriggers": false }
+```
+
+Reads return the `PaginatedResult` shape (`{data, nextCursor, hasMore}`); revert returns `{success: true}`. Failures return `{ "error": { "code": "VALIDATION_ERROR", "message": "..." } }` — codes are `VALIDATION_ERROR` / `INVALID_TABLE` (400), `UNAUTHORIZED` (401), `FORBIDDEN` (403), `NOT_FOUND` (404), `REVERT_ERROR` (422), `RATE_LIMITED` (429), and `DATABASE_ERROR` / `ARCHIVAL_ERROR` / `NOT_CONFIGURED` (500). Bodies over 1 MB are rejected.
 
 ### Health Check
 
@@ -447,13 +449,18 @@ Bun.serve({ port: 3001, fetch: app.fetch })
 
 ### Standalone
 
+`src/main.ts` is the entrypoint (also published as the `pg-history` bin). It reads config from the environment and binds the port with `Bun.serve` — `src/server.ts` only exports `createServer` and does nothing when executed directly.
+
 ```bash
-PG_HISTORY_DATABASE_URL=postgres://localhost:5432/mydb bun run src/server.ts
+PG_HISTORY_DATABASE_URL=postgres://localhost:5432/mydb \
+PG_HISTORY_TABLES=users,orders \
+PG_HISTORY_JWT_SECRET=your-secret \
+bun run src/main.ts
 ```
 
-## Deployment
+`PG_HISTORY_TABLES` is what enables the history API — without it the process starts but serves only `/health`. Without `PG_HISTORY_JWT_SECRET`, startup fails closed unless `PG_HISTORY_ALLOW_UNAUTHENTICATED=true`.
 
-Running the server for real — as a long-lived process on Fly.io, as serverless functions on Vercel, or anywhere else that runs a container.
+## Deployment
 
 ### Fly.io
 
@@ -476,9 +483,9 @@ The `fly.toml` is configured with:
 
 Archival runs immediately on startup and then on a periodic interval (default: every hour, configurable via `PG_HISTORY_ARCHIVAL_INTERVAL_MS`).
 
-### Vercel (Serverless)
+### Next.js (Serverless)
 
-pg-history works in serverless environments. The audit triggers live in PostgreSQL, so auditing works regardless of runtime.
+Auditing itself is runtime-independent — the triggers live in PostgreSQL. The `pg-history/next` entry point is a Next.js App Router route handler and runs anywhere Next.js runs; only the *cron scheduling* below is Vercel-specific.
 
 **Option A: Use the library directly in your API routes**
 
@@ -504,11 +511,11 @@ export async function GET(req: Request) {
 **Option B: Deploy the full REST API**
 
 ```typescript
-// api/[[...route]].ts
-export { GET, POST } from 'pg-history/vercel'
+// app/api/[[...route]]/route.ts
+export { GET, POST } from 'pg-history/next'
 ```
 
-Set environment variables in Vercel:
+Set environment variables on your host — all three are required:
 
 ```
 PG_HISTORY_DATABASE_URL=postgres://...
@@ -516,22 +523,16 @@ PG_HISTORY_TABLES=users,orders
 PG_HISTORY_JWT_SECRET=your-secret
 ```
 
-The Vercel entry point automatically enables `serverless: true`, which:
-- Skips background archival (use [Vercel Cron](#vercel-cron) instead)
-- Skips in-memory rate limiting (handle at API gateway / Vercel Firewall level)
+The JWT secret is not optional here: this entry point always enables the history API, destructive `revert` included, so without a secret it refuses to start and every request returns `500 INIT_ERROR`. `PG_HISTORY_ALLOW_UNAUTHENTICATED` is deliberately not wired up on this path.
+
+The `pg-history/next` entry point automatically enables `serverless: true`, which:
+- Skips background archival (use [cron archival](#cron-archival-vercel-cron) instead)
+- Skips in-memory rate limiting (handle at API gateway / firewall level)
 - Uses a small pool size (default 3) to stay within connection limits
 
-#### Vercel Cron
+#### Cron Archival (Vercel Cron)
 
-Since there's no persistent process in serverless, archival needs an external trigger. A complete working example is in [`examples/vercel/`](./examples/vercel). The setup is three files:
-
-**`api/[[...route]].ts`** — one-line catch-all route:
-
-```typescript
-export { GET, POST } from 'pg-history/vercel'
-```
-
-**`vercel.json`** — cron schedule:
+Serverless has no persistent process, so archival needs an external trigger. Add `vercel.json` next to the Option B route handler above, plus the S3 and `CRON_SECRET` variables from [Environment Variables](#environment-variables). Working example: [`examples/next/`](./examples/next).
 
 ```json
 {
@@ -544,24 +545,9 @@ export { GET, POST } from 'pg-history/vercel'
 }
 ```
 
-**Environment variables** (set in Vercel dashboard):
+Vercel Cron calls `POST /api/archive` on schedule with `Authorization: Bearer <CRON_SECRET>` injected automatically; the endpoint verifies it, then runs archive → soft delete → hard delete and returns stats.
 
-```
-PG_HISTORY_DATABASE_URL=postgres://...
-PG_HISTORY_TABLES=users,orders
-PG_HISTORY_JWT_SECRET=your-secret
-CRON_SECRET=your-cron-secret
-PG_HISTORY_S3_BUCKET=audit-archives
-PG_HISTORY_S3_ENDPOINT=https://...
-PG_HISTORY_S3_ACCESS_KEY_ID=...
-PG_HISTORY_S3_SECRET_ACCESS_KEY=...
-```
-
-How it works:
-1. Vercel Cron calls `POST /api/archive` every 6 hours
-2. Vercel automatically sends `Authorization: Bearer <CRON_SECRET>` — the endpoint verifies it
-3. The archiver runs: archive old records to S3 as Parquet, soft delete, hard delete
-4. The response includes archival stats; `/health` reflects the archival status
+Two things to know: `POST /api/archive` only exists when `PG_HISTORY_S3_BUCKET` is set (that's what enables the archiver in `pg-history/next`), and the catch-all serves `/api/**` only — the public `GET /health` probe is unreachable here, so use `/api/health/detailed` or add your own `app/health/route.ts`.
 
 **Vercel plan limits:**
 - **Hobby:** Cron minimum interval 24h, function timeout 10s
@@ -569,13 +555,14 @@ How it works:
 
 If archival takes longer than the function timeout, it will be interrupted. The design is retry-safe — unfinished records stay unarchived and get picked up on the next run. Set `PG_HISTORY_BATCH_SIZE` to a lower value (1000-2000) to keep individual runs within timeout limits.
 
+**Not on Vercel?** `vercel.json` and `CRON_SECRET` injection are the only Vercel-specific pieces. Anywhere else, keep the same route handler and call `POST /api/archive` from your own scheduler (GitHub Actions, AWS EventBridge, Cloud Scheduler, a system crontab), sending `Authorization: Bearer <CRON_SECRET>` yourself.
+
 ### Serverless Considerations
 
 | Concern | Impact | Mitigation |
 |---------|--------|------------|
 | Connection pooling | Each invocation may create a pool | Use an external pooler (PgBouncer, Neon, Supabase, RDS Proxy). Set `PG_HISTORY_POOL_MAX` low (2-3). |
-| No background process | Archival doesn't run automatically | Use cron triggers (`POST /api/archive`) via Vercel Cron, AWS EventBridge, etc. |
-| Cold starts | `setup()` runs ~10 idempotent DDL queries | ~5ms overhead. Cache the setup promise at module level. |
+| Cold starts | `setup()` runs on every cold instance | Already cheap: when the schema exists it short-circuits after one catalog probe (~5ms). Cache the promise at module level and call it freely. |
 | Rate limiting | In-memory rate limiter resets per invocation | Use platform-level rate limiting (API Gateway, Vercel Firewall, Cloudflare). |
 
 ### Other Platforms
@@ -585,11 +572,11 @@ The Hono app returned by `createServer()` works with any platform Hono supports:
 ```typescript
 // AWS Lambda
 import { handle } from 'hono/aws-lambda'
-const app = await createServer({ pool, serverless: true, ... })
+const { app } = await createServer({ pool, serverless: true, ... })
 export const handler = handle(app)
 
 // Cloudflare Workers
-const app = await createServer({ pool, serverless: true, ... })
+const { app } = await createServer({ pool, serverless: true, ... })
 export default app
 ```
 
@@ -608,12 +595,10 @@ Day 97:  Hard delete (after re-verifying S3 file exists + SHA-256 checksum)
 
 S3 path: `{table}/year={YYYY}/month={MM}/day={DD}/data-{uuid}.parquet`
 
-Advisory locks (`pg_try_advisory_lock`) prevent concurrent processing of the same table.
-
 ### Configuration
 
 ```typescript
-const app = await createServer({
+const { app } = await createServer({
   pool,
   enableArchiver: true,
   archiverConfig: {
@@ -632,9 +617,6 @@ const app = await createServer({
                       // 0 = no grace (purge once the S3 backup is confirmed).
     batchSize: 10000,
   },
-  // Optional: cap batch memory by serialized payload size (default 64 MiB).
-  // Rows past the cap are released back to the claim pool for the next run.
-  // maxBatchBytes: 64 * 1024 * 1024,
   runOptions: { dryRun: false },
   // Optional retry policy for background archival. Defaults shown.
   archivalRetry: {
@@ -646,21 +628,7 @@ const app = await createServer({
 })
 ```
 
-### Excluding columns from audit (PII)
-
-`to_jsonb(NEW)` captures the full row. Strip secrets/PII per-table:
-
-```typescript
-new PgHistory({
-  tables: ['users', 'orders'],
-  excludeColumns: {
-    users: ['password_hash', 'mfa_secret', 'ssn'],
-  },
-  pool,
-})
-```
-
-Trigger generates `(to_jsonb(NEW) - 'password_hash' - 'mfa_secret' - 'ssn')`. PK columns cannot be excluded (would break `revert()`).
+`archiverConfig` on `createServer` accepts only `s3`, `retention`, `gracePeriod`, and `batchSize`. The finer knobs — `maxBatchBytes` (default 64 MiB), `staleClaimMinutes`, and a per-archiver `logger` — are only available when constructing `PgHistoryArchiver` directly.
 
 ### Pruning long-term archives
 
@@ -686,24 +654,9 @@ const orphans = await archiver.cleanupOrphanedFiles('users', { maxDeletions: 100
 
 Bounded per-call so a bucket with millions of orphans doesn't tie up one DB connection for hours. Idempotent — resume on next invocation.
 
-### Direct Usage
-
-```typescript
-import { Orchestrator } from 'pg-history'
-
-const orchestrator = new Orchestrator({
-  s3: { bucket: 'my-bucket', region: 'us-west-2' },
-  retention: { default: 90, tables: { logs: 7 } },
-  gracePeriod: 7,
-  // batchSize: 10000, // optional
-})
-
-const stats = await orchestrator.run(pool, { dryRun: true })
-```
+To run archival on your own schedule instead of the server's, drive [`Orchestrator`](#orchestrator) directly.
 
 ## Environment Variables
-
-Every `PG_HISTORY_*` variable the library and server read, which ones are required for which deployment, and their defaults.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -711,24 +664,24 @@ Every `PG_HISTORY_*` variable the library and server read, which ones are requir
 | `PG_HISTORY_PORT` | No | Server port (also reads `PORT`, default `3001`) |
 | `PG_HISTORY_POOL_MAX` | No | Max pool connections (default `5`, use `2-3` for serverless) |
 | `PG_HISTORY_STATEMENT_TIMEOUT_MS` | No | Pool-wide `statement_timeout` (default `30000`; `0` disables). Raise for a one-time archiver index build on a large existing log |
-| `PG_HISTORY_JWT_SECRET` | No | JWT auth on `/api/*` |
+| `PG_HISTORY_JWT_SECRET` | `pg-history/next` entry point | JWT auth on `/api/*`. The standalone server can skip it only with `PG_HISTORY_ALLOW_UNAUTHENTICATED=true`; `pg-history/next` has no such escape hatch |
 | `PG_HISTORY_JWT_ALG` | No | JWT algorithm: `HS256/384/512`, `RS256/384/512`, `ES256/384/512` (default `HS256`) |
-| `PG_HISTORY_ALLOW_UNAUTHENTICATED` | No | Set `true` to let the standalone server start history endpoints without a JWT (local/trusted only) |
-| `PG_HISTORY_TABLES` | Vercel entry point | Comma-separated table names |
-| `PG_HISTORY_S3_ENDPOINT` | Archival | S3 endpoint |
-| `PG_HISTORY_S3_ACCESS_KEY_ID` | Archival | S3 access key |
-| `PG_HISTORY_S3_SECRET_ACCESS_KEY` | Archival | S3 secret key |
-| `PG_HISTORY_S3_REGION` | Archival | S3 region (default `us-east-1`) |
-| `PG_HISTORY_S3_BUCKET` | Archival | S3 bucket |
+| `PG_HISTORY_ALLOW_UNAUTHENTICATED` | No | Set `true` to let the standalone server start history endpoints without a JWT (local/trusted only). Read by the standalone server only — `pg-history/next` ignores it |
+| `PG_HISTORY_TABLES` | `pg-history/next` entry point | Comma-separated table names. Also what enables the history API on the standalone server — omit it and only `/health` is served |
+| `PG_HISTORY_S3_BUCKET` | Archival | S3 bucket. Setting it is what enables the archiver on both entry points |
+| `PG_HISTORY_S3_ENDPOINT` | No | Custom S3 endpoint (MinIO, R2, localstack). Omit for AWS; setting it also switches on path-style addressing |
+| `PG_HISTORY_S3_ACCESS_KEY_ID` | No | Explicit access key. Omit both key vars to use the default AWS credential chain (IAM role, instance profile, env) |
+| `PG_HISTORY_S3_SECRET_ACCESS_KEY` | No | Explicit secret key |
+| `PG_HISTORY_S3_REGION` | No | S3 region (default `us-east-1`) |
 | `PG_HISTORY_ARCHIVAL_INTERVAL_MS` | No | Background archival interval (default `3600000` / 1 hour) |
 | `PG_HISTORY_RETENTION_DAYS` | No | Default retention period (default `90`) |
 | `PG_HISTORY_GRACE_PERIOD_DAYS` | No | Grace period before hard delete (default `7`; `0` = no grace, purge once the S3 backup is confirmed) |
 | `PG_HISTORY_BATCH_SIZE` | No | Archival batch size (default `10000`) |
-| `CRON_SECRET` | Vercel cron | Protects `POST /api/archive` endpoint |
+| `CRON_SECRET` | Cron archival (Vercel Cron) | Protects `POST /api/archive`; also authenticates `/api/stats` and `/api/health/detailed` in cron-only deployments |
 
 ## Production Caveats
 
-Operational notes for running this in earnest. None are bugs — they are knobs and trade-offs you need to know about.
+Knobs and trade-offs, not bugs.
 
 ### Connection pooler compatibility
 
@@ -737,7 +690,7 @@ Operational notes for running this in earnest. None are bugs — they are knobs 
 
 ### Rate limiting
 
-Built-in `/api/*` rate limiter is **per-process in-memory**. It only trusts `x-forwarded-for` / `x-real-ip` when you set `trustProxy: true` (behind a proxy that overwrites those headers); otherwise it falls back to a single unspoofable global bucket. `serverless: true` skips the in-process limiter entirely — the mode-independent DoS backstop is the `search()` concurrency cap (`maxConcurrentSearches`). For production, also terminate rate limiting at your API gateway (Cloudflare, AWS API Gateway, Vercel Firewall).
+Built-in `/api/*` rate limiter is **per-process in-memory**: 100 requests/minute per IP with `trustProxy: true`, or a single global 1000/minute bucket otherwise. It only trusts `x-forwarded-for` / `x-real-ip` under `trustProxy` (behind a proxy that overwrites those headers) — a spoofable header would otherwise hand every request a fresh bucket. `serverless: true` skips the in-process limiter entirely — the mode-independent DoS backstop is the `search()` concurrency cap (`maxConcurrentSearches`). For production, also terminate rate limiting at your API gateway (Cloudflare, AWS API Gateway, Vercel Firewall).
 
 ### `audit_archive_metadata` and S3 growth
 
@@ -776,13 +729,9 @@ Then aggregate by event name (`Archival complete`, `Batch failed`, `Pool idle cl
 
 `revert()` cross-checks audit columns against current table schema and refuses to write to columns the table no longer has. After heavy schema migrations, run a representative `revert()` in staging to confirm restorability.
 
-### Cold-start cost
-
-`setup()` is idempotent. On a cold-started serverless instance where the schema already exists, it short-circuits after a single catalog probe (~5ms) instead of running every DDL statement. Safe to call on every invocation; no need to gate it yourself.
-
 ## Error Handling
 
-pg-history exports typed error classes for programmatic error handling:
+Typed error classes, all extending `PgHistoryError`:
 
 ```typescript
 import {
@@ -806,8 +755,6 @@ try {
 ```
 
 ## Limitations
-
-What this deliberately does not do, and the sharp edges worth knowing before you adopt it.
 
 - **TRUNCATE is audited** as a single marker entry (`operation: 'TRUNCATE'`, `record_id: '(truncate)'`) — it has no per-row before/after images.
 - **DDL not audited.** `ALTER TABLE`, `DROP TABLE`, etc.

@@ -27,10 +27,10 @@
 				"default": "./dist/index.cjs"
 			}
 		},
-		"./vercel": {
+		"./next": {
 			"import": {
-				"types": "./dist/vercel.d.ts",
-				"default": "./dist/vercel.js"
+				"types": "./dist/next.d.ts",
+				"default": "./dist/next.js"
 			}
 		}
 	},
