@@ -29,6 +29,7 @@ export function RevertButton({
 	onReverted?: () => void
 }) {
 	const [open, setOpen] = useState(false)
+	const [suppress, setSuppress] = useState(false)
 	const [pending, startTransition] = useTransition()
 	const router = useRouter()
 
@@ -49,6 +50,7 @@ export function RevertButton({
 				table: entry.tableName,
 				recordId: entry.recordId,
 				auditEntryId: entry.id,
+				suppressAuditTriggers: suppress,
 			})
 			if (result.ok) {
 				toast.success('Reverted', {
@@ -88,9 +90,43 @@ export function RevertButton({
 					<dd className="font-mono">#{entry.id}</dd>
 				</dl>
 
+				{/*
+				 * `suppressAuditTriggers` is off by default and stays that way unless
+				 * explicitly chosen: recording the revert is the repudiation defense,
+				 * and suppressing it needs SUPERUSER or pg_replication (PG 16+), so a
+				 * silent default would fail on least-privilege roles.
+				 */}
+				<label className="flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 text-xs">
+					<input
+						type="checkbox"
+						checked={suppress}
+						onChange={(event) => setSuppress(event.target.checked)}
+						disabled={pending}
+						className="accent-primary mt-0.5 size-3.5"
+					/>
+					<span>
+						<span className="text-ink font-medium">
+							Do not audit this revert
+						</span>
+						<span className="text-muted-foreground mt-0.5 block">
+							Requires SUPERUSER or the <code>pg_replication</code> role
+							(PostgreSQL 16+). Leave off unless you are avoiding
+							revert-of-revert chains — recording the revert is what keeps the
+							trail non-repudiable.
+						</span>
+					</span>
+				</label>
+
 				<p className="text-muted-foreground text-xs">
-					The revert is itself an audited write, so it appears in this
-					record&rsquo;s timeline as a new entry.
+					{suppress
+						? 'The revert will not appear in this record’s timeline.'
+						: /*
+							 * Deliberately specific: the new entry is attributed to the
+							 * database role, not to this dashboard's actor. pg-history logs
+							 * the JWT `sub` on its own log line, but never writes it to
+							 * app_actor — so the audit row alone does not say who did it.
+							 */
+							'The revert is itself an audited write, so it appears in this record’s timeline as a new entry — attributed to the database role. The dashboard actor is recorded in the server log, not on the audit row.'}
 				</p>
 
 				<AlertDialogFooter>

@@ -159,10 +159,11 @@ export function RecordTimeline({
 			) : null}
 
 			{entries.length === 0 ? (
-				<p className="text-muted-foreground rounded-xl border border-dashed p-8 text-center text-sm">
-					No audit entries for this record. Either it has never been written
-					since triggers were installed, or the ID does not match the primary
-					key pg-history recorded.
+				<p className="text-muted-foreground mx-auto max-w-xl rounded-xl border border-dashed p-8 text-center text-sm">
+					No audit entries for this record. It may never have been written since
+					triggers were installed, the ID may not match the primary key
+					pg-history recorded, or its history may already be archived —
+					soft-deleted entries are filtered out of every read and live in S3.
 				</p>
 			) : (
 				<ul className="flex flex-col">

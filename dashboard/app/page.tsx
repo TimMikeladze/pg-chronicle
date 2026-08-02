@@ -27,6 +27,7 @@ import {
 import { readConfig } from '@/lib/config'
 import { compactNumber, exactNumber, relativeTime } from '@/lib/format'
 import {
+	ApiError,
 	getDetailedHealth,
 	getHealth,
 	getStats,
@@ -66,13 +67,26 @@ async function loadArchiver(enabled: boolean): Promise<{
 
 const RECENT_LIMIT = 8
 
-/** Search is concurrency-capped server-side, so a busy instance can 429 here. */
-async function loadRecent(tables: string[]): Promise<AuditEntryWire[]> {
+/**
+ * Search is concurrency-capped server-side, so a busy instance can 429 here.
+ * The failure has to be distinguishable from an empty result — rendering
+ * "no changes recorded yet" for a rate-limited request would state the
+ * opposite of the truth.
+ */
+async function loadRecent(
+	tables: string[],
+): Promise<{ entries: AuditEntryWire[]; error: string | null }> {
 	try {
 		const result = await searchHistory({ tables, limit: RECENT_LIMIT })
-		return result.data
-	} catch {
-		return []
+		return { entries: result.data, error: null }
+	} catch (error) {
+		return {
+			entries: [],
+			error:
+				error instanceof ApiError && error.code === 'RATE_LIMITED'
+					? 'Rate limited — pg-history caps concurrent searches. Recent activity will reappear once load drops.'
+					: 'Could not load recent activity.',
+		}
 	}
 }
 
@@ -280,7 +294,7 @@ export default async function OverviewPage() {
 					</CardAction>
 				</CardHeader>
 				<CardContent className="px-0 pb-2">
-					<RecentActivity entries={recent} />
+					<RecentActivity entries={recent.entries} error={recent.error} />
 				</CardContent>
 			</Card>
 

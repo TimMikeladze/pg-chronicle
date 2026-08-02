@@ -48,7 +48,17 @@ export function Nav() {
 					})}
 				</nav>
 
-				<div className="ml-auto">
+				<div className="ml-auto flex items-center gap-1">
+					{/*
+					 * Plain anchor, not next/link: this is a JSON route, not a page —
+					 * a client-side navigation would try to render it as one.
+					 */}
+					<a
+						href="/openapi"
+						className="text-muted-foreground hover:text-foreground rounded-md px-3 py-1.5 text-sm transition-colors"
+					>
+						API spec
+					</a>
 					<ThemeToggle />
 				</div>
 			</div>

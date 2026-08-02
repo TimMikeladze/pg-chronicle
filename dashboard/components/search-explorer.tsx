@@ -36,6 +36,8 @@ import { cn } from '@/lib/utils'
 
 const ANY_OPERATION = 'ANY'
 const LIMITS = [25, 50, 100, 250]
+/** PgHistory validates `query` with a 500-character bound. */
+const QUERY_MAX_LENGTH = 500
 
 /** datetime-local yields "2026-01-01T10:00" with no zone; the API wants ISO-8601. */
 function toIso(local: string): string | undefined {
@@ -87,13 +89,29 @@ export function SearchExplorer({ tables }: { tables: string[] }) {
 	const [inspected, setInspected] = useState<AuditEntryWire | null>(null)
 
 	/*
-	 * The API treats `query` as a JSONB containment document. Parsing it here
-	 * turns a typo into inline feedback instead of a round trip that comes back
-	 * as a generic 400.
+	 * `query` has two server-side modes, chosen by the same shape test used in
+	 * PgHistory.buildSearchConditions: a value that starts with `{` and ends
+	 * with `}` is parsed as a JSONB containment document and hits the GIN
+	 * index; anything else becomes an ILIKE substring scan over old_data and
+	 * new_data. Mirroring that test exactly matters — validating everything as
+	 * JSON would make plain-text search unreachable.
 	 */
+	const queryMode = useMemo<'empty' | 'containment' | 'text'>(() => {
+		const trimmed = query.trim()
+		if (!trimmed) return 'empty'
+		return trimmed.startsWith('{') && trimmed.endsWith('}')
+			? 'containment'
+			: 'text'
+	}, [query])
+
 	const queryError = useMemo(() => {
 		const trimmed = query.trim()
 		if (!trimmed) return null
+		// PgHistory bounds the query at 500 characters.
+		if (trimmed.length > QUERY_MAX_LENGTH) {
+			return `Queries are limited to ${QUERY_MAX_LENGTH} characters (currently ${trimmed.length})`
+		}
+		if (queryMode !== 'containment') return null
 		try {
 			const parsed: unknown = JSON.parse(trimmed)
 			if (
@@ -105,9 +123,18 @@ export function SearchExplorer({ tables }: { tables: string[] }) {
 			}
 			return null
 		} catch {
-			return 'Not valid JSON'
+			// The server rejects this too: it only treats `{…}` as JSON, so a
+			// malformed object never silently degrades into a text search.
+			return 'Looks like JSON but does not parse. Remove the braces to search as plain text.'
 		}
-	}, [query])
+	}, [query, queryMode])
+
+	const queryHint =
+		queryMode === 'containment'
+			? 'Containment: matched against old_data and new_data with the GIN-indexed @> operator. Whole values only — {"status":"active"}, not a partial string.'
+			: queryMode === 'text'
+				? 'Plain text: case-insensitive substring match over the serialized row. This is an unindexed scan, so it is slower and counts against the concurrent-search cap.'
+				: 'Leave empty to match everything. Wrap in braces for indexed JSON containment, or type plain text for a substring scan.'
 
 	const rangeError =
 		dateFrom && dateTo && new Date(dateFrom) > new Date(dateTo)
@@ -197,23 +224,33 @@ export function SearchExplorer({ tables }: { tables: string[] }) {
 
 				<div className="grid gap-4 md:grid-cols-[2fr_1fr]">
 					<div className="flex flex-col gap-1.5">
-						<Label htmlFor="query">JSON containment</Label>
+						<div className="flex items-center justify-between gap-2">
+							<Label htmlFor="query">Query</Label>
+							{queryMode === 'empty' ? null : (
+								<span className="text-muted-foreground rounded border px-1.5 py-0.5 font-mono text-[11px]">
+									{queryMode === 'containment'
+										? '@> containment'
+										: 'ILIKE text'}
+								</span>
+							)}
+						</div>
 						<Textarea
 							id="query"
 							value={query}
 							onChange={(event) => setQuery(event.target.value)}
-							placeholder={'{"email": "alice@example.com"}'}
+							placeholder={'{"email": "alice@example.com"}  ·  or:  alice'}
 							aria-invalid={queryError !== null}
+							aria-describedby="query-hint"
 							className="min-h-20 font-mono text-xs"
 						/>
 						<p
+							id="query-hint"
 							className={cn(
 								'text-xs',
 								queryError ? 'text-destructive' : 'text-muted-foreground',
 							)}
 						>
-							{queryError ??
-								'Matched against old_data and new_data with the GIN-indexed @> operator. Leave empty to match everything.'}
+							{queryError ?? queryHint}
 						</p>
 					</div>
 
@@ -307,10 +344,20 @@ export function SearchExplorer({ tables }: { tables: string[] }) {
 					Run a search to see audit entries.
 				</p>
 			) : results.length === 0 ? (
-				<p className="text-muted-foreground rounded-xl border border-dashed p-8 text-center text-sm">
-					No entries matched. Containment matches whole values — try{' '}
-					<code className="font-mono text-xs">{'{"status":"active"}'}</code>{' '}
-					rather than a partial string.
+				<p className="text-muted-foreground mx-auto max-w-xl rounded-xl border border-dashed p-8 text-center text-sm">
+					No entries matched.{' '}
+					{queryMode === 'containment' ? (
+						<>
+							Containment matches whole values — try{' '}
+							<code className="font-mono text-xs">{'{"status":"active"}'}</code>{' '}
+							rather than a partial one, or drop the braces to search as plain
+							text.
+						</>
+					) : null}{' '}
+					{/* Archived rows are soft-deleted first and filtered out of every
+					    read, so "missing" history is often archival, not absence. */}
+					Entries already archived and soft-deleted are excluded from search —
+					those live in S3, not the database.
 				</p>
 			) : (
 				<div className="overflow-hidden rounded-xl border">

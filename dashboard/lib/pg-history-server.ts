@@ -156,8 +156,19 @@ export function revertEntry(input: {
 	table: string
 	recordId: string
 	auditEntryId: string
+	/**
+	 * Skip audit rows for the revert itself. Requires SUPERUSER or the
+	 * `pg_replication` role (PostgreSQL 16+); omitted rather than sent as
+	 * `false` so the request body matches what a default caller would send.
+	 */
+	suppressAuditTriggers?: boolean
 }): Promise<{ success: true }> {
-	return call<{ success: true }>('POST', '/api/history/revert', input)
+	return call<{ success: true }>('POST', '/api/history/revert', {
+		table: input.table,
+		recordId: input.recordId,
+		auditEntryId: input.auditEntryId,
+		...(input.suppressAuditTriggers ? { suppressAuditTriggers: true } : {}),
+	})
 }
 
 export function getStats(): Promise<{ stats: ArchivalStatsRow[] }> {
@@ -176,6 +187,16 @@ export function runArchival(): Promise<{
 		'POST',
 		'/api/archive',
 	)
+}
+
+/**
+ * The OpenAPI document. pg-history JWT-gates `/openapi` unless `publicOpenApi`
+ * is set, and this entry point never sets it — so a browser hitting the route
+ * directly would get a 401. Fetching it here with the minted token is what
+ * makes the spec reachable at all.
+ */
+export function getOpenApiSpec(): Promise<Record<string, unknown>> {
+	return call<Record<string, unknown>>('GET', '/openapi')
 }
 
 /**

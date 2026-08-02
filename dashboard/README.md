@@ -25,6 +25,33 @@ published `exports` map (`pg-history`, `pg-history/next`) via a `file:..` link.
 | `/history/[table]/[recordId]` | One record's full timeline, oldest/newest ordering, per-entry revert |
 | `/api/*` | The pg-history REST API itself — for cron, scripts, and other services |
 | `/health` | The library's public probe (bounded `SELECT 1`, 503 when the DB is unreachable) |
+| `/openapi` | The OpenAPI document, fetched with the dashboard's own token (the library JWT-gates it) |
+
+### Search has two modes
+
+`query` is dispatched by shape, exactly as `PgHistory.buildSearchConditions`
+does it: a value that starts with `{` and ends with `}` is parsed as a **JSONB
+containment** document and hits the GIN index; anything else is an **ILIKE
+substring scan** over the serialized row. The UI shows which mode is active and
+only JSON-validates the containment form — validating everything as JSON would
+make text search unreachable. Queries are bounded at 500 characters.
+
+### Revert options
+
+`suppressAuditTriggers` is exposed as an opt-in checkbox. It is off by default
+because recording the revert is the repudiation defense, and suppressing it
+needs SUPERUSER or the `pg_replication` role (PostgreSQL 16+).
+
+Note that the audit row written for a revert is attributed to the **database
+role**. pg-history logs the JWT `sub` on its own log line but never writes it to
+`app_actor`, so the audit trail alone does not say which operator reverted —
+correlate with the server log.
+
+### Archived history disappears from reads
+
+Both `getHistory` and `search` filter out soft-deleted rows, so once the
+archiver has run, that history is in S3 and no longer visible here. The empty
+states say so rather than implying the changes never happened.
 
 ## How it talks to the API
 

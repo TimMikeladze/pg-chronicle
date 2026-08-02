@@ -68,6 +68,7 @@ export async function revertAction(input: {
 	table: string
 	recordId: string
 	auditEntryId: string
+	suppressAuditTriggers?: boolean
 }): Promise<ActionResult<null>> {
 	const result = await run(() => revertEntry(input))
 	if (result.ok) {
