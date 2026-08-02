@@ -24,6 +24,11 @@
 			"semicolons": "asNeeded"
 		}
 	},
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
+		}
+	},
 	"vcs": {
 		"enabled": true,
 		"useIgnoreFile": true,

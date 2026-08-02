@@ -30,6 +30,7 @@
 		"dist",
 		"bunup.config.ts",
 		"examples/next",
-		"site"
+		"site",
+		"dashboard"
 	]
 }
