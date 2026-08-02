@@ -12,9 +12,15 @@ bun install
 bun run dev                  # builds the parent package, then starts Next
 ```
 
-Open <http://localhost:3000>. `bun run dev` and `bun run build` both build the
-root `pg-history` package first, because the dashboard consumes it through its
-published `exports` map (`pg-history`, `pg-history/next`) via a `file:..` link.
+Open <http://localhost:3000>. `dev`, `build`, and `tsc` each build the root
+`pg-history` package first, because the dashboard consumes it through its
+published `exports` map (`pg-history`, `pg-history/next`) via a `file:..` link
+— without `dist/`, even the typecheck cannot resolve `pg-history/next`.
+
+CI runs this app as its own job (`dashboard` in `.github/workflows/ci.yml`):
+typecheck plus a production build, with no database service, since every page
+is `force-dynamic` and the build never opens a connection. Linting is already
+covered by the root job's repo-wide `biome check .`.
 
 ## Screens
 

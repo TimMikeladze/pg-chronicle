@@ -70,3 +70,41 @@ jobs:
 
       - name: Build
         run: bun run build
+
+  dashboard:
+    name: Dashboard
+    runs-on: ubuntu-latest
+    # No postgres or MinIO service: every dashboard page is force-dynamic, so
+    # `next build` compiles and typechecks without ever opening a connection.
+    # Linting is already covered — the `check` job's `biome check .` sweeps the
+    # whole repo, dashboard/ included. What is missing without this job is the
+    # dashboard's own tsc (it is excluded from the root tsconfig, having its
+    # own) and its build.
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      # The dashboard consumes pg-history through its published exports map via
+      # a `file:..` link, so the library's own dependencies must be present
+      # before its dist/ can be built.
+      - name: Install library dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install dashboard dependencies
+        run: bun install --frozen-lockfile
+        working-directory: dashboard
+
+      - name: Typecheck
+        run: bun run tsc
+        working-directory: dashboard
+
+      # `prebuild` builds the parent package first, so this also proves the
+      # dist/ the dashboard imports is the one the library currently produces.
+      - name: Build
+        run: bun run build
+        working-directory: dashboard

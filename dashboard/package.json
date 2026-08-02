@@ -8,6 +8,7 @@
 		"prebuild": "cd .. && bun run build",
 		"build": "next build",
 		"start": "next start",
+		"pretsc": "cd .. && bun run build",
 		"tsc": "tsc --noEmit"
 	},
 	"dependencies": {
