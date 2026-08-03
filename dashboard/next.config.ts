@@ -11,16 +11,16 @@ const nextConfig: NextConfig = {
 	serverExternalPackages: ['pg', 'pghistory'],
 
 	/*
-	 * pghistory is linked with `file:..`, so the real sources live above this
-	 * directory. Without an explicit tracing root Next infers it from the nearest
-	 * lockfile and warns (or, on Vercel, drops the package from the bundle).
+	 * pghistory is symlinked from the parent directory, so its real sources live
+	 * above this one. Without an explicit tracing root Next infers it from the
+	 * nearest lockfile and warns (or drops the package from the bundle).
 	 */
 	outputFileTracingRoot: path.join(import.meta.dirname, '..'),
 
 	/*
-	 * `serverExternalPackages` alone does not catch pghistory here: it is linked
-	 * with `file:..`, so it resolves to a path outside node_modules and Next's
-	 * "is this a package?" heuristic misses it. Webpack then walks into
+	 * `serverExternalPackages` alone does not catch pghistory here: it is a
+	 * symlink out of node_modules, so Next's "is this a package?" heuristic
+	 * misses it. Webpack then walks into
 	 * hono-openapi and reports a missing `zod/v4/core` — an optional adapter that
 	 * is never reached at runtime, but a "Module not found" line in every build.
 	 *

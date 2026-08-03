@@ -336,7 +336,10 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 					-->
 					<figure class="shots">
 						${SHOTS.map(
-							(shot, i) => `<div class="shot${i === 0 ? ' is-active' : ''}" data-shot="${i}">
+							(
+								shot,
+								i,
+							) => `<div class="shot${i === 0 ? ' is-active' : ''}" data-shot="${i}">
 							<img class="shot-img shot-img--light" src="${shot.light}" alt="${escapeHtml(shot.alt)}" width="1400" height="900" loading="${i === 0 ? 'eager' : 'lazy'}" decoding="async" />
 							<img class="shot-img shot-img--dark" src="${shot.dark}" alt="${escapeHtml(shot.alt)}" width="1400" height="900" loading="${i === 0 ? 'eager' : 'lazy'}" decoding="async" />
 						</div>`,
