@@ -40,6 +40,37 @@ const SHOTS = [
 const REPO = 'https://github.com/TimMikeladze/pg-history'
 const NPM = 'https://www.npmjs.com/package/pg-history'
 
+/**
+ * The three claims that decide whether a visitor keeps reading, drawn from
+ * "How It Works" — each is a property of the design, not a feature list entry.
+ */
+const PILLARS = [
+	{
+		title: 'Nothing runs in your app',
+		body: 'Triggers live in PostgreSQL. Every write is audited regardless of what connects — your app, a migration, <code>psql</code>, another service.',
+	},
+	{
+		title: 'Same transaction, or neither',
+		body: 'The audit row is written inside your transaction. If the write rolls back so does the entry, and a failed audit rolls back the write.',
+	},
+	{
+		title: 'Old rows leave for S3',
+		body: 'The archiver moves aged entries to compressed Parquet on S3 and deletes them in stages. No row is dropped without a verified backup.',
+	},
+] as const
+
+/** The setup snippet, verbatim from the README's Quick Start. */
+const SETUP_SNIPPET = `const history = new PgHistory({ pool, tables: ['users'] })
+await history.setup()
+
+// Every INSERT/UPDATE/DELETE on 'users' is audited from here on,
+// whatever connects — no application code changes.
+await pool.query(\`UPDATE users SET name = 'Alice' WHERE id = 1\`)
+
+// Read the trail back, then undo one entry.
+const { data } = await history.getHistory('users', '1')
+await history.revert('users', '1', data[1].id)`
+
 /** Title + tagline for the hero, so the README stays the only source of truth. */
 function readHero(md: string) {
 	const title = /^#\s+(.+)$/m.exec(md)?.[1] ?? 'pg-history'
@@ -247,6 +278,15 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 		.replace(/<table>/g, '<div class="table-wrap"><table>')
 		.replace(/<\/table>/g, '</table></div>')
 
+	// The hero pitch continues below the fold: what the design guarantees, and
+	// the smallest complete program that uses it. Highlighted with the same
+	// themes as the docs so the two read as one page.
+	const setupHtml = highlighter.codeToHtml(SETUP_SNIPPET, {
+		lang: 'typescript',
+		themes: { light: 'vitesse-light', dark: 'vitesse-dark' },
+		defaultColor: false,
+	})
+
 	const rail = headings
 		.map(
 			({ id, text }) =>
@@ -350,20 +390,44 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 							<img class="shot-img shot-img--dark" src="${shot.dark}" alt="${escapeHtml(shot.alt)}" width="1400" height="900" fetchpriority="${i === 0 ? 'high' : 'low'}" decoding="async" />
 						</div>`,
 						).join('')}
-						<p class="shot-label">The built-in dashboard, included in the repo.</p>
-						<figcaption class="shot-tabs" role="tablist" aria-label="Dashboard screens">
-							${SHOTS.map(
-								(shot, i) =>
-									`<button class="shot-tab${i === 0 ? ' is-active' : ''}" type="button" role="tab" aria-selected="${i === 0}" data-shot-tab="${i}">${escapeHtml(shot.label)}</button>`,
-							).join('')}
+						<figcaption class="shot-caption">
+							<span class="shot-label">The dashboard ships in the repo — browse, search and revert.</span>
+							<span class="shot-tabs" role="tablist" aria-label="Dashboard screens">
+								${SHOTS.map(
+									(shot, i) =>
+										`<button class="shot-tab${i === 0 ? ' is-active' : ''}" type="button" role="tab" aria-selected="${i === 0}" data-shot-tab="${i}">${escapeHtml(shot.label)}</button>`,
+								).join('')}
+							</span>
 						</figcaption>
 					</figure>
 				</div>
 			</div>
 		</section>
 
+		<section class="pitch" aria-label="Why pg-history">
+			<div class="pitch-inner">
+				<div class="pillars">
+					${PILLARS.map(
+						(p, i) => `<div class="pillar">
+						<span class="pillar-num" aria-hidden="true">${String(i + 1).padStart(2, '0')}</span>
+						<h2 class="pillar-title">${escapeHtml(p.title)}</h2>
+						<p class="pillar-body">${p.body}</p>
+					</div>`,
+					).join('')}
+				</div>
+				<figure class="setup">
+					<figcaption class="setup-bar">
+						<span class="code-lang">The whole integration</span>
+						<a class="setup-more" href="#quick-start">Quick Start →</a>
+					</figcaption>
+					${setupHtml}
+				</figure>
+			</div>
+		</section>
+
 		<div class="layout">
 			<article class="prose" id="content">
+				<p class="sections-head">Documentation</p>
 				<nav class="sections" aria-label="Sections">${sections}</nav>
 				${body}
 			</article>

@@ -48,6 +48,15 @@
 	--nav-h: 3.5rem;
 
 	/*
+	 * One shell width for every band on the page — nav, hero, pitch, docs and
+	 * footer. They previously ran at 78/82/92rem, so the nav's contents sat
+	 * pinched inside a hero that overhung it on both sides and nothing shared a
+	 * vertical rule. Change it here and the whole page moves together.
+	 */
+	--shell: 88rem;
+	--gutter: 1.5rem;
+
+	/*
 	 * light-dark() only accepts colors, so numeric per-scheme values have to be
 	 * switched with real selectors below. Defaults here are the dark values.
 	 */
@@ -147,10 +156,10 @@ a:hover {
 	display: flex;
 	align-items: center;
 	gap: 0.85rem;
-	max-width: 78rem;
+	max-width: var(--shell);
 	margin: 0 auto;
 	height: var(--nav-h);
-	padding: 0 1.5rem;
+	padding: 0 var(--gutter);
 }
 
 .brand {
@@ -162,6 +171,8 @@ a:hover {
 	font-size: 0.95rem;
 	font-weight: 600;
 	letter-spacing: -0.02em;
+	/* Never let the wordmark break across two lines in a 3.5rem-tall bar. */
+	white-space: nowrap;
 }
 
 .brand:hover {
@@ -270,9 +281,9 @@ a:hover {
 .hero-inner {
 	position: relative;
 	z-index: 1;
-	max-width: 82rem;
+	max-width: var(--shell);
 	margin: 0 auto;
-	padding: 6.5rem 1.5rem 0;
+	padding: 6.5rem var(--gutter) 0;
 	text-align: center;
 }
 
@@ -305,21 +316,36 @@ a:hover {
 	box-shadow: 0 0 0 3px var(--accent-wash);
 }
 
+/*
+ * The wordmark carries the page, so it runs larger and tighter than a stock
+ * h1, and fades toward the dim end of the ramp on its lower half — enough to
+ * read as a designed mark rather than default heading text, without
+ * introducing a hue the palette doesn't already have.
+ */
 .hero-title {
 	margin: 0;
 	font-family: var(--display);
-	font-size: clamp(2.25rem, 4.5vw, 3.25rem);
+	font-size: clamp(2.75rem, 5.5vw, 4.25rem);
 	font-weight: 600;
-	letter-spacing: -0.045em;
-	line-height: 1.05;
+	letter-spacing: -0.055em;
+	line-height: 1;
 	color: var(--text-bright);
+	background: linear-gradient(
+		168deg,
+		var(--text-bright) 30%,
+		color-mix(in srgb, var(--text-bright) 58%, var(--text-dim))
+	);
+	background-clip: text;
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
 }
 
 .hero-tagline {
-	margin: 1.5rem auto 2.5rem;
+	margin: 1.25rem auto 2.25rem;
 	max-width: 30rem;
-	font-size: clamp(1.05rem, 2.2vw, 1.35rem);
-	line-height: 1.45;
+	font-size: clamp(1.05rem, 2.2vw, 1.3rem);
+	line-height: 1.5;
+	letter-spacing: -0.01em;
 	color: var(--text-dim);
 	text-wrap: balance;
 }
@@ -332,9 +358,10 @@ a:hover {
 }
 
 .install {
-	display: inline-flex;
+	display: flex;
 	align-items: center;
 	gap: 0.6rem;
+	width: 100%;
 	padding: 0.7rem 0.75rem 0.7rem 1rem;
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
@@ -356,7 +383,9 @@ a:hover {
 }
 
 .install code {
+	margin-right: auto;
 	color: var(--text-bright);
+	text-align: left;
 }
 
 .install .copy-state,
@@ -389,15 +418,27 @@ a:hover {
 	border-color: var(--accent);
 }
 
+/*
+ * `align-items: center` here is what pushed the package-manager tabs off the
+ * copy column's left edge while every other element in the hero sat flush —
+ * the group is stretched instead so both children share one left rule.
+ */
 .install-group {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	gap: 0.6rem;
+	width: 100%;
+	max-width: 24rem;
 }
 
+/*
+ * Centred while the hero is a single stacked column; the desktop rule below
+ * pins it to the shared left rule once the copy sits in its own column.
+ */
 .pm-tabs {
 	display: inline-flex;
+	align-self: center;
 	gap: 0.3rem;
 	padding: 0.25rem;
 	border: 1px solid var(--border);
@@ -437,17 +478,24 @@ a:hover {
 .btn {
 	display: inline-flex;
 	align-items: center;
+	justify-content: center;
 	gap: 0.5rem;
-	padding: 0.6rem 1.5rem;
+	padding: 0.7rem 1.5rem;
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
+	background: var(--bg-raised);
 	color: var(--text);
 	font-size: 0.9rem;
 	font-weight: 500;
 	transition:
 		border-color 0.15s ease,
 		background 0.15s ease,
-		color 0.15s ease;
+		color 0.15s ease,
+		transform 0.15s ease;
+}
+
+.btn:hover {
+	transform: translateY(-1px);
 }
 
 .btn-icon {
@@ -571,19 +619,30 @@ a:hover {
 	display: none;
 }
 
-/* Names what the screenshots are; the tabs beside it only switch between them. */
+/*
+ * Caption sits under the shot: it describes what is above it, and floating the
+ * label alone at the top of the page read as a page heading rather than a
+ * caption. Tabs go on the same line, right-aligned, so the row is one object.
+ */
+.shot-caption {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.75rem 1.5rem;
+	width: 100%;
+	margin-top: 1rem;
+}
+
 .shot-label {
-	order: -2;
-	margin: 0 0 0.9rem;
+	margin: 0;
 	color: var(--text-dim);
 	font-size: 0.8rem;
 }
 
 .shot-tabs {
-	order: -1;
 	display: flex;
 	gap: 0.25rem;
-	margin: 0 0 1.5rem;
 	padding: 0.25rem;
 	border: 1px solid var(--border);
 	border-radius: calc(var(--radius) + 0.25rem);
@@ -621,25 +680,32 @@ a:hover {
  * into a half of 82rem is a grey smudge, and the hero's job is to show the UI.
  */
 @media (min-width: 60rem) {
+	/*
+	 * Copy column is wide enough to hold the title at full size and top-aligned
+	 * against the shot: centering it against a 900px-tall capture pushed the
+	 * wordmark into the middle of the viewport under a band of dead space.
+	 */
 	.hero-inner {
 		display: grid;
-		grid-template-columns: minmax(0, 23rem) minmax(0, 1fr);
-		align-items: center;
-		gap: 3.5rem;
-		max-width: 100rem;
-		padding: 7rem 1.5rem 5rem;
+		grid-template-columns: minmax(26rem, 30rem) minmax(0, 1fr);
+		align-items: start;
+		gap: 4rem;
+		max-width: var(--shell);
+		padding: 4.5rem var(--gutter);
 		text-align: left;
 	}
 
 	.hero-copy {
 		max-width: none;
 		margin: 0;
+		/* Optical alignment: the eyebrow's centre meets the shot's top edge. */
+		padding-top: 0.75rem;
 	}
 
 	.hero-tagline {
 		margin-left: 0;
 		margin-right: 0;
-		max-width: 26rem;
+		max-width: 28rem;
 	}
 
 	.hero-actions {
@@ -648,6 +714,11 @@ a:hover {
 
 	.hero-links {
 		justify-content: flex-start;
+	}
+
+	/* Every element in the copy column now shares one left rule. */
+	.pm-tabs {
+		align-self: flex-start;
 	}
 
 	.hero-visual {
@@ -695,12 +766,151 @@ a:hover {
 	}
 }
 
+/* ---------- pitch: the three guarantees + the whole integration ---------- */
+
+/*
+ * Between the hero and the docs dump. A visitor arriving from a link needs one
+ * screen answering "what does this give me" and "what does using it look like"
+ * before a fourteen-entry contents grid is a reasonable thing to show them.
+ */
+.pitch {
+	border-bottom: 1px solid var(--border);
+	background: var(--bg-inset);
+}
+
+.pitch-inner {
+	display: grid;
+	gap: 3rem;
+	max-width: var(--shell);
+	margin: 0 auto;
+	padding: 4.5rem 1.5rem;
+}
+
+.pillars {
+	display: grid;
+	gap: 2.5rem;
+}
+
+.pillar-num {
+	display: block;
+	margin-bottom: 0.7rem;
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.7rem;
+	letter-spacing: 0.1em;
+}
+
+.pillar-title {
+	margin: 0 0 0.5rem;
+	color: var(--text-bright);
+	font-family: var(--display);
+	font-size: 1.05rem;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	line-height: 1.3;
+}
+
+.pillar-body {
+	margin: 0;
+	color: var(--text-dim);
+	font-size: 0.9rem;
+	line-height: 1.6;
+	text-wrap: pretty;
+}
+
+.pillar-body code {
+	padding: 0.1em 0.35em;
+	border-radius: 4px;
+	background: var(--accent-wash);
+	color: var(--text);
+	font-family: var(--mono);
+	font-size: 0.85em;
+}
+
+/* Same chrome as a docs code block, so the two read as one system. */
+.setup {
+	margin: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-code);
+	overflow: hidden;
+}
+
+.setup-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.55rem 0.9rem;
+	border-bottom: 1px solid var(--border-soft);
+	background: var(--bg-raised);
+}
+
+.setup-more {
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.72rem;
+	white-space: nowrap;
+	transition: color 0.15s ease;
+}
+
+.setup-more:hover {
+	color: var(--text-bright);
+	text-decoration: none;
+}
+
+.setup pre.shiki {
+	margin: 0;
+	padding: 1.25rem 1.35rem;
+	background: transparent;
+	overflow-x: auto;
+	font-size: 0.85rem;
+	line-height: 1.75;
+	tab-size: 2;
+}
+
+.setup pre.shiki code {
+	display: block;
+	width: fit-content;
+	min-width: 100%;
+	font-family: var(--mono);
+}
+
+@media (min-width: 48rem) {
+	.pillars {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 2.5rem;
+	}
+}
+
+/* Guarantees left, the code that buys them right. */
+@media (min-width: 72rem) {
+	.pitch-inner {
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+		align-items: start;
+		gap: 4rem;
+		padding: 5rem 1.5rem;
+	}
+
+	.pillars {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 2.25rem;
+	}
+}
+
 /* ---------- layout ---------- */
 
+/*
+ * The docs band keeps a reading width rather than the full shell: the prose is
+ * capped at --measure, so stretching this container to 88rem only opened a
+ * dead gutter between the text and the rail. It still starts on the shell's
+ * left rule — `margin: 0 auto` would centre the narrower block and break the
+ * alignment with the nav and hero above.
+ */
 .layout {
-	max-width: 78rem;
+	max-width: var(--shell);
 	margin: 0 auto;
-	padding: 0 1.5rem;
+	padding: 0 var(--gutter);
 }
 
 .rail {
@@ -708,9 +918,16 @@ a:hover {
 }
 
 @media (min-width: 72rem) {
+	/*
+	 * The prose track is sized to the measure, not 1fr — the text stops at
+	 * --measure regardless, so a fractional track just pushed the rail to the
+	 * far edge of the shell with an empty band between the two. `justify-content`
+	 * keeps the pair on the shell's left rule.
+	 */
 	.layout {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) 13rem;
+		grid-template-columns: minmax(0, var(--measure)) 13rem;
+		justify-content: start;
 		gap: 3.5rem;
 	}
 
@@ -992,6 +1209,17 @@ a:hover {
  * stretch every cell to the tallest in the row by default, so a one-line card
  * next to a five-line one inherited its height as blank surface.
  */
+/* Labels the grid as an index — unlabelled, it read as stray page furniture. */
+.sections-head {
+	margin: 0 0 0.9rem;
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 11px;
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+}
+
 .sections {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr));
@@ -1083,16 +1311,22 @@ a:hover {
 @media (min-width: 60rem) {
 	.code-block,
 	.table-wrap,
-	.sections {
+	.sections,
+	.sections-head {
 		margin-inline: -3rem;
 	}
 }
 
+/*
+ * Right-hand breakout only, and never past the gap: the rail track begins
+ * 3.5rem after the prose, so a wider pull put the section grid underneath it.
+ */
 @media (min-width: 72rem) {
 	.code-block,
 	.table-wrap,
-	.sections {
-		margin-inline: 0 -6rem;
+	.sections,
+	.sections-head {
+		margin-inline: 0 -2rem;
 	}
 }
 
@@ -1107,7 +1341,7 @@ a:hover {
 	display: flex;
 	justify-content: center;
 	align-items: center;
-	max-width: 78rem;
+	max-width: var(--shell);
 	margin: 0 auto;
 	padding: 2.25rem 1.5rem 2.5rem;
 	color: var(--text-dim);
@@ -1131,9 +1365,21 @@ a:hover {
 /* ---------- small screens ---------- */
 
 @media (max-width: 40rem) {
+	.nav-inner {
+		padding: 0 1rem;
+		gap: 0.6rem;
+	}
+
 	.nav-links {
 		gap: 0.9rem;
 		font-size: 0.82rem;
+	}
+
+	/* The bar can't hold four links beside the wordmark; these two are the
+	 * least-used and both are reachable from the docs and the footer. */
+	.nav-links a[href="/llms.txt"],
+	.nav-links a[href$="/package/pg-history"] {
+		display: none;
 	}
 
 	.hero-inner {
