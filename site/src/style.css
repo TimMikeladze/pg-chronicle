@@ -477,8 +477,8 @@ a:hover {
 /* ---------- hero visual: real dashboard screenshots ---------- */
 
 /*
- * Shown at every width. Stacked under the copy the shot is no longer competing
- * for a narrow column, so small screens get it too — it just runs full-bleed.
+ * Shown at every width. Below 60rem it stacks under the copy and runs
+ * full-bleed; above that it moves into the hero's right-hand column.
  */
 .hero-visual {
 	display: block;
@@ -615,19 +615,49 @@ a:hover {
 }
 
 /*
- * The screenshot stacks under the copy rather than sitting beside it. Beside
- * it, the image column tops out near 25rem — a 1400px-wide dashboard capture
- * scaled to that is a grey smudge, and the hero's whole job is to show the UI.
- * Stacked, the shot gets the full measure and the interface is legible.
+ * Side by side once there's room: copy left, screenshots right. The visual
+ * column is the wider of the two and the whole row is allowed to run past the
+ * text container toward the viewport edge — a 1400px dashboard capture squeezed
+ * into a half of 82rem is a grey smudge, and the hero's job is to show the UI.
  */
 @media (min-width: 60rem) {
 	.hero-inner {
-		padding: 7rem 1.5rem 0;
+		display: grid;
+		grid-template-columns: minmax(0, 23rem) minmax(0, 1fr);
+		align-items: center;
+		gap: 3.5rem;
+		max-width: 100rem;
+		padding: 7rem 1.5rem 5rem;
+		text-align: left;
+	}
+
+	.hero-copy {
+		max-width: none;
+		margin: 0;
+	}
+
+	.hero-tagline {
+		margin-left: 0;
+		margin-right: 0;
+		max-width: 26rem;
+	}
+
+	.hero-actions {
+		align-items: flex-start;
+	}
+
+	.hero-links {
+		justify-content: flex-start;
 	}
 
 	.hero-visual {
 		display: block;
-		margin-top: 4.5rem;
+		margin-top: 0;
+	}
+
+	/* Tabs and label line up with the shot's left edge, not its center. */
+	.shots {
+		align-items: flex-start;
 	}
 }
 
