@@ -27,8 +27,11 @@ covered by the root job's repo-wide `biome check .`.
 | Route | What it does |
 |---|---|
 | `/` | Health, archival backlog, recent activity across all tables, jump-to-record |
-| `/search` | JSONB containment search with operation / date-range / table filters, cursor pagination, per-entry diff |
+| `/search` | JSONB containment or ILIKE text search with operation / date-range / table filters, cursor pagination, per-entry diff |
+| `/tables` | Every audited table with its last change, actor and archival backlog |
+| `/tables/[table]` | One table's recent activity |
 | `/history/[table]/[recordId]` | One record's full timeline, oldest/newest ordering, per-entry revert |
+| `/archival` | Archival status, backlog and on-demand runs (only when `PGHISTORY_S3_BUCKET` is set) |
 | `/api/*` | The pghistory REST API itself — for cron, scripts, and other services |
 | `/health` | The library's public probe (bounded `SELECT 1`, 503 when the DB is unreachable) |
 | `/openapi` | The API reference, rendered from the OpenAPI document with Scalar |

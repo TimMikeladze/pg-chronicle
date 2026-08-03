@@ -14,6 +14,7 @@ PostgreSQL audit trails with automated S3 archival.
 - [Architecture](#architecture)
 - [API Reference](#api-reference)
 - [Server & REST API](#server--rest-api)
+- [Dashboard](#dashboard)
 - [Deployment](#deployment)
 - [Archiver](#archiver)
 - [Environment Variables](#environment-variables)
@@ -461,6 +462,39 @@ bun run src/main.ts
 ```
 
 `PGHISTORY_TABLES` is what enables the history API — without it the process starts but serves only `/health`. Without `PGHISTORY_JWT_SECRET`, startup fails closed unless `PGHISTORY_ALLOW_UNAUTHENTICATED=true`.
+
+## Dashboard
+
+A ready-to-deploy Next.js UI for browsing, searching and reverting the audit trail. It lives in [`dashboard/`](./dashboard) and is a single deployment: the same app mounts the real pghistory REST API at `/api` and renders the screens on top of it, so nothing else has to be running.
+
+```bash
+cd dashboard
+cp .env.example .env.local   # PGHISTORY_DATABASE_URL, PGHISTORY_TABLES, PGHISTORY_JWT_SECRET
+bun install
+bun run dev                  # builds the root package, then starts Next on :3000
+```
+
+It reads the same environment variables the server does — `PGHISTORY_TABLES` is what enables the history screens, and setting `PGHISTORY_S3_BUCKET` turns on the archival panels. See [`dashboard/README.md`](./dashboard/README.md) for the full walkthrough.
+
+### Screens
+
+| Route | What it does |
+|-------|--------------|
+| `/` | Health, archival backlog, recent activity across all tables, jump-to-record |
+| `/search` | JSONB containment or ILIKE search with operation / date-range / table filters, cursor pagination, per-entry diff |
+| `/tables` | Every audited table with its last change, actor and archival backlog |
+| `/history/[table]/[recordId]` | One record's full timeline, oldest/newest ordering, per-entry revert |
+| `/archival` | Archival status and on-demand runs |
+| `/openapi` | The API reference, rendered from the OpenAPI document |
+| `/api/*` | The pghistory REST API itself — for cron, scripts and other services |
+
+### It never issues a token to the browser
+
+Server components and server actions mint a 60-second HS256 JWT with `jose` and invoke the very same route handlers mounted at `/api`, in-process with a synthetic `Request`. No network hop, no CORS, one connection pool, and identical auth, validation and error semantics to any external caller. The JWT `sub` carries `PGHISTORY_DASHBOARD_ACTOR`, which pghistory logs on every revert — set it to something identifiable per deployment.
+
+**Authentication is not authorization.** The dashboard runs with a token it minted itself, so it has blanket access to every record of every configured table by design. Put it behind your own SSO or network boundary, and supply an `authorize` hook if you need per-tenant scoping. Do not expose it publicly.
+
+Two behaviours worth knowing: archived history disappears from reads (both `getHistory` and `search` filter out soft-deleted rows, so once the archiver has run that history is in S3 and no longer visible here), and setting `CRON_SECRET` disables the "Run archival" button — `/api/archive` then requires a `Bearer <CRON_SECRET>` header, but the `/api/*` JWT middleware rejects anything that is not a valid token first, so archival becomes scheduler-only.
 
 ## Deployment
 

@@ -21,3 +21,6 @@ yarn-error.log*
 .worktrees/
 .vercel
 .claude/
+
+# Bun is the package manager here; npm lockfiles must not come back.
+package-lock.json

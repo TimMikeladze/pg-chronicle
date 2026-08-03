@@ -553,10 +553,17 @@ a:hover {
 	display: none;
 }
 
+/* Names what the screenshots are; the tabs below only switch between them. */
+.shot-label {
+	margin-top: 0.75rem;
+	color: var(--text-dim);
+	font-size: 0.8rem;
+}
+
 .shot-tabs {
 	display: flex;
 	gap: 0.25rem;
-	margin-top: 0.75rem;
+	margin-top: 0.4rem;
 }
 
 .shot-tab {
