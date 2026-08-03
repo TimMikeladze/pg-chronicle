@@ -334,6 +334,11 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 					  Real screenshots of the dashboard, not a mock. Each shot exists in
 					  both themes; CSS shows only the one matching the visitor's, so a
 					  light screenshot never lands on the dark page or vice versa.
+
+					  None of these may be loading="lazy". Inactive shots are display:none,
+					  and a lazy image inside a hidden box is never fetched — so clicking a
+					  tab swapped in a blank frame that only filled once the load started.
+					  fetchpriority keeps the visible shot first in the queue instead.
 					-->
 					<figure class="shots">
 						${SHOTS.map(
@@ -341,8 +346,8 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 								shot,
 								i,
 							) => `<div class="shot${i === 0 ? ' is-active' : ''}" data-shot="${i}">
-							<img class="shot-img shot-img--light" src="${shot.light}" alt="${escapeHtml(shot.alt)}" width="1400" height="900" loading="${i === 0 ? 'eager' : 'lazy'}" decoding="async" />
-							<img class="shot-img shot-img--dark" src="${shot.dark}" alt="${escapeHtml(shot.alt)}" width="1400" height="900" loading="${i === 0 ? 'eager' : 'lazy'}" decoding="async" />
+							<img class="shot-img shot-img--light" src="${shot.light}" alt="${escapeHtml(shot.alt)}" width="1400" height="900" fetchpriority="${i === 0 ? 'high' : 'low'}" decoding="async" />
+							<img class="shot-img shot-img--dark" src="${shot.dark}" alt="${escapeHtml(shot.alt)}" width="1400" height="900" fetchpriority="${i === 0 ? 'high' : 'low'}" decoding="async" />
 						</div>`,
 						).join('')}
 						<p class="shot-label">The built-in dashboard, included in the repo.</p>

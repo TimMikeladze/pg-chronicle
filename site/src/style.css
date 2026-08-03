@@ -270,9 +270,9 @@ a:hover {
 .hero-inner {
 	position: relative;
 	z-index: 1;
-	max-width: 78rem;
+	max-width: 82rem;
 	margin: 0 auto;
-	padding: 6.5rem 1.5rem 5.5rem;
+	padding: 6.5rem 1.5rem 0;
 	text-align: center;
 }
 
@@ -476,8 +476,13 @@ a:hover {
 
 /* ---------- hero visual: real dashboard screenshots ---------- */
 
+/*
+ * Shown at every width. Stacked under the copy the shot is no longer competing
+ * for a narrow column, so small screens get it too — it just runs full-bleed.
+ */
 .hero-visual {
-	display: none;
+	display: block;
+	margin-top: 3.5rem;
 }
 
 /*
@@ -496,8 +501,16 @@ a:hover {
  * a light capture never sits on the dark page. Both are in the DOM, which is
  * what lets the swap happen with no flash and no JavaScript.
  */
+/*
+ * Column order is deliberate: the tabs and their label sit above the image so
+ * the control precedes what it switches, and the shot itself is last so it can
+ * run to the bottom edge of the hero.
+ */
 .shots {
 	position: relative;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
 	margin: 0;
 }
 
@@ -514,11 +527,16 @@ a:hover {
 	width: 100%;
 	height: auto;
 	border: 1px solid var(--border);
-	border-radius: var(--radius);
+	border-radius: calc(var(--radius) + 0.25rem);
 	background: var(--bg-raised);
+	/*
+	 * Lifted harder than the old inline-column shadow: the shot is now the
+	 * largest object on the page and needs to sit above the grid field rather
+	 * than float ambiguously on it.
+	 */
 	box-shadow: light-dark(
-		0 1rem 2.5rem -1.5rem rgba(0, 0, 0, 0.22),
-		0 1.5rem 3rem -1.75rem rgba(0, 0, 0, 0.7)
+		0 2rem 4rem -1.5rem rgba(0, 0, 0, 0.3),
+		0 2.5rem 5rem -2rem rgba(0, 0, 0, 0.85)
 	);
 }
 
@@ -553,17 +571,23 @@ a:hover {
 	display: none;
 }
 
-/* Names what the screenshots are; the tabs below only switch between them. */
+/* Names what the screenshots are; the tabs beside it only switch between them. */
 .shot-label {
-	margin-top: 0.75rem;
+	order: -2;
+	margin: 0 0 0.9rem;
 	color: var(--text-dim);
 	font-size: 0.8rem;
 }
 
 .shot-tabs {
+	order: -1;
 	display: flex;
 	gap: 0.25rem;
-	margin-top: 0.4rem;
+	margin: 0 0 1.5rem;
+	padding: 0.25rem;
+	border: 1px solid var(--border);
+	border-radius: calc(var(--radius) + 0.25rem);
+	background: var(--bg-raised);
 }
 
 .shot-tab {
@@ -590,50 +614,20 @@ a:hover {
 	color: var(--text-bright);
 }
 
-@media (min-width: 68rem) {
+/*
+ * The screenshot stacks under the copy rather than sitting beside it. Beside
+ * it, the image column tops out near 25rem — a 1400px-wide dashboard capture
+ * scaled to that is a grey smudge, and the hero's whole job is to show the UI.
+ * Stacked, the shot gets the full measure and the interface is legible.
+ */
+@media (min-width: 60rem) {
 	.hero-inner {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(21rem, 25rem);
-		align-items: center;
-		gap: 3.5rem;
-		max-width: 78rem;
-		padding: 7.5rem 1.5rem 6.5rem;
-		text-align: left;
-	}
-
-	/*
-	 * Every element in the left column shares one left edge. Each of these
-	 * clears a centring rule from the single-column base styles — miss one and
-	 * that element alone sits inset from the rest.
-	 */
-	.hero-copy {
-		max-width: none;
-		margin: 0;
-	}
-
-	.hero-copy .eyebrow {
-		margin-left: 0;
-	}
-
-	.hero-tagline {
-		margin-left: 0;
-		margin-right: 0;
-	}
-
-	.hero-actions {
-		align-items: flex-start;
-	}
-
-	.install-group {
-		align-items: flex-start;
-	}
-
-	.hero-links {
-		justify-content: flex-start;
+		padding: 7rem 1.5rem 0;
 	}
 
 	.hero-visual {
 		display: block;
+		margin-top: 4.5rem;
 	}
 }
 
@@ -960,9 +954,17 @@ a:hover {
 
 /* ---------- section grid (generated from the README's contents) ---------- */
 
+/*
+ * Tighter tracks than the old 15rem floor, so the same entries fit more
+ * columns and the block loses several rows of height on wide screens.
+ *
+ * `align-items: start` is what actually kills the dead space: grid rows
+ * stretch every cell to the tallest in the row by default, so a one-line card
+ * next to a five-line one inherited its height as blank surface.
+ */
 .sections {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+	grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr));
 	gap: 1px;
 	margin: 0 0 1rem;
 	border: 1px solid var(--border);
@@ -971,11 +973,19 @@ a:hover {
 	overflow: hidden;
 }
 
+/*
+ * Cards fill their cell so the grid's hairlines stay unbroken, but the clamped
+ * description caps how tall a row can get. Six of these entries have no
+ * description at all, so without the min-height the rows they sit in collapse
+ * to the name alone and the block reads as ragged.
+ */
 .section-card {
 	display: flex;
 	flex-direction: column;
-	gap: 0.4rem;
-	padding: 1rem 1.1rem 1.15rem;
+	justify-content: flex-start;
+	gap: 0.25rem;
+	min-height: 4.75rem;
+	padding: 0.7rem 0.9rem 0.8rem;
 	background: var(--bg-raised);
 	color: var(--text);
 	transition: background 0.14s ease;
@@ -989,11 +999,12 @@ a:hover {
 .section-name {
 	display: flex;
 	align-items: baseline;
-	gap: 0.4rem;
+	gap: 0.35rem;
 	color: var(--text-bright);
 	font-family: var(--mono);
-	font-size: 0.85rem;
+	font-size: 0.8rem;
 	font-weight: 500;
+	letter-spacing: -0.01em;
 	transition: color 0.14s ease;
 }
 
@@ -1017,10 +1028,20 @@ a:hover {
 	transform: translateX(0);
 }
 
+/*
+ * Two lines maximum. These are signposts, not summaries — the full text is one
+ * click away, and letting a five-line intro set the row height was most of why
+ * the block ran so tall.
+ */
 .section-desc {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+	overflow: hidden;
 	color: var(--text-dim);
-	font-size: 0.8rem;
-	line-height: 1.5;
+	font-size: 0.75rem;
+	line-height: 1.45;
 	text-wrap: pretty;
 }
 
