@@ -1199,110 +1199,6 @@ a:hover {
 	border-bottom: none;
 }
 
-/* ---------- section grid (generated from the README's contents) ---------- */
-
-/*
- * Tighter tracks than the old 15rem floor, so the same entries fit more
- * columns and the block loses several rows of height on wide screens.
- *
- * `align-items: start` is what actually kills the dead space: grid rows
- * stretch every cell to the tallest in the row by default, so a one-line card
- * next to a five-line one inherited its height as blank surface.
- */
-/* Labels the grid as an index — unlabelled, it read as stray page furniture. */
-.sections-head {
-	margin: 0 0 0.9rem;
-	color: var(--text-dim);
-	font-family: var(--mono);
-	font-size: 11px;
-	font-weight: 500;
-	text-transform: uppercase;
-	letter-spacing: 0.08em;
-}
-
-.sections {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr));
-	gap: 1px;
-	margin: 0 0 1rem;
-	border: 1px solid var(--border);
-	border-radius: var(--radius);
-	background: var(--border-soft);
-	overflow: hidden;
-}
-
-/*
- * Cards fill their cell so the grid's hairlines stay unbroken, but the clamped
- * description caps how tall a row can get. Six of these entries have no
- * description at all, so without the min-height the rows they sit in collapse
- * to the name alone and the block reads as ragged.
- */
-.section-card {
-	display: flex;
-	flex-direction: column;
-	justify-content: flex-start;
-	gap: 0.25rem;
-	min-height: 4.75rem;
-	padding: 0.7rem 0.9rem 0.8rem;
-	background: var(--bg-raised);
-	color: var(--text);
-	transition: background 0.14s ease;
-}
-
-.section-card:hover {
-	background: var(--accent-wash);
-	text-decoration: none;
-}
-
-.section-name {
-	display: flex;
-	align-items: baseline;
-	gap: 0.35rem;
-	color: var(--text-bright);
-	font-family: var(--mono);
-	font-size: 0.8rem;
-	font-weight: 500;
-	letter-spacing: -0.01em;
-	transition: color 0.14s ease;
-}
-
-/* Arrow slides out on hover. */
-.section-name::after {
-	content: "→";
-	color: var(--accent);
-	opacity: 0;
-	transform: translateX(-3px);
-	transition:
-		opacity 0.14s ease,
-		transform 0.14s ease;
-}
-
-.section-card:hover .section-name {
-	color: var(--accent);
-}
-
-.section-card:hover .section-name::after {
-	opacity: 1;
-	transform: translateX(0);
-}
-
-/*
- * Two lines maximum. These are signposts, not summaries — the full text is one
- * click away, and letting a five-line intro set the row height was most of why
- * the block ran so tall.
- */
-.section-desc {
-	display: -webkit-box;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 2;
-	line-clamp: 2;
-	overflow: hidden;
-	color: var(--text-dim);
-	font-size: 0.75rem;
-	line-height: 1.45;
-	text-wrap: pretty;
-}
-
 /*
  * Code samples and API tables run wider than comfortable prose, so on roomy
  * screens they break out past the text measure. Declared after the margin
@@ -1310,22 +1206,18 @@ a:hover {
  */
 @media (min-width: 60rem) {
 	.code-block,
-	.table-wrap,
-	.sections,
-	.sections-head {
+	.table-wrap {
 		margin-inline: -3rem;
 	}
 }
 
 /*
  * Right-hand breakout only, and never past the gap: the rail track begins
- * 3.5rem after the prose, so a wider pull put the section grid underneath it.
+ * 3.5rem after the prose, so a wider pull put the block underneath it.
  */
 @media (min-width: 72rem) {
 	.code-block,
-	.table-wrap,
-	.sections,
-	.sections-head {
+	.table-wrap {
 		margin-inline: 0 -2rem;
 	}
 }

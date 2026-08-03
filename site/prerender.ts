@@ -294,19 +294,6 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 		)
 		.join('')
 
-	// Section grid: the README's own contents list, each entry carrying the
-	// intro sentence from the section it points at.
-	const intros = sectionIntros(readme)
-	const sections = parseToc(readme)
-		.map(({ text, anchor }) => {
-			const intro = intros.get(anchor)
-			return `<a class="section-card" href="#${escapeHtml(anchor)}">
-				<span class="section-name">${escapeHtml(text)}</span>
-				${intro ? `<span class="section-desc">${escapeHtml(intro)}</span>` : ''}
-			</a>`
-		})
-		.join('')
-
 	const html = `<a class="skip" href="#content">Skip to content</a>
 	<header class="nav">
 		<div class="nav-inner">
@@ -427,8 +414,6 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 
 		<div class="layout">
 			<article class="prose" id="content">
-				<p class="sections-head">Documentation</p>
-				<nav class="sections" aria-label="Sections">${sections}</nav>
 				${body}
 			</article>
 			<aside class="rail" aria-label="On this page">
