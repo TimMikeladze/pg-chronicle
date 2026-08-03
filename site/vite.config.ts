@@ -15,7 +15,7 @@ const sources = [
  */
 function prerenderReadme(): Plugin {
 	return {
-		name: 'pghistory:prerender-readme',
+		name: 'pg-history:prerender-readme',
 		async transformIndexHtml(html) {
 			const page = await renderPage(siteDir)
 			return html

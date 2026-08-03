@@ -25,7 +25,8 @@ const EXAMPLES = [
 // Examples that write Parquet files to S3 and need MinIO reachable.
 const NEEDS_S3 = new Set(['archival-lifecycle.ts', 'cron-archival.ts'])
 
-const S3_ENDPOINT = process.env.PGHISTORY_S3_ENDPOINT || 'http://localhost:9000'
+const S3_ENDPOINT =
+	process.env.PG_HISTORY_S3_ENDPOINT || 'http://localhost:9000'
 
 async function s3Reachable(): Promise<boolean> {
 	try {

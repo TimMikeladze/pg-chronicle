@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
-import { validateIdentifier } from './pghistory-validators'
+import { validateIdentifier } from './pg-history-validators'
 
 // Cache schema per pool instance to avoid repeated round-trips.
 // The schema does not change during a session; keying by pool avoids

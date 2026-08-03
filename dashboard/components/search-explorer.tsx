@@ -214,7 +214,7 @@ export function SearchExplorer({
 			} else {
 				setError(
 					result.code === 'RATE_LIMITED'
-						? 'Too many searches running at once. pghistory caps concurrent searches so one unindexed scan cannot starve the connection pool. Retry in a moment, or switch to a containment query.'
+						? 'Too many searches running at once. pg-history caps concurrent searches so one unindexed scan cannot starve the connection pool. Retry in a moment, or switch to a containment query.'
 						: result.message,
 				)
 				setResults(null)

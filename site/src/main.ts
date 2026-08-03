@@ -16,7 +16,7 @@ function must<T extends Element>(
 	scope: ParentNode = document,
 ) {
 	const el = scope.querySelector<T>(selector)
-	if (!el) throw new Error(`pghistory site: missing element ${selector}`)
+	if (!el) throw new Error(`pg-history site: missing element ${selector}`)
 	return el
 }
 

@@ -142,8 +142,8 @@ describe('archivalRetry config validation', () => {
 describe('JWT alg env validation', () => {
 	test('rejects unsupported algorithm', async () => {
 		const pool = await getTestConnection()
-		process.env.PGHISTORY_JWT_SECRET = 'test-secret'
-		process.env.PGHISTORY_JWT_ALG = 'NONE'
+		process.env.PG_HISTORY_JWT_SECRET = 'test-secret'
+		process.env.PG_HISTORY_JWT_ALG = 'NONE'
 		try {
 			await expect(
 				createServer({
@@ -154,8 +154,8 @@ describe('JWT alg env validation', () => {
 				}),
 			).rejects.toThrow(/not supported/)
 		} finally {
-			delete process.env.PGHISTORY_JWT_SECRET
-			delete process.env.PGHISTORY_JWT_ALG
+			delete process.env.PG_HISTORY_JWT_SECRET
+			delete process.env.PG_HISTORY_JWT_ALG
 		}
 	})
 
@@ -163,8 +163,8 @@ describe('JWT alg env validation', () => {
 		const pool = await getTestConnection()
 		await cleanDatabase()
 		await pool.query(`CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)`)
-		process.env.PGHISTORY_JWT_SECRET = 'test-public-key'
-		process.env.PGHISTORY_JWT_ALG = 'RS256'
+		process.env.PG_HISTORY_JWT_SECRET = 'test-public-key'
+		process.env.PG_HISTORY_JWT_ALG = 'RS256'
 		try {
 			const { app } = await createServer({
 				pool,
@@ -174,8 +174,8 @@ describe('JWT alg env validation', () => {
 			})
 			expect(app).toBeDefined()
 		} finally {
-			delete process.env.PGHISTORY_JWT_SECRET
-			delete process.env.PGHISTORY_JWT_ALG
+			delete process.env.PG_HISTORY_JWT_SECRET
+			delete process.env.PG_HISTORY_JWT_ALG
 		}
 	})
 })
@@ -293,7 +293,7 @@ describe('CORS preflight bypasses JWT', () => {
 		await cleanDatabase()
 		await pool.query(`CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)`)
 
-		process.env.PGHISTORY_JWT_SECRET = 'preflight-secret'
+		process.env.PG_HISTORY_JWT_SECRET = 'preflight-secret'
 		try {
 			const { app } = await createServer({
 				pool,
@@ -312,7 +312,7 @@ describe('CORS preflight bypasses JWT', () => {
 			})
 			expect(res.status).toBeLessThan(300)
 		} finally {
-			delete process.env.PGHISTORY_JWT_SECRET
+			delete process.env.PG_HISTORY_JWT_SECRET
 		}
 	})
 })

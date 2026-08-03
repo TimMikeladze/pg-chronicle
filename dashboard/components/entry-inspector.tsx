@@ -26,7 +26,7 @@ import type { AuditEntryWire } from '@/lib/types'
  *
  * - DB role (`current_user`) is who Postgres authenticated. Always present.
  * - App actor is the application's own user id, and is NULL unless the app ran
- *   `SET LOCAL pghistory.actor` before the write. "not set" therefore means the
+ *   `SET LOCAL pg-history.actor` before the write. "not set" therefore means the
  *   application is not attributing its writes, not that nobody did it.
  * - Client address is NULL over a unix socket, which is the normal case for a
  *   colocated app server — so "local socket" is a fact, not a gap.

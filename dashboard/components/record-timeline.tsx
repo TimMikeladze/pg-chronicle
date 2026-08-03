@@ -193,7 +193,7 @@ export function RecordTimeline({
 						<p>
 							Three things produce this: the row has not been written since
 							triggers were installed, the id does not match the primary key
-							pghistory recorded, or the history has already been archived —
+							pg-history recorded, or the history has already been archived —
 							soft-deleted entries are filtered out of every read and live in
 							S3.
 						</p>

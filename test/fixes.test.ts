@@ -16,14 +16,14 @@ describe('Fix #1 + #9: Next.js handler error recovery', () => {
 
 	afterEach(() => {
 		// Restore env
-		process.env.PGHISTORY_DATABASE_URL = originalEnv.PGHISTORY_DATABASE_URL
-		process.env.PGHISTORY_TABLES = originalEnv.PGHISTORY_TABLES
+		process.env.PG_HISTORY_DATABASE_URL = originalEnv.PG_HISTORY_DATABASE_URL
+		process.env.PG_HISTORY_TABLES = originalEnv.PG_HISTORY_TABLES
 	})
 
 	test('GET returns 500 JSON when init fails (missing env vars)', async () => {
 		// Clear env so getApp() will fail
-		delete process.env.PGHISTORY_DATABASE_URL
-		delete process.env.PGHISTORY_TABLES
+		delete process.env.PG_HISTORY_DATABASE_URL
+		delete process.env.PG_HISTORY_TABLES
 
 		// Dynamic import to get fresh module state
 		const mod = await import('../src/next')
@@ -37,8 +37,8 @@ describe('Fix #1 + #9: Next.js handler error recovery', () => {
 	})
 
 	test('POST returns 500 JSON when init fails (missing env vars)', async () => {
-		delete process.env.PGHISTORY_DATABASE_URL
-		delete process.env.PGHISTORY_TABLES
+		delete process.env.PG_HISTORY_DATABASE_URL
+		delete process.env.PG_HISTORY_TABLES
 
 		const mod = await import('../src/next')
 		const res = await mod.POST(
@@ -51,7 +51,7 @@ describe('Fix #1 + #9: Next.js handler error recovery', () => {
 	})
 
 	test('error response has correct Content-Type header', async () => {
-		delete process.env.PGHISTORY_DATABASE_URL
+		delete process.env.PG_HISTORY_DATABASE_URL
 
 		const mod = await import('../src/next')
 		const res = await mod.GET(new Request('http://localhost/health'))
@@ -156,9 +156,9 @@ describe('Fix #4: Archive endpoint authentication warning', () => {
 
 	test('logs error and refuses to register /api/archive when no auth is configured', async () => {
 		const originalCronSecret = process.env.CRON_SECRET
-		const originalSilent = process.env.PGHISTORY_SILENT_LOGS
+		const originalSilent = process.env.PG_HISTORY_SILENT_LOGS
 		delete process.env.CRON_SECRET
-		delete process.env.PGHISTORY_SILENT_LOGS
+		delete process.env.PG_HISTORY_SILENT_LOGS
 
 		const errorSpy = spyOn(console, 'error')
 
@@ -186,7 +186,7 @@ describe('Fix #4: Archive endpoint authentication warning', () => {
 		errorSpy.mockRestore()
 		process.env.CRON_SECRET = originalCronSecret
 		if (originalSilent !== undefined) {
-			process.env.PGHISTORY_SILENT_LOGS = originalSilent
+			process.env.PG_HISTORY_SILENT_LOGS = originalSilent
 		}
 	})
 
@@ -303,10 +303,10 @@ describe('Fix #6: JWT authentication warning', () => {
 	})
 
 	test('warns when API endpoints are unauthenticated', async () => {
-		const originalJwt = process.env.PGHISTORY_JWT_SECRET
-		const originalSilent = process.env.PGHISTORY_SILENT_LOGS
-		delete process.env.PGHISTORY_JWT_SECRET
-		delete process.env.PGHISTORY_SILENT_LOGS
+		const originalJwt = process.env.PG_HISTORY_JWT_SECRET
+		const originalSilent = process.env.PG_HISTORY_SILENT_LOGS
+		delete process.env.PG_HISTORY_JWT_SECRET
+		delete process.env.PG_HISTORY_SILENT_LOGS
 
 		const warnSpy = spyOn(console, 'warn')
 
@@ -331,15 +331,15 @@ describe('Fix #6: JWT authentication warning', () => {
 		).toBe(true)
 
 		warnSpy.mockRestore()
-		process.env.PGHISTORY_JWT_SECRET = originalJwt
+		process.env.PG_HISTORY_JWT_SECRET = originalJwt
 		if (originalSilent !== undefined) {
-			process.env.PGHISTORY_SILENT_LOGS = originalSilent
+			process.env.PG_HISTORY_SILENT_LOGS = originalSilent
 		}
 	})
 
 	test('does not warn when JWT secret is set', async () => {
-		const originalJwt = process.env.PGHISTORY_JWT_SECRET
-		process.env.PGHISTORY_JWT_SECRET = 'test-secret'
+		const originalJwt = process.env.PG_HISTORY_JWT_SECRET
+		process.env.PG_HISTORY_JWT_SECRET = 'test-secret'
 
 		const warnSpy = spyOn(console, 'warn')
 
@@ -364,12 +364,12 @@ describe('Fix #6: JWT authentication warning', () => {
 		).toBe(false)
 
 		warnSpy.mockRestore()
-		process.env.PGHISTORY_JWT_SECRET = originalJwt
+		process.env.PG_HISTORY_JWT_SECRET = originalJwt
 	})
 
 	test('does not warn when history is not enabled', async () => {
-		const originalJwt = process.env.PGHISTORY_JWT_SECRET
-		delete process.env.PGHISTORY_JWT_SECRET
+		const originalJwt = process.env.PG_HISTORY_JWT_SECRET
+		delete process.env.PG_HISTORY_JWT_SECRET
 
 		const warnSpy = spyOn(console, 'warn')
 
@@ -388,7 +388,7 @@ describe('Fix #6: JWT authentication warning', () => {
 		).toBe(false)
 
 		warnSpy.mockRestore()
-		process.env.PGHISTORY_JWT_SECRET = originalJwt
+		process.env.PG_HISTORY_JWT_SECRET = originalJwt
 	})
 })
 
@@ -525,8 +525,8 @@ describe('Review Fix #28: PgHistory.ts is split into focused modules', () => {
 		expect(lines).toBeLessThanOrEqual(950)
 	})
 
-	test('pghistory-validators.ts exports pure validation functions', async () => {
-		const mod = await import('../src/pghistory-validators')
+	test('pg-history-validators.ts exports pure validation functions', async () => {
+		const mod = await import('../src/pg-history-validators')
 		expect(typeof mod.validateIdentifier).toBe('function')
 		expect(typeof mod.validateColumnNames).toBe('function')
 		expect(typeof mod.validateStringInput).toBe('function')
@@ -534,13 +534,13 @@ describe('Review Fix #28: PgHistory.ts is split into focused modules', () => {
 		expect(typeof mod.validateCursor).toBe('function')
 	})
 
-	test('pghistory-triggers.ts exports buildTriggerFunctionSql', async () => {
-		const mod = await import('../src/pghistory-triggers')
+	test('pg-history-triggers.ts exports buildTriggerFunctionSql', async () => {
+		const mod = await import('../src/pg-history-triggers')
 		expect(typeof mod.buildTriggerFunctionSql).toBe('function')
 	})
 
-	test('pghistory-revert.ts exports executeRevert', async () => {
-		const mod = await import('../src/pghistory-revert')
+	test('pg-history-revert.ts exports executeRevert', async () => {
+		const mod = await import('../src/pg-history-revert')
 		expect(typeof mod.executeRevert).toBe('function')
 	})
 })

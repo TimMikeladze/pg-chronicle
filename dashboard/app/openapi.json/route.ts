@@ -1,7 +1,7 @@
-import { ApiError, getOpenApiSpec } from '@/lib/pghistory-server'
+import { ApiError, getOpenApiSpec } from '@/lib/pg-history-server'
 
 /**
- * Serves the pghistory OpenAPI document.
+ * Serves the pg-history OpenAPI document.
  *
  * The library registers `/openapi` behind the same JWT as `/api/*` (this entry
  * point never opts into `publicOpenApi`), so the browser cannot reach it

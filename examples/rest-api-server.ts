@@ -39,7 +39,7 @@ async function main() {
   `)
 
 	// Create and start the server.
-	// PRODUCTION: set PGHISTORY_JWT_SECRET so the history + revert endpoints
+	// PRODUCTION: set PG_HISTORY_JWT_SECRET so the history + revert endpoints
 	// require a JWT. createServer FAILS CLOSED without it. This local example
 	// opts out explicitly via allowUnauthenticated — never do this on a public
 	// deployment (it exposes the destructive revert endpoint to anyone).
@@ -48,7 +48,7 @@ async function main() {
 		port: PORT,
 		enableHistory: true,
 		historyConfig: { tables: ['tasks'] },
-		allowUnauthenticated: !process.env.PGHISTORY_JWT_SECRET,
+		allowUnauthenticated: !process.env.PG_HISTORY_JWT_SECRET,
 	})
 
 	// setup() must be called separately when using createServer

@@ -19,7 +19,7 @@ import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
 const SHOTS = [
 	{
 		label: 'Explore',
-		alt: 'The pghistory dashboard exploring audit entries, with a query console showing which search engine and index a query will use.',
+		alt: 'The pg-history dashboard exploring audit entries, with a query console showing which search engine and index a query will use.',
 		light: '/shots/explore-light.png',
 		dark: '/shots/explore-dark.png',
 	},
@@ -37,17 +37,17 @@ const SHOTS = [
 	},
 ] as const
 
-const REPO = 'https://github.com/TimMikeladze/pghistory'
-const NPM = 'https://www.npmjs.com/package/pghistory'
+const REPO = 'https://github.com/TimMikeladze/pg-history'
+const NPM = 'https://www.npmjs.com/package/pg-history'
 
 /** Title + tagline for the hero, so the README stays the only source of truth. */
 function readHero(md: string) {
-	const title = /^#\s+(.+)$/m.exec(md)?.[1] ?? 'pghistory'
+	const title = /^#\s+(.+)$/m.exec(md)?.[1] ?? 'pg-history'
 	const tagline = md
 		.split(/\r?\n/)
 		.slice(1)
 		.find((l) => l.trim() && !l.startsWith('['))
-	const pkg = /```bash\nbun add ([^\n]+)\n```/.exec(md)?.[1] ?? 'pghistory'
+	const pkg = /```bash\nbun add ([^\n]+)\n```/.exec(md)?.[1] ?? 'pg-history'
 	const install = {
 		bun: `bun add ${pkg}`,
 		npm: `npm install ${pkg}`,

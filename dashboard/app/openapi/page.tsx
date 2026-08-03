@@ -3,13 +3,13 @@ import { TriangleAlertIcon } from 'lucide-react'
 import { ApiReference } from '@/components/api-reference'
 import { NotConfigured } from '@/components/not-configured'
 import { readConfig } from '@/lib/config'
-import { getOpenApiSpec } from '@/lib/pghistory-server'
+import { getOpenApiSpec } from '@/lib/pg-history-server'
 
 export const dynamic = 'force-dynamic'
 
 export const metadata = {
-	title: 'API reference · pghistory',
-	description: 'The pghistory HTTP API, rendered from its OpenAPI document.',
+	title: 'API reference · pg-history',
+	description: 'The pg-history HTTP API, rendered from its OpenAPI document.',
 }
 
 export default async function OpenApiPage() {

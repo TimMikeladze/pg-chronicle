@@ -7,7 +7,7 @@
  * into a 400 response.
  */
 import { ValidationError } from './errors'
-import { validateCursor, validateIdentifier } from './pghistory-validators'
+import { validateCursor, validateIdentifier } from './pg-history-validators'
 import type { SearchCursor, SearchOptions } from './types'
 
 const VALID_OPERATIONS = new Set(['INSERT', 'UPDATE', 'DELETE'])

@@ -21,13 +21,13 @@ export interface Logger {
 }
 
 /**
- * Default logger that writes to console with a [pghistory] tag.
+ * Default logger that writes to console with a [pg-history] tag.
  * Suitable for CLIs, small services, or local development.
  */
 // Default logger intentionally uses console.* — all other call sites route
 // through this interface so library code never touches console directly.
-// Honors PGHISTORY_SILENT_LOGS=1 to drop output (used by test suite).
-const isSilent = (): boolean => process.env.PGHISTORY_SILENT_LOGS === '1'
+// Honors PG_HISTORY_SILENT_LOGS=1 to drop output (used by test suite).
+const isSilent = (): boolean => process.env.PG_HISTORY_SILENT_LOGS === '1'
 
 export const consoleLogger: Logger = {
 	debug(message, context) {
@@ -63,7 +63,7 @@ function format(
 	message: string,
 	context?: LogContext,
 ): string {
-	const prefix = `[pghistory] [${level}] ${message}`
+	const prefix = `[pg-history] [${level}] ${message}`
 	if (!context || Object.keys(context).length === 0) return prefix
 	try {
 		// Track seen objects so circular references degrade gracefully instead

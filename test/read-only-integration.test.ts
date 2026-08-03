@@ -329,11 +329,11 @@ describe('Read-Only API Integration Test', () => {
 
 	test('should handle JWT authentication when enabled', async () => {
 		// Save original env
-		const originalSecret = process.env.PGHISTORY_JWT_SECRET
+		const originalSecret = process.env.PG_HISTORY_JWT_SECRET
 
 		try {
 			// Enable JWT auth
-			process.env.PGHISTORY_JWT_SECRET = 'test-secret-key'
+			process.env.PG_HISTORY_JWT_SECRET = 'test-secret-key'
 
 			const pool = await getTestConnection()
 
@@ -371,9 +371,9 @@ describe('Read-Only API Integration Test', () => {
 		} finally {
 			// Restore original env
 			if (originalSecret === undefined) {
-				delete process.env.PGHISTORY_JWT_SECRET
+				delete process.env.PG_HISTORY_JWT_SECRET
 			} else {
-				process.env.PGHISTORY_JWT_SECRET = originalSecret
+				process.env.PG_HISTORY_JWT_SECRET = originalSecret
 			}
 		}
 	})

@@ -13,10 +13,10 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { readConfig } from '@/lib/config'
-import { getHealth } from '@/lib/pghistory-server'
+import { getHealth } from '@/lib/pg-history-server'
 
 export const metadata: Metadata = {
-	title: 'pghistory',
+	title: 'pg-history',
 	description: 'Browse, search, and revert the PostgreSQL audit trail.',
 }
 

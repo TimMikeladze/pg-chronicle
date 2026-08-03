@@ -8,7 +8,7 @@ import { Panel, PanelFooter, Section } from '@/components/section'
 import { Callout } from '@/components/status'
 import { Button } from '@/components/ui/button'
 import { readConfig } from '@/lib/config'
-import { ApiError, searchHistory } from '@/lib/pghistory-server'
+import { ApiError, searchHistory } from '@/lib/pg-history-server'
 import { cachedProbe } from '@/lib/probe-cache'
 import type { AuditEntryWire } from '@/lib/types'
 
@@ -40,7 +40,7 @@ function loadRecent(
 					entries: [] as AuditEntryWire[],
 					error:
 						error instanceof ApiError && error.code === 'RATE_LIMITED'
-							? 'Rate limited — pghistory caps concurrent searches. Recent activity reappears once load drops.'
+							? 'Rate limited — pg-history caps concurrent searches. Recent activity reappears once load drops.'
 							: 'Could not load recent activity.',
 				}
 			}

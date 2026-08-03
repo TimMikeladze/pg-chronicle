@@ -5,7 +5,7 @@ import '@scalar/api-reference-react/style.css'
 import { useTheme } from 'next-themes'
 
 /**
- * Renders the pghistory OpenAPI document as a browsable reference.
+ * Renders the pg-history OpenAPI document as a browsable reference.
  *
  * The spec is passed in as `content` rather than fetched by URL: the library
  * serves `/openapi` behind the same JWT as the rest of the API, so the browser

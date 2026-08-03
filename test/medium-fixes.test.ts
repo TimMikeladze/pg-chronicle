@@ -63,7 +63,7 @@ describe('M1: append-only guard', () => {
 			pool.query(`DELETE FROM audit_log WHERE table_name = 'users'`),
 		).rejects.toThrow(/append-only/)
 
-		// The pghistory maintenance context (as the archiver uses) is allowed.
+		// The pg-history maintenance context (as the archiver uses) is allowed.
 		const client = await pool.connect()
 		try {
 			await client.query('BEGIN')
@@ -105,7 +105,7 @@ describe('M5: jsonb integer precision survives archival', () => {
 		// exact JSON strings — including integers beyond 2^53. They must be stored
 		// byte-for-byte, not re-parsed/re-stringified.
 		const bigIntJson = '{"balance":9007199254740993}'
-		const tmpFile = join(tmpdir(), `pghistory-m5-${process.pid}.parquet`)
+		const tmpFile = join(tmpdir(), `pg-history-m5-${process.pid}.parquet`)
 		try {
 			await writeParquet(
 				[

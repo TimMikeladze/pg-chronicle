@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { PgHistory } from '../src'
-import { buildTriggerFunctionSql } from '../src/pghistory-triggers'
+import { buildTriggerFunctionSql } from '../src/pg-history-triggers'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()

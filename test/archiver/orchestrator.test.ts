@@ -118,7 +118,7 @@ describe('Orchestrator', () => {
 })
 
 // ─────────────────────────────────────────────────────────
-// Review Fix #10: advisory lock key prefixed with pghistory:
+// Review Fix #10: advisory lock key prefixed with pg-history:
 // ─────────────────────────────────────────────────────────
 
 describe('Review Fix #10: advisory lock uses prefixed key', () => {
@@ -126,7 +126,7 @@ describe('Review Fix #10: advisory lock uses prefixed key', () => {
 		const fs = await import('node:fs/promises')
 		const source = await fs.readFile('./src/orchestrator.ts', 'utf-8')
 
-		expect(source).toContain('pghistory:')
+		expect(source).toContain('pg-history:')
 		expect(source).toContain('ADVISORY_LOCK_KEY_PREFIX')
 	})
 })

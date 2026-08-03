@@ -9,11 +9,11 @@ concurrency:
 env:
   # Database Configuration
   PG_CONNECTION_STRING: postgresql://postgres:postgres@localhost:5432/postgres
-  PGHISTORY_S3_ENDPOINT: http://localhost:9000
-  PGHISTORY_S3_ACCESS_KEY_ID: root
-  PGHISTORY_S3_SECRET_ACCESS_KEY: password
-  PGHISTORY_S3_REGION: us-west-1
-  PGHISTORY_S3_BUCKET: test-bucket
+  PG_HISTORY_S3_ENDPOINT: http://localhost:9000
+  PG_HISTORY_S3_ACCESS_KEY_ID: root
+  PG_HISTORY_S3_SECRET_ACCESS_KEY: password
+  PG_HISTORY_S3_REGION: us-west-1
+  PG_HISTORY_S3_BUCKET: test-bucket
 
 jobs:
   test:
@@ -85,7 +85,7 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      # The dashboard resolves `pghistory` / `pghistory/next` through the
+      # The dashboard resolves `pg-history` / `pg-history/next` through the
       # symlink created below, which reads the library's own exports map and
       # dist/. So the library's dependencies must be installed before it builds.
       - name: Install library dependencies
@@ -104,14 +104,14 @@ jobs:
       # The dashboard used to depend on the library via `file:..`, which makes
       # bun deep-copy the whole parent tree (161M of node_modules included) on
       # every install — slow, and the copy routinely landed without the parent's
-      # package.json, leaving `pghistory/next` unresolvable.
+      # package.json, leaving `pg-history/next` unresolvable.
       #
       # A symlink is what `file:..` was only pretending to be. It is needed at
-      # *runtime*, not just for types: `pghistory` is marked external in
+      # *runtime*, not just for types: `pg-history` is marked external in
       # next.config.ts, and Next's "collect page data" step actually executes the
       # route modules in Node, so the package must be resolvable on disk.
       - name: Link library into dashboard node_modules
-        run: ln -sfn ../.. dashboard/node_modules/pghistory
+        run: ln -sfn ../.. dashboard/node_modules/pg-history
 
       - name: Typecheck
         run: bun run tsc

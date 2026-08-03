@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/table'
 import { readConfig } from '@/lib/config'
 import { exactNumber } from '@/lib/format'
-import { getStats, searchHistory } from '@/lib/pghistory-server'
+import { getStats, searchHistory } from '@/lib/pg-history-server'
 import { cachedProbe } from '@/lib/probe-cache'
 import type { ArchivalStatsRow, AuditEntryWire } from '@/lib/types'
 
@@ -104,7 +104,7 @@ export default async function TablesPage() {
 					Every table with an audit trigger installed. A table appears here
 					because it is listed in{' '}
 					<code className="text-foreground font-mono text-xs">
-						PGHISTORY_TABLES
+						PG_HISTORY_TABLES
 					</code>{' '}
 					— the API refuses to read or search any table that is not.
 				</p>

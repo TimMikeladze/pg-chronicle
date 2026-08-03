@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/table'
 import { readConfig } from '@/lib/config'
 import { compactNumber, exactNumber } from '@/lib/format'
-import { getDetailedHealth, getStats } from '@/lib/pghistory-server'
+import { getDetailedHealth, getStats } from '@/lib/pg-history-server'
 import type { ArchivalStatsRow, DetailedHealth } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -81,7 +81,7 @@ export default async function ArchivalPage() {
 				<Callout tone="neutral" title="Archival is not configured">
 					Set{' '}
 					<code className="text-foreground font-mono text-xs">
-						PGHISTORY_S3_BUCKET
+						PG_HISTORY_S3_BUCKET
 					</code>{' '}
 					to enable it. Without it the audit log grows unbounded, and the stats,
 					detailed-health, and archive endpoints are not registered at all.

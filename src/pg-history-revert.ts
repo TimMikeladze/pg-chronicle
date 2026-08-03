@@ -11,7 +11,10 @@
  */
 import type { PoolClient } from 'pg'
 import { AuditEntryNotFoundError, RevertError } from './errors'
-import { validateColumnNames, validateIdentifier } from './pghistory-validators'
+import {
+	validateColumnNames,
+	validateIdentifier,
+} from './pg-history-validators'
 
 export interface RevertArgs {
 	client: PoolClient

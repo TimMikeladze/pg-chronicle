@@ -61,7 +61,7 @@ describe('Server API Types', () => {
 
 describe('GET /api/history/:table/:recordId', () => {
 	test('should return 401 without JWT when secret is set', async () => {
-		process.env.PGHISTORY_JWT_SECRET = 'test-secret'
+		process.env.PG_HISTORY_JWT_SECRET = 'test-secret'
 
 		const pool = await getTestConnection()
 		const { app } = await createServer({
@@ -74,7 +74,7 @@ describe('GET /api/history/:table/:recordId', () => {
 		const res = await app.request('/api/history/users/123')
 		expect(res.status).toBe(401)
 
-		delete process.env.PGHISTORY_JWT_SECRET
+		delete process.env.PG_HISTORY_JWT_SECRET
 	})
 
 	test('should return history for valid table and recordId', async () => {

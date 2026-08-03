@@ -18,7 +18,7 @@ import {
 	type Logger,
 } from './logger'
 import { writeParquet } from './parquet'
-import { validateIdentifier } from './pghistory-validators'
+import { validateIdentifier } from './pg-history-validators'
 import { setupArchiverSchema } from './schema'
 import type { ArchiverConfig } from './types'
 
@@ -189,7 +189,7 @@ export class PgHistoryArchiver {
 		date: Date,
 	): Promise<{ s3Path: string; sha256: string }> {
 		// Write to a restricted temp directory to prevent data exposure on shared hosts
-		const tmpDir = await mkdtemp(join(tmpdir(), 'pghistory-'))
+		const tmpDir = await mkdtemp(join(tmpdir(), 'pg-history-'))
 		await chmod(tmpDir, 0o700)
 		const tmpFile = join(tmpDir, 'data.parquet')
 

@@ -55,7 +55,7 @@ CREATE OR REPLACE FUNCTION "${schema}"."${guardFuncName}"()
 RETURNS TRIGGER AS $$
 BEGIN
 	IF current_setting('pg_history.maintenance', true) IS DISTINCT FROM 'on' THEN
-		RAISE EXCEPTION 'audit_log is append-only: % is not permitted outside pghistory maintenance context', TG_OP
+		RAISE EXCEPTION 'audit_log is append-only: % is not permitted outside pg-history maintenance context', TG_OP
 			USING ERRCODE = 'insufficient_privilege';
 	END IF;
 	IF (TG_OP = 'DELETE') THEN

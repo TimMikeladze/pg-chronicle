@@ -1,5 +1,5 @@
 {
-	"name": "pghistory-dashboard",
+	"name": "pg-history-dashboard",
 	"private": true,
 	"type": "module",
 	"scripts": {

@@ -1,5 +1,5 @@
 {
-	"name": "pghistory",
+	"name": "pg-history",
 	"description": "Audit, history and change tracking for PostgreSQL tables using triggers.",
 	"version": "1.2.0",
 	"author": {
@@ -14,7 +14,7 @@
 	"main": "./dist/index.cjs",
 	"types": "./dist/index.d.ts",
 	"bin": {
-		"pghistory": "./dist/main.js"
+		"pg-history": "./dist/main.js"
 	},
 	"exports": {
 		".": {
@@ -58,7 +58,7 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/TimMikeladze/pghistory.git"
+		"url": "git+https://github.com/TimMikeladze/pg-history.git"
 	},
 	"peerDependencies": {
 		"typescript": ">=4.5.0"
@@ -71,9 +71,9 @@
 	"simple-git-hooks": {
 		"pre-commit": "bun run check"
 	},
-	"homepage": "https://github.com/TimMikeladze/pghistory#readme",
+	"homepage": "https://github.com/TimMikeladze/pg-history#readme",
 	"bugs": {
-		"url": "https://github.com/TimMikeladze/pghistory/issues"
+		"url": "https://github.com/TimMikeladze/pg-history/issues"
 	},
 	"license": "MIT",
 	"keywords": [

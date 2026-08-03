@@ -1,7 +1,7 @@
 import type { Pool } from 'pg'
 import pg from 'pg'
 import { consoleLogger, type Logger } from './logger'
-import { validateIdentifier } from './pghistory-validators'
+import { validateIdentifier } from './pg-history-validators'
 import { updateArchivalStats } from './schema'
 import type {
 	OrchestratorConfig,
@@ -13,10 +13,10 @@ import type {
 } from './types'
 
 // Fixed namespace for advisory locks to avoid collisions with other lock users.
-// We prefix the table name with 'pghistory:' before hashing so two different
+// We prefix the table name with 'pg-history:' before hashing so two different
 // applications using hashtext() on raw table names cannot collide with us.
 const ADVISORY_LOCK_NAMESPACE = 73_616_468 // arbitrary stable int32
-const ADVISORY_LOCK_KEY_PREFIX = 'pghistory:'
+const ADVISORY_LOCK_KEY_PREFIX = 'pg-history:'
 
 export class Orchestrator {
 	private s3Config: S3Config
@@ -138,7 +138,7 @@ export class Orchestrator {
 	}
 
 	async discoverTables(pool: Pool): Promise<string[]> {
-		// Query pg_trigger to find tables with pghistory audit triggers.
+		// Query pg_trigger to find tables with pg-history audit triggers.
 		// We require BOTH:
 		//   1. The trigger name matches 'audit_trigger_%'
 		//   2. The trigger's function name matches 'audit_trigger_func_%'

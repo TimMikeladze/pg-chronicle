@@ -85,13 +85,13 @@ async function main() {
 			`   Caught AuditEntryNotFoundError: ${(revertErr as Error).message}`,
 		)
 
-		// ── 4. Catching any pghistory error ─────────────────
+		// ── 4. Catching any pg-history error ─────────────────
 		console.log('\n4. Using the base PgHistoryError class...')
 
 		const baseErr = await assertThrows(
 			() => history.search({ tables: ['nonexistent'] }),
 			(e) => e instanceof PgHistoryError,
-			'every pghistory error extends PgHistoryError',
+			'every pg-history error extends PgHistoryError',
 		)
 		console.log(
 			`   Caught PgHistoryError (${(baseErr as Error).constructor.name}): ${(baseErr as Error).message}`,

@@ -39,7 +39,7 @@ export interface EntryTableColumns {
 
 /**
  * App actor is the application's own user id and exists only when the app ran
- * `SET LOCAL pghistory.actor`; DB role is the Postgres login and always exists.
+ * `SET LOCAL pg-history.actor`; DB role is the Postgres login and always exists.
  * Labelling the fallback stops `postgres` from being read as a person.
  */
 function Actor({ entry }: { entry: AuditEntryWire }) {

@@ -21,7 +21,7 @@ describe('CRIT-1: DDL uses format() for safe interpolation', () => {
 	test('setup creates partition using format() without raw interpolation', async () => {
 		const fs = await import('node:fs/promises')
 		const source = await fs.readFile('./src/PgHistory.ts', 'utf-8')
-		const setupSource = await fs.readFile('./src/pghistory-setup.ts', 'utf-8')
+		const setupSource = await fs.readFile('./src/pg-history-setup.ts', 'utf-8')
 		const combined = `${source}\n${setupSource}`
 
 		expect(combined).not.toMatch(/FOR VALUES IN \('\$\{/)
@@ -70,8 +70,8 @@ describe('CRIT-2: /api/stats requires JWT when secret is set', () => {
 	})
 
 	test('returns 401 on /api/stats without JWT when secret is set', async () => {
-		const original = process.env.PGHISTORY_JWT_SECRET
-		process.env.PGHISTORY_JWT_SECRET = 'test-secret'
+		const original = process.env.PG_HISTORY_JWT_SECRET
+		process.env.PG_HISTORY_JWT_SECRET = 'test-secret'
 
 		const { app } = await createServer({
 			pool,
@@ -88,15 +88,15 @@ describe('CRIT-2: /api/stats requires JWT when secret is set', () => {
 		const res = await app.request('/api/stats')
 		expect(res.status).toBe(401)
 
-		process.env.PGHISTORY_JWT_SECRET = original
+		process.env.PG_HISTORY_JWT_SECRET = original
 	})
 })
 
 // ─────────────────────────────────────────────────────────
-// HIGH-2: PGHISTORY_TABLES trimmed and filtered
+// HIGH-2: PG_HISTORY_TABLES trimmed and filtered
 // ─────────────────────────────────────────────────────────
 
-describe('HIGH-2: PGHISTORY_TABLES sanitization', () => {
+describe('HIGH-2: PG_HISTORY_TABLES sanitization', () => {
 	test('next.ts trims and filters table names', async () => {
 		const fs = await import('node:fs/promises')
 		const source = await fs.readFile('./src/next.ts', 'utf-8')

@@ -1,5 +1,5 @@
 {
-	"name": "pghistory-site",
+	"name": "pg-history-site",
 	"private": true,
 	"type": "module",
 	"scripts": {

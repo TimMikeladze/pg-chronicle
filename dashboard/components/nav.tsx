@@ -43,7 +43,7 @@ const SECTIONS = [
  */
 function Mark() {
 	return (
-		// Decorative: the "pghistory" wordmark sits beside it and carries the
+		// Decorative: the "pg-history" wordmark sits beside it and carries the
 		// name, so the glyph is hidden from assistive tech rather than given a
 		// label that would be read out twice.
 		<svg
@@ -139,7 +139,7 @@ export function Nav({
 					className="text-ink hover:text-ink/80 flex shrink-0 items-center gap-2 text-[15px] font-semibold tracking-tight transition-colors"
 				>
 					<Mark />
-					pghistory
+					pg-history
 				</Link>
 
 				{tables.length > 0 ? (

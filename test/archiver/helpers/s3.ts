@@ -9,11 +9,11 @@ import {
  * Ensure a test bucket exists, creating it if necessary
  */
 export async function ensureTestBucket(bucketName: string): Promise<void> {
-	const endpoint = process.env.PGHISTORY_S3_ENDPOINT || 'http://localhost:9000'
-	const accessKeyId = process.env.PGHISTORY_S3_ACCESS_KEY_ID || 'root'
+	const endpoint = process.env.PG_HISTORY_S3_ENDPOINT || 'http://localhost:9000'
+	const accessKeyId = process.env.PG_HISTORY_S3_ACCESS_KEY_ID || 'root'
 	const secretAccessKey =
-		process.env.PGHISTORY_S3_SECRET_ACCESS_KEY || 'password'
-	const region = process.env.PGHISTORY_S3_REGION || 'us-east-1'
+		process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY || 'password'
+	const region = process.env.PG_HISTORY_S3_REGION || 'us-east-1'
 
 	const client = new S3Client({
 		endpoint,
@@ -65,11 +65,12 @@ export async function putTestS3Object(
 	key: string,
 ): Promise<void> {
 	const client = new S3Client({
-		endpoint: process.env.PGHISTORY_S3_ENDPOINT || 'http://localhost:9000',
-		region: process.env.PGHISTORY_S3_REGION || 'us-east-1',
+		endpoint: process.env.PG_HISTORY_S3_ENDPOINT || 'http://localhost:9000',
+		region: process.env.PG_HISTORY_S3_REGION || 'us-east-1',
 		credentials: {
-			accessKeyId: process.env.PGHISTORY_S3_ACCESS_KEY_ID || 'root',
-			secretAccessKey: process.env.PGHISTORY_S3_SECRET_ACCESS_KEY || 'password',
+			accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID || 'root',
+			secretAccessKey:
+				process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY || 'password',
 		},
 		forcePathStyle: true,
 	})
@@ -88,20 +89,20 @@ export async function putTestS3Object(
 export async function isS3Configured(): Promise<boolean> {
 	// First check if env vars are set
 	if (
-		!process.env.PGHISTORY_S3_ENDPOINT ||
-		!process.env.PGHISTORY_S3_ACCESS_KEY_ID ||
-		!process.env.PGHISTORY_S3_SECRET_ACCESS_KEY
+		!process.env.PG_HISTORY_S3_ENDPOINT ||
+		!process.env.PG_HISTORY_S3_ACCESS_KEY_ID ||
+		!process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY
 	) {
 		return false
 	}
 
 	// Then verify we can actually connect and perform operations
 	const client = new S3Client({
-		endpoint: process.env.PGHISTORY_S3_ENDPOINT,
-		region: process.env.PGHISTORY_S3_REGION || 'us-east-1',
+		endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
+		region: process.env.PG_HISTORY_S3_REGION || 'us-east-1',
 		credentials: {
-			accessKeyId: process.env.PGHISTORY_S3_ACCESS_KEY_ID,
-			secretAccessKey: process.env.PGHISTORY_S3_SECRET_ACCESS_KEY,
+			accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
+			secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
 		},
 		forcePathStyle: true,
 	})
