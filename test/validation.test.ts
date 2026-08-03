@@ -7,7 +7,7 @@ import {
 	validateIdentifier,
 	validateLimit,
 	validateStringInput,
-} from '../src/pg-history-validators'
+} from '../src/pghistory-validators'
 import { parseRevertBody, parseSearchBody } from '../src/validation'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
@@ -185,10 +185,10 @@ describe('PgHistory error class hierarchy', () => {
 })
 
 // ─────────────────────────────────────────────────────────
-// pg-history-validators — extracted pure validation functions
+// pghistory-validators — extracted pure validation functions
 // ─────────────────────────────────────────────────────────
 
-describe('pg-history-validators — extracted validation functions', () => {
+describe('pghistory-validators — extracted validation functions', () => {
 	test('validateIdentifier rejects invalid table names', () => {
 		expect(() => validateIdentifier('valid_name', 'table')).not.toThrow()
 		expect(() =>

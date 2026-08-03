@@ -1,5 +1,5 @@
 {
-	"name": "pg-history-site",
+	"name": "pghistory-site",
 	"private": true,
 	"type": "module",
 	"scripts": {
@@ -8,9 +8,8 @@
 		"preview": "vite preview"
 	},
 	"dependencies": {
-		"@fontsource/ibm-plex-mono": "^5.3.0",
-		"@fontsource/ibm-plex-sans": "^5.3.0",
-		"@fontsource/martian-mono": "^5.3.0"
+		"@fontsource/geist-mono": "^5.3.0",
+		"@fontsource/geist-sans": "^5.3.0"
 	},
 	"devDependencies": {
 		"@shikijs/langs": "^3.13.0",

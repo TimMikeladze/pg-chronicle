@@ -205,10 +205,10 @@ describe('POST /api/archive endpoint', () => {
 			archiverConfig: {
 				s3: {
 					bucket: 'test-bucket',
-					endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-					accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-					secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-					region: process.env.PG_HISTORY_S3_REGION,
+					endpoint: process.env.PGHISTORY_S3_ENDPOINT,
+					accessKeyId: process.env.PGHISTORY_S3_ACCESS_KEY_ID,
+					secretAccessKey: process.env.PGHISTORY_S3_SECRET_ACCESS_KEY,
+					region: process.env.PGHISTORY_S3_REGION,
 				},
 				retention: { default: 90 },
 				gracePeriod: 7,
@@ -255,10 +255,10 @@ describe('POST /api/archive endpoint', () => {
 			archiverConfig: {
 				s3: {
 					bucket: 'test-bucket',
-					endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-					accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-					secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-					region: process.env.PG_HISTORY_S3_REGION,
+					endpoint: process.env.PGHISTORY_S3_ENDPOINT,
+					accessKeyId: process.env.PGHISTORY_S3_ACCESS_KEY_ID,
+					secretAccessKey: process.env.PGHISTORY_S3_SECRET_ACCESS_KEY,
+					region: process.env.PGHISTORY_S3_REGION,
 				},
 				retention: { default: 90 },
 				gracePeriod: 7,

@@ -122,7 +122,7 @@ export function RevertButton({
 						? 'The revert will not appear in this record’s timeline.'
 						: /*
 							 * Deliberately specific: the new entry is attributed to the
-							 * database role, not to this dashboard's actor. pg-history logs
+							 * database role, not to this dashboard's actor. pghistory logs
 							 * the JWT `sub` on its own log line, but never writes it to
 							 * app_actor — so the audit row alone does not say who did it.
 							 */

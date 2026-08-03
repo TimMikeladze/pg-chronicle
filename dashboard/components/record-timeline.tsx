@@ -1,72 +1,109 @@
 'use client'
 
-import { ArrowDownUpIcon } from 'lucide-react'
+import { ArrowDownUpIcon, ChevronRightIcon } from 'lucide-react'
 import { useCallback, useState, useTransition } from 'react'
 
 import { loadHistoryPageAction } from '@/app/actions'
-import { EntryDiff } from '@/components/entry-diff'
+import { ChangeSummary, EntryDiff } from '@/components/entry-diff'
+import { RelativeTime } from '@/components/relative-time'
 import { RevertButton } from '@/components/revert-button'
-import { OperationBadge } from '@/components/status'
+import { Callout, OperationBadge } from '@/components/status'
 import { Button } from '@/components/ui/button'
-import { absoluteTime, relativeTime } from '@/lib/format'
+import { operationColor } from '@/lib/operations'
 import type { AuditEntryWire } from '@/lib/types'
+import { cn } from '@/lib/utils'
 
 const PAGE_SIZE = 25
 
+/**
+ * One event on the spine.
+ *
+ * The signature device of the product: a continuous rule down the gutter with a
+ * node per event, each node in its operation's hue. Read top to bottom, a
+ * record's entire life is a colored barcode — which operations, in what order,
+ * how bunched in time — before a single value is expanded.
+ */
 function Entry({ entry, isLast }: { entry: AuditEntryWire; isLast: boolean }) {
 	const [expanded, setExpanded] = useState(false)
+	const color = operationColor(entry.operation)
 
 	return (
-		<li className="relative pl-8">
-			{/* Timeline rail: the dot sits on the line running down the gutter. The
-			    last entry draws no line, so the rail ends on the final dot rather
-			    than trailing into empty space. */}
+		<li className="relative grid grid-cols-[1.75rem_minmax(0,1fr)] gap-x-3">
+			{/*
+			 * The rule spans this entry's full height — from the top of the row, not
+			 * from the node — so consecutive entries butt together into one unbroken
+			 * spine across the card gutter. The last entry draws none, ending the
+			 * spine on the final node rather than trailing into empty space.
+			 */}
 			{isLast ? null : (
 				<span
 					aria-hidden
-					className="bg-border absolute top-3 left-[7px] h-full w-px"
+					className="bg-border absolute inset-y-0 left-[7px] w-px"
 				/>
 			)}
+			{/* Opaque fill so the rule passes behind the node, not through it. */}
 			<span
 				aria-hidden
-				className="bg-background border-border absolute top-2 left-0 size-3.5 rounded-full border-2"
+				className="bg-background relative z-10 mt-1.5 size-3.5 rounded-full border-2"
+				style={{ borderColor: color }}
 			/>
 
-			<div className="bg-card mb-4 rounded-xl border">
-				<div className="flex flex-wrap items-center gap-3 p-4">
-					<OperationBadge operation={entry.operation} />
-					<span
-						className="text-muted-foreground text-sm"
-						title={absoluteTime(entry.changedAt)}
-					>
-						{relativeTime(entry.changedAt)}
-					</span>
-					<span className="text-muted-foreground font-mono text-xs">
-						#{entry.id}
-					</span>
-					<span className="text-muted-foreground ml-auto font-mono text-xs">
-						{entry.appActor ?? entry.dbUser ?? 'unknown actor'}
-						{entry.clientAddr ? ` · ${entry.clientAddr}` : ''}
-					</span>
-				</div>
+			<div className="min-w-0 pb-4">
+				<div className="bg-card overflow-hidden rounded-lg border">
+					<div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
+						<OperationBadge operation={entry.operation} />
+						{/*
+						 * The changed columns, not the operation verb, are what tell two
+						 * entries apart. A row edited sixty times renders sixty identical
+						 * "Row modified" lines unless the fields that moved are on the
+						 * collapsed row — so the summary is here, and `verb` is dropped
+						 * as a restatement of the badge beside it.
+						 */}
+						<ChangeSummary entry={entry} />
+						<RelativeTime
+							iso={entry.changedAt}
+							className="text-muted-foreground font-mono text-xs"
+						/>
 
-				<div className="flex flex-wrap items-center gap-2 border-t px-4 py-2.5">
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={() => setExpanded((value) => !value)}
-						aria-expanded={expanded}
-					>
-						{expanded ? 'Hide changes' : 'Show changes'}
-					</Button>
-					<RevertButton entry={entry} />
-				</div>
-
-				{expanded ? (
-					<div className="border-t p-4">
-						<EntryDiff entry={entry} />
+						{/* `ml-auto` only once there is room for it: below sm the metadata
+						    cluster wraps to its own line rather than being squeezed
+						    against the operation badge. */}
+						<div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] sm:ml-auto">
+							{/* An app actor is an application user, a DB role is a Postgres
+							    login. Labelling the role case stops "postgres" from being
+							    read as a person. */}
+							<span title="Who performed this change">
+								{entry.appActor ??
+									(entry.dbUser ? `${entry.dbUser} (role)` : 'unattributed')}
+							</span>
+							{entry.clientAddr ? (
+								<span title="Client network address">{entry.clientAddr}</span>
+							) : null}
+							<span title="Audit entry id">#{entry.id}</span>
+						</div>
 					</div>
-				) : null}
+
+					<div className="flex flex-wrap items-center gap-1 border-t px-2 py-2">
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => setExpanded((value) => !value)}
+							aria-expanded={expanded}
+						>
+							<ChevronRightIcon
+								className={cn('transition-transform', expanded && 'rotate-90')}
+							/>
+							{expanded ? 'Hide changes' : 'Show changes'}
+						</Button>
+						<RevertButton entry={entry} />
+					</div>
+
+					{expanded ? (
+						<div className="border-t p-4">
+							<EntryDiff entry={entry} />
+						</div>
+					) : null}
+				</div>
 			</div>
 		</li>
 	)
@@ -128,8 +165,8 @@ export function RecordTimeline({
 
 	return (
 		<div className="flex flex-col gap-4">
-			<div className="flex items-center justify-between gap-3">
-				<span className="text-muted-foreground text-sm">
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<span className="text-muted-foreground font-mono text-[11px]">
 					{entries.length} {entries.length === 1 ? 'entry' : 'entries'}
 					{hasMore ? ' loaded' : ''}
 				</span>
@@ -144,27 +181,24 @@ export function RecordTimeline({
 				</Button>
 			</div>
 
-			{error ? (
-				<div
-					className="rounded-lg border p-4 text-sm"
-					style={{
-						borderColor:
-							'color-mix(in srgb, var(--status-critical) 45%, transparent)',
-						backgroundColor:
-							'color-mix(in srgb, var(--status-critical) 8%, transparent)',
-					}}
-				>
-					{error}
-				</div>
-			) : null}
+			{error ? <Callout title="Could not load history">{error}</Callout> : null}
 
 			{entries.length === 0 ? (
-				<p className="text-muted-foreground mx-auto max-w-xl rounded-xl border border-dashed p-8 text-center text-sm">
-					No audit entries for this record. It may never have been written since
-					triggers were installed, the ID may not match the primary key
-					pg-history recorded, or its history may already be archived —
-					soft-deleted entries are filtered out of every read and live in S3.
-				</p>
+				<div className="relative overflow-hidden rounded-lg border border-dashed">
+					<div aria-hidden className="grid-field absolute inset-0 opacity-40" />
+					<div className="text-muted-foreground relative mx-auto max-w-lg px-6 py-14 text-center text-[13px] leading-relaxed">
+						<p className="text-ink mb-2 text-sm font-medium">
+							No audit entries for this record
+						</p>
+						<p>
+							Three things produce this: the row has not been written since
+							triggers were installed, the id does not match the primary key
+							pghistory recorded, or the history has already been archived —
+							soft-deleted entries are filtered out of every read and live in
+							S3.
+						</p>
+					</div>
+				</div>
 			) : (
 				<ul className="flex flex-col">
 					{entries.map((entry, index) => (

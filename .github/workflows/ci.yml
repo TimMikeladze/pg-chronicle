@@ -9,11 +9,11 @@ concurrency:
 env:
   # Database Configuration
   PG_CONNECTION_STRING: postgresql://postgres:postgres@localhost:5432/postgres
-  PG_HISTORY_S3_ENDPOINT: http://localhost:9000
-  PG_HISTORY_S3_ACCESS_KEY_ID: root
-  PG_HISTORY_S3_SECRET_ACCESS_KEY: password
-  PG_HISTORY_S3_REGION: us-west-1
-  PG_HISTORY_S3_BUCKET: test-bucket
+  PGHISTORY_S3_ENDPOINT: http://localhost:9000
+  PGHISTORY_S3_ACCESS_KEY_ID: root
+  PGHISTORY_S3_SECRET_ACCESS_KEY: password
+  PGHISTORY_S3_REGION: us-west-1
+  PGHISTORY_S3_BUCKET: test-bucket
 
 jobs:
   test:
@@ -89,11 +89,20 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      # The dashboard consumes pg-history through its published exports map via
+      # The dashboard consumes pghistory through its published exports map via
       # a `file:..` link, so the library's own dependencies must be present
       # before its dist/ can be built.
       - name: Install library dependencies
         run: bun install --frozen-lockfile
+
+      # `file:..` installs a *copy* of the parent, snapshotted at install time —
+      # not a symlink. dist/ is gitignored, so on a clean checkout that copy has
+      # no dist/ and `pghistory/next` resolves to nothing. Building the library
+      # first puts dist/ in place before the copy is taken. The `pretsc`/
+      # `prebuild` hooks rebuild the parent, but they write to ../dist, which the
+      # already-copied node_modules/pghistory never sees.
+      - name: Build library
+        run: bun run build
 
       - name: Install dashboard dependencies
         run: bun install --frozen-lockfile

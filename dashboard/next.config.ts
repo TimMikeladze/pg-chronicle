@@ -3,22 +3,22 @@ import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
 	/*
-	 * `pg` and `pg-history` must stay in Node's require graph rather than being
+	 * `pg` and `pghistory` must stay in Node's require graph rather than being
 	 * bundled: pg loads native/optional drivers by dynamic require, and
-	 * pg-history's archiver pulls in the S3 + Parquet libraries the same way.
+	 * pghistory's archiver pulls in the S3 + Parquet libraries the same way.
 	 * Bundling them produces "Module not found" at build time.
 	 */
-	serverExternalPackages: ['pg', 'pg-history'],
+	serverExternalPackages: ['pg', 'pghistory'],
 
 	/*
-	 * pg-history is linked with `file:..`, so the real sources live above this
+	 * pghistory is linked with `file:..`, so the real sources live above this
 	 * directory. Without an explicit tracing root Next infers it from the nearest
 	 * lockfile and warns (or, on Vercel, drops the package from the bundle).
 	 */
 	outputFileTracingRoot: path.join(import.meta.dirname, '..'),
 
 	/*
-	 * `serverExternalPackages` alone does not catch pg-history here: it is linked
+	 * `serverExternalPackages` alone does not catch pghistory here: it is linked
 	 * with `file:..`, so it resolves to a path outside node_modules and Next's
 	 * "is this a package?" heuristic misses it. Webpack then walks into
 	 * hono-openapi and reports a missing `zod/v4/core` — an optional adapter that
@@ -32,7 +32,7 @@ const nextConfig: NextConfig = {
 			config.externals = [
 				...(Array.isArray(config.externals) ? config.externals : []),
 				({ request }: { request?: string }, callback: ExternalCallback) => {
-					if (request === 'pg-history' || request?.startsWith('pg-history/')) {
+					if (request === 'pghistory' || request?.startsWith('pghistory/')) {
 						return callback(undefined, `module ${request}`)
 					}
 					callback()

@@ -10,17 +10,44 @@ import { Marked } from 'marked'
 import { createHighlighterCore } from 'shiki/core'
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
 
-const REPO = 'https://github.com/TimMikeladze/pg-history'
-const NPM = 'https://www.npmjs.com/package/pg-history'
+/**
+ * The dashboard screens shown in the hero. Each is a real screenshot captured
+ * from the running dashboard (see site/shots/README.md), in both themes — the
+ * page shows whichever matches the visitor's, so a light screenshot never
+ * lands on a dark page.
+ */
+const SHOTS = [
+	{
+		label: 'Explore',
+		alt: 'The pghistory dashboard exploring audit entries, with a query console showing which search engine and index a query will use.',
+		light: '/shots/explore-light.png',
+		dark: '/shots/explore-dark.png',
+	},
+	{
+		label: 'Timeline',
+		alt: 'One record’s change timeline, each entry colour-coded by operation with a before and after diff.',
+		light: '/shots/timeline-light.png',
+		dark: '/shots/timeline-dark.png',
+	},
+	{
+		label: 'Tables',
+		alt: 'Every audited table with its last change, actor and archival backlog.',
+		light: '/shots/tables-light.png',
+		dark: '/shots/tables-dark.png',
+	},
+] as const
+
+const REPO = 'https://github.com/TimMikeladze/pghistory'
+const NPM = 'https://www.npmjs.com/package/pghistory'
 
 /** Title + tagline for the hero, so the README stays the only source of truth. */
 function readHero(md: string) {
-	const title = /^#\s+(.+)$/m.exec(md)?.[1] ?? 'pg-history'
+	const title = /^#\s+(.+)$/m.exec(md)?.[1] ?? 'pghistory'
 	const tagline = md
 		.split(/\r?\n/)
 		.slice(1)
 		.find((l) => l.trim() && !l.startsWith('['))
-	const pkg = /```bash\nbun add ([^\n]+)\n```/.exec(md)?.[1] ?? 'pg-history'
+	const pkg = /```bash\nbun add ([^\n]+)\n```/.exec(md)?.[1] ?? 'pghistory'
 	const install = {
 		bun: `bun add ${pkg}`,
 		npm: `npm install ${pkg}`,
@@ -244,6 +271,11 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 	<header class="nav">
 		<div class="nav-inner">
 			<a class="brand" href="#top">
+				<!-- The dashboard's mark, verbatim: three bars of unequal length,
+				     shortest first — three audit entries stacked in time. -->
+				<svg class="brand-mark" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+					<path d="M3 4h6M3 8h10M3 12h7" />
+				</svg>
 				<span class="brand-name">${escapeHtml(title)}</span>
 			</a>
 			<nav class="nav-links">
@@ -296,60 +328,26 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 						</div>
 					</div>
 				</div>
-				<div class="hero-visual" aria-hidden="true">
-					<div class="ledger-card">
-						<div class="ledger-bar">
-							<span class="ledger-label">audit.orders</span>
-							<span class="ledger-live"><span class="ledger-live-dot"></span>tailing</span>
-						</div>
-						<div class="ledger-rows">
-							${[
-								{
-									op: '+',
-									kind: 'INSERT',
-									table: 'orders',
-									actor: 'api-worker-2',
-									time: '09:40:55.771',
-								},
-								{
-									op: '-',
-									kind: 'DELETE',
-									table: 'sessions',
-									actor: 'svc-auth',
-									time: '09:40:59.220',
-								},
-								{
-									op: '~',
-									kind: 'UPDATE',
-									table: 'invoices',
-									actor: 'admin@acme',
-									time: '09:41:04.902',
-								},
-								{
-									op: '~',
-									kind: 'UPDATE',
-									table: 'orders',
-									actor: 'svc-billing',
-									time: '09:41:07.114',
-								},
-							]
-								.map(
-									(row, i) => `<div class="ledger-row" style="--i:${i}">
-								<span class="ledger-op ledger-op--${row.op === '+' ? 'ins' : row.op === '-' ? 'del' : 'upd'}">${row.op}</span>
-								<span class="ledger-kind">${row.kind}</span>
-								<span class="ledger-table">${row.table}</span>
-								<span class="ledger-actor">${row.actor}</span>
-								<span class="ledger-time">${row.time}</span>
-							</div>`,
-								)
-								.join('')}
-							<div class="ledger-row ledger-row--pending" style="--i:4">
-								<span class="ledger-caret" aria-hidden="true"></span>
-								<span class="ledger-wait">watching for next change&hellip;</span>
-							</div>
-						</div>
-					</div>
-					<p class="ledger-note">Nothing is ever overwritten. Every row grows the log.</p>
+				<div class="hero-visual">
+					<!--
+					  Real screenshots of the dashboard, not a mock. Each shot exists in
+					  both themes; CSS shows only the one matching the visitor's, so a
+					  light screenshot never lands on the dark page or vice versa.
+					-->
+					<figure class="shots">
+						${SHOTS.map(
+							(shot, i) => `<div class="shot${i === 0 ? ' is-active' : ''}" data-shot="${i}">
+							<img class="shot-img shot-img--light" src="${shot.light}" alt="${escapeHtml(shot.alt)}" width="1400" height="900" loading="${i === 0 ? 'eager' : 'lazy'}" decoding="async" />
+							<img class="shot-img shot-img--dark" src="${shot.dark}" alt="${escapeHtml(shot.alt)}" width="1400" height="900" loading="${i === 0 ? 'eager' : 'lazy'}" decoding="async" />
+						</div>`,
+						).join('')}
+						<figcaption class="shot-tabs" role="tablist" aria-label="Dashboard screens">
+							${SHOTS.map(
+								(shot, i) =>
+									`<button class="shot-tab${i === 0 ? ' is-active' : ''}" type="button" role="tab" aria-selected="${i === 0}" data-shot-tab="${i}">${escapeHtml(shot.label)}</button>`,
+							).join('')}
+						</figcaption>
+					</figure>
 				</div>
 			</div>
 		</section>

@@ -10,13 +10,14 @@ import {
 	PlusIcon,
 	XCircleIcon,
 } from 'lucide-react'
+import { OPERATION_META, tintStyle } from '@/lib/operations'
 import type { ArchivalStatus, Operation } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 /**
  * Status hue is carried by the icon and a tint, never by the label text — the
  * label keeps full foreground contrast, and the icon plus the word itself mean
- * the badge is still readable with no color perception at all.
+ * the chip is still readable with no color perception at all.
  */
 function StatusChip({
 	icon: Icon,
@@ -27,7 +28,7 @@ function StatusChip({
 }: {
 	icon: LucideIcon
 	label: string
-	/** A `--status-*` custom property, or `null` for the neutral/monochrome case. */
+	/** A `--status-*` / `--op-*` custom property, or `null` for the neutral case. */
 	color: string | null
 	className?: string
 	title?: string
@@ -36,22 +37,15 @@ function StatusChip({
 		<span
 			title={title}
 			className={cn(
-				'inline-flex w-fit shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium whitespace-nowrap',
+				'inline-flex w-fit shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-[11px] font-medium tracking-tight whitespace-nowrap',
 				color === null && 'border-border bg-inset text-foreground',
 				className,
 			)}
-			style={
-				color === null
-					? undefined
-					: {
-							borderColor: `color-mix(in srgb, ${color} 45%, transparent)`,
-							backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)`,
-						}
-			}
+			style={color === null ? undefined : tintStyle(color)}
 		>
 			<Icon
 				aria-hidden
-				className="size-3"
+				className="size-3 shrink-0"
 				style={color === null ? undefined : { color }}
 			/>
 			{label}
@@ -59,40 +53,28 @@ function StatusChip({
 	)
 }
 
-const OPERATION_STYLE: Record<
-	Operation,
-	{ icon: LucideIcon; color: string; hint: string }
-> = {
-	INSERT: {
-		icon: PlusIcon,
-		color: 'var(--status-good)',
-		hint: 'Row created — only new values were captured',
-	},
-	UPDATE: {
-		icon: PencilLineIcon,
-		color: 'var(--status-warning)',
-		hint: 'Row modified — both before and after values were captured',
-	},
-	DELETE: {
-		icon: MinusIcon,
-		color: 'var(--status-critical)',
-		hint: 'Row removed — only the previous values were captured',
-	},
-	TRUNCATE: {
-		icon: EraserIcon,
-		color: 'var(--status-serious)',
-		hint: 'Table truncated — recorded as a marker with no row data',
-	},
+const OPERATION_ICON: Record<Operation, LucideIcon> = {
+	INSERT: PlusIcon,
+	UPDATE: PencilLineIcon,
+	DELETE: MinusIcon,
+	TRUNCATE: EraserIcon,
 }
 
-export function OperationBadge({ operation }: { operation: Operation }) {
-	const style = OPERATION_STYLE[operation]
+export function OperationBadge({
+	operation,
+	className,
+}: {
+	operation: Operation
+	className?: string
+}) {
+	const meta = OPERATION_META[operation]
 	return (
 		<StatusChip
-			icon={style.icon}
+			icon={OPERATION_ICON[operation]}
 			label={operation}
-			color={style.color}
-			title={style.hint}
+			color={meta.color}
+			title={`${meta.verb} — ${meta.captured}`}
+			className={className}
 		/>
 	)
 }
@@ -154,5 +136,46 @@ export function ArchivalStatusBadge({ status }: { status: ArchivalStatus }) {
 	const style = ARCHIVAL_STYLE[status] ?? ARCHIVAL_STYLE.idle
 	return (
 		<StatusChip icon={style.icon} label={style.label} color={style.color} />
+	)
+}
+
+/**
+ * Bordered callout for a failure the operator has to read in full — an archival
+ * error, a rate-limit rejection, a failed revert. Distinct from a toast because
+ * these persist and often carry a message worth copying.
+ */
+export function Callout({
+	tone = 'critical',
+	title,
+	children,
+}: {
+	tone?: 'critical' | 'warning' | 'neutral'
+	title?: string
+	children: React.ReactNode
+}) {
+	const color =
+		tone === 'critical'
+			? 'var(--status-critical)'
+			: tone === 'warning'
+				? 'var(--status-warning)'
+				: null
+
+	return (
+		<div
+			className={cn(
+				'rounded-lg border p-3 text-sm',
+				color === null && 'bg-inset',
+			)}
+			style={
+				color === null ? undefined : tintStyle(color, { border: 35, fill: 7 })
+			}
+		>
+			{title ? (
+				<p className="text-ink mb-1 text-[13px] font-medium">{title}</p>
+			) : null}
+			<div className="text-muted-foreground text-[13px] leading-relaxed break-words">
+				{children}
+			</div>
+		</div>
 	)
 }

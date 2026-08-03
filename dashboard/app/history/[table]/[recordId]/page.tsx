@@ -2,9 +2,10 @@ import { ArrowLeftIcon } from 'lucide-react'
 import Link from 'next/link'
 
 import { RecordTimeline } from '@/components/record-timeline'
+import { Callout } from '@/components/status'
 import { Button } from '@/components/ui/button'
 import { readConfig } from '@/lib/config'
-import { ApiError, getRecordHistory } from '@/lib/pg-history-server'
+import { ApiError, getRecordHistory } from '@/lib/pghistory-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,23 +27,25 @@ export default async function RecordPage({
 	 */
 	if (!config.tables.includes(table)) {
 		return (
-			<div className="flex flex-col gap-4">
-				<h1 className="text-ink font-display text-xl font-semibold">
+			<div className="mx-auto flex max-w-2xl flex-col gap-4 py-10">
+				<h1 className="text-ink text-lg font-semibold tracking-tight">
 					Table not audited
 				</h1>
-				<p className="text-muted-foreground text-sm">
-					<span className="font-mono">{table}</span> is not in{' '}
-					<code className="font-mono text-xs">PG_HISTORY_TABLES</code>.
-					Currently audited:{' '}
-					<span className="font-mono">
+				<p className="text-muted-foreground text-[13px] leading-relaxed">
+					<span className="text-foreground font-mono">{table}</span> is not in{' '}
+					<code className="text-foreground font-mono text-xs">
+						PGHISTORY_TABLES
+					</code>
+					. Currently audited:{' '}
+					<span className="text-foreground font-mono">
 						{config.tables.join(', ') || 'none'}
 					</span>
 					.
 				</p>
 				<Button asChild variant="outline" className="self-start">
-					<Link href="/">
+					<Link href="/tables">
 						<ArrowLeftIcon />
-						Back to overview
+						All tables
 					</Link>
 				</Button>
 			</div>
@@ -65,35 +68,42 @@ export default async function RecordPage({
 
 	return (
 		<div className="flex flex-col gap-6">
-			<div className="flex flex-wrap items-start justify-between gap-3">
-				<div>
-					<h1 className="text-ink font-display text-xl font-semibold">
-						<span className="font-mono">{table}</span>
-					</h1>
-					<p className="text-muted-foreground mt-1 font-mono text-sm break-all">
-						{recordId}
-					</p>
-				</div>
-				<Button asChild variant="outline">
-					<Link href="/search">
-						<ArrowLeftIcon />
-						Back to explore
-					</Link>
-				</Button>
+			{/* Breadcrumb rather than a back button: this page is reached from
+			    search, from a table's feed, and from a pasted URL, so a single
+			    fixed "back" target would lie about where the reader came from. */}
+			<nav className="text-muted-foreground flex flex-wrap items-center gap-2 font-mono text-xs">
+				<Link
+					href="/tables"
+					className="hover:text-foreground transition-colors"
+				>
+					Tables
+				</Link>
+				<span aria-hidden className="text-border">
+					/
+				</span>
+				<Link
+					href={`/tables/${encodeURIComponent(table)}`}
+					className="hover:text-foreground transition-colors"
+				>
+					{table}
+				</Link>
+				<span aria-hidden className="text-border">
+					/
+				</span>
+				<span className="text-foreground break-all">{recordId}</span>
+			</nav>
+
+			<div className="flex min-w-0 flex-col gap-1.5">
+				<h1 className="text-ink font-mono text-xl font-medium tracking-tight break-all">
+					{recordId}
+				</h1>
+				<p className="text-muted-foreground text-[13px]">
+					Every recorded change to this row, newest first.
+				</p>
 			</div>
 
 			{error ? (
-				<div
-					className="rounded-lg border p-4 text-sm"
-					style={{
-						borderColor:
-							'color-mix(in srgb, var(--status-critical) 45%, transparent)',
-						backgroundColor:
-							'color-mix(in srgb, var(--status-critical) 8%, transparent)',
-					}}
-				>
-					{error}
-				</div>
+				<Callout title="Could not load this record">{error}</Callout>
 			) : (
 				<RecordTimeline
 					table={table}

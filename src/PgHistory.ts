@@ -10,7 +10,7 @@ import {
 	endPoolWithTimeout,
 	type Logger,
 } from './logger'
-import { executeRevert } from './pg-history-revert'
+import { executeRevert } from './pghistory-revert'
 import {
 	setupAuditTable as extSetupAuditTable,
 	setupIndexes as extSetupIndexes,
@@ -18,18 +18,18 @@ import {
 	triggerFuncNameFor,
 	triggerNameFor,
 	truncateTriggerNameFor,
-} from './pg-history-setup'
+} from './pghistory-setup'
 import {
 	buildAppendOnlyGuardSql,
 	buildTriggerFunctionSql,
-} from './pg-history-triggers'
+} from './pghistory-triggers'
 import {
 	validateColumnNames as extValidateColumnNames,
 	validateLimit as extValidateLimit,
 	validateStringInput as extValidateStringInput,
 	validateCursor,
 	validateIdentifier,
-} from './pg-history-validators'
+} from './pghistory-validators'
 import type {
 	AuditEntry,
 	GetHistoryOptions,
@@ -247,14 +247,14 @@ export class PgHistory {
 		const lockClient = await this.pool.connect()
 		try {
 			await lockClient.query(
-				`SELECT pg_advisory_lock(hashtextextended('pg-history:setup:' || current_schema(), $1::bigint))`,
+				`SELECT pg_advisory_lock(hashtextextended('pghistory:setup:' || current_schema(), $1::bigint))`,
 				[SETUP_LOCK_NAMESPACE],
 			)
 			return await fn()
 		} finally {
 			await lockClient
 				.query(
-					`SELECT pg_advisory_unlock(hashtextextended('pg-history:setup:' || current_schema(), $1::bigint))`,
+					`SELECT pg_advisory_unlock(hashtextextended('pghistory:setup:' || current_schema(), $1::bigint))`,
 					[SETUP_LOCK_NAMESPACE],
 				)
 				.catch(() => {})

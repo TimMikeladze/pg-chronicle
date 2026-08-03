@@ -1,9 +1,8 @@
-import '@fontsource/ibm-plex-mono/400.css'
-import '@fontsource/ibm-plex-mono/500.css'
-import '@fontsource/ibm-plex-sans/400.css'
-import '@fontsource/ibm-plex-sans/500.css'
-import '@fontsource/ibm-plex-sans/600.css'
-import '@fontsource/martian-mono/700.css'
+import '@fontsource/geist-mono/400.css'
+import '@fontsource/geist-mono/500.css'
+import '@fontsource/geist-sans/400.css'
+import '@fontsource/geist-sans/500.css'
+import '@fontsource/geist-sans/600.css'
 import './style.css'
 
 /*
@@ -17,7 +16,7 @@ function must<T extends Element>(
 	scope: ParentNode = document,
 ) {
 	const el = scope.querySelector<T>(selector)
-	if (!el) throw new Error(`pg-history site: missing element ${selector}`)
+	if (!el) throw new Error(`pghistory site: missing element ${selector}`)
 	return el
 }
 
@@ -81,6 +80,30 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>('.pm-tab')) {
 for (const block of document.querySelectorAll<HTMLElement>('.code-block')) {
 	const button = must<HTMLButtonElement>('.code-copy', block)
 	wireCopy(button, () => block.querySelector('pre')?.textContent ?? '', button)
+}
+
+/* ---------- hero screenshot tabs ---------- */
+
+/*
+ * Both theme variants of every shot are already in the DOM; this only switches
+ * which screen is shown. The light/dark pairing is pure CSS, so the tabs never
+ * have to know what theme is active.
+ */
+const shots = [...document.querySelectorAll<HTMLElement>('[data-shot]')]
+const shotTabs = [...document.querySelectorAll<HTMLButtonElement>('[data-shot-tab]')]
+
+for (const tab of shotTabs) {
+	tab.addEventListener('click', () => {
+		const index = tab.dataset.shotTab
+		for (const shot of shots) {
+			shot.classList.toggle('is-active', shot.dataset.shot === index)
+		}
+		for (const other of shotTabs) {
+			const active = other === tab
+			other.classList.toggle('is-active', active)
+			other.setAttribute('aria-selected', String(active))
+		}
+	})
 }
 
 /* ---------- scroll spy for the rail ---------- */

@@ -43,7 +43,7 @@ export interface PgHistoryConfig {
 	 * When true, `setup()` installs a `BEFORE UPDATE OR DELETE` guard trigger on
 	 * `audit_log` that rejects any UPDATE/DELETE unless the session set
 	 * `pg_history.maintenance = 'on'`. This makes the trail append-only for the
-	 * application, blocking accidental or casual tampering. The pg-history
+	 * application, blocking accidental or casual tampering. The pghistory
 	 * archiver sets that flag automatically, so archival still works.
 	 *
 	 * NOTE: this is tamper-RESISTANCE, not cryptographic tamper-evidence — a role
@@ -319,7 +319,7 @@ export interface ServerConfig {
 
 	/**
 	 * Bearer token secret for the `POST /api/archive` cron endpoint.
-	 * The endpoint is only registered when this value or `PG_HISTORY_JWT_SECRET`
+	 * The endpoint is only registered when this value or `PGHISTORY_JWT_SECRET`
 	 * is set — omitting both disables the route entirely for security.
 	 */
 	archiveCronSecret?: string
@@ -337,7 +337,7 @@ export interface ServerConfig {
 	/**
 	 * Allow the history/revert endpoints to be served without authentication.
 	 * `createServer` FAILS CLOSED: when `enableHistory` is true and no
-	 * `PG_HISTORY_JWT_SECRET` is configured, it throws at startup unless this is
+	 * `PGHISTORY_JWT_SECRET` is configured, it throws at startup unless this is
 	 * explicitly set to `true`. Use only for local development or a fully trusted
 	 * private network. Never enable on a public deployment.
 	 */

@@ -41,7 +41,7 @@ async function main() {
     `)
 		console.log('Created users table\n')
 
-		// ── 3. Set up pg-history ──────────────────────────────────
+		// ── 3. Set up pghistory ──────────────────────────────────
 		const history = new PgHistory({ pool, tables: ['users'] })
 		await history.setup()
 		console.log('History tracking enabled\n')

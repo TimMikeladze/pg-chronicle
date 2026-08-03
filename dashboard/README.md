@@ -1,9 +1,9 @@
-# pg-history dashboard
+# pghistory dashboard
 
 A Next.js + shadcn/ui dashboard for browsing, searching, and reverting the
-PostgreSQL audit trail, served by the pg-history REST API.
+PostgreSQL audit trail, served by the pghistory REST API.
 
-It is a **single deployment**: the same app mounts the real pg-history API at
+It is a **single deployment**: the same app mounts the real pghistory API at
 `/api` and renders the UI. Nothing else needs to be running.
 
 ```bash
@@ -13,9 +13,9 @@ bun run dev                  # builds the parent package, then starts Next
 ```
 
 Open <http://localhost:3000>. `dev`, `build`, and `tsc` each build the root
-`pg-history` package first, because the dashboard consumes it through its
-published `exports` map (`pg-history`, `pg-history/next`) via a `file:..` link
-— without `dist/`, even the typecheck cannot resolve `pg-history/next`.
+`pghistory` package first, because the dashboard consumes it through its
+published `exports` map (`pghistory`, `pghistory/next`) via a `file:..` link
+— without `dist/`, even the typecheck cannot resolve `pghistory/next`.
 
 CI runs this app as its own job (`dashboard` in `.github/workflows/ci.yml`):
 typecheck plus a production build, with no database service, since every page
@@ -29,9 +29,10 @@ covered by the root job's repo-wide `biome check .`.
 | `/` | Health, archival backlog, recent activity across all tables, jump-to-record |
 | `/search` | JSONB containment search with operation / date-range / table filters, cursor pagination, per-entry diff |
 | `/history/[table]/[recordId]` | One record's full timeline, oldest/newest ordering, per-entry revert |
-| `/api/*` | The pg-history REST API itself — for cron, scripts, and other services |
+| `/api/*` | The pghistory REST API itself — for cron, scripts, and other services |
 | `/health` | The library's public probe (bounded `SELECT 1`, 503 when the DB is unreachable) |
-| `/openapi` | The OpenAPI document, fetched with the dashboard's own token (the library JWT-gates it) |
+| `/openapi` | The API reference, rendered from the OpenAPI document with Scalar |
+| `/openapi.json` | The OpenAPI document itself, fetched with the dashboard's own token (the library JWT-gates it) — point a client generator at this |
 
 ### Search has two modes
 
@@ -49,7 +50,7 @@ because recording the revert is the repudiation defense, and suppressing it
 needs SUPERUSER or the `pg_replication` role (PostgreSQL 16+).
 
 Note that the audit row written for a revert is attributed to the **database
-role**. pg-history logs the JWT `sub` on its own log line but never writes it to
+role**. pghistory logs the JWT `sub` on its own log line but never writes it to
 `app_actor`, so the audit trail alone does not say which operator reverted —
 correlate with the server log.
 
@@ -62,13 +63,13 @@ states say so rather than implying the changes never happened.
 ## How it talks to the API
 
 The dashboard never issues a token to the browser. Server components and server
-actions call `lib/pg-history-server.ts`, which mints a 60-second HS256 JWT with
+actions call `lib/pghistory-server.ts`, which mints a 60-second HS256 JWT with
 `jose` and invokes the very same route handlers mounted at `/api` — in-process,
 with a synthetic `Request`. `hono/vercel`'s `handle()` is just `app.fetch(req)`,
 so this is a direct function call: no network hop, no CORS, one connection pool,
 and identical auth, validation, and error semantics to any external caller.
 
-The JWT `sub` carries `PG_HISTORY_DASHBOARD_ACTOR`, which pg-history logs as the
+The JWT `sub` carries `PGHISTORY_DASHBOARD_ACTOR`, which pghistory logs as the
 actor on every revert — that log line is the only record of who used the
 dashboard, so set it to something identifiable.
 
@@ -107,7 +108,7 @@ label text always keeps full foreground contrast.
 
 ## Notes
 
-- `next.config.ts` marks `pg-history` as a server external. `serverExternalPackages`
+- `next.config.ts` marks `pghistory` as a server external. `serverExternalPackages`
   alone misses it because the `file:..` link resolves outside `node_modules`,
   and webpack would otherwise walk into `hono-openapi` and report a missing
   optional `zod/v4/core`.

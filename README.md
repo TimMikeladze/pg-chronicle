@@ -1,8 +1,8 @@
-# pg-history
+# pghistory
 
 PostgreSQL audit trails with automated S3 archival.
 
-[![npm version](https://img.shields.io/npm/v/pg-history.svg)](https://www.npmjs.com/package/pg-history)
+[![npm version](https://img.shields.io/npm/v/pghistory.svg)](https://www.npmjs.com/package/pghistory)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Table of Contents
@@ -25,7 +25,7 @@ PostgreSQL audit trails with automated S3 archival.
 
 ```typescript
 import { Pool } from 'pg'
-import { PgHistory } from 'pg-history'
+import { PgHistory } from 'pghistory'
 
 const pool = new Pool({ connectionString: 'postgres://localhost:5432/mydb' })
 const history = new PgHistory({ pool, tables: ['users'] })
@@ -56,7 +56,7 @@ const found = await history.search({
 await history.revert('users', '1', result.data[1].id) // back to name 'Alice'
 // (reverting the INSERT entry would DELETE the row instead — see the revert table below)
 
-await history.close()   // ends only a pool pg-history created itself
+await history.close()   // ends only a pool pghistory created itself
 await pool.end()        // your pool stays yours to close
 ```
 
@@ -80,7 +80,7 @@ new PgHistory({ pool, tables: ['users'], logger: pino() })
 ## Installation
 
 ```bash
-bun add pg-history
+bun add pghistory
 ```
 
 `pg`, `hono`, and the S3/Parquet libraries ship as regular dependencies — nothing else to install.
@@ -111,11 +111,11 @@ Examples assert their own output, so they exit non-zero if the behavior they doc
 
 ## How It Works
 
-pg-history uses PostgreSQL's own trigger system to capture every change. Nothing runs in your application — the database does all the work.
+pghistory uses PostgreSQL's own trigger system to capture every change. Nothing runs in your application — the database does all the work.
 
 ### 1. Setup installs triggers
 
-When you call `history.setup()`, pg-history creates:
+When you call `history.setup()`, pghistory creates:
 - A partitioned `audit_log` table (one partition per tracked table for fast queries)
 - An `AFTER` trigger on each tracked table
 - GIN indexes on the JSONB columns for fast search
@@ -360,7 +360,7 @@ interface OrchestratorStats {
 }
 ```
 
-All types exported from `pg-history` root: `ArchiverConfig`, `AuditEntry`, `AuthorizeContext`, `AuthorizeFn`, `GetHistoryOptions`, `OrchestratorConfig`, `OrchestratorStats`, `PaginatedResult`, `PgHistoryConfig`, `RetentionConfig`, `RunOptions`, `S3Config`, `SearchCursor`, `SearchOptions`, `SearchPaginatedResult`, `ServerConfig`.
+All types exported from `pghistory` root: `ArchiverConfig`, `AuditEntry`, `AuthorizeContext`, `AuthorizeFn`, `GetHistoryOptions`, `OrchestratorConfig`, `OrchestratorStats`, `PaginatedResult`, `PgHistoryConfig`, `RetentionConfig`, `RunOptions`, `S3Config`, `SearchCursor`, `SearchOptions`, `SearchPaginatedResult`, `ServerConfig`.
 
 ## Server & REST API
 
@@ -368,7 +368,7 @@ A ready-made Hono server exposing the audit trail over HTTP, with JWT or cron-se
 
 ```typescript
 import { Pool } from 'pg'
-import { createServer } from 'pg-history'
+import { createServer } from 'pghistory'
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 const { app } = await createServer({
@@ -378,7 +378,7 @@ const { app } = await createServer({
   historyConfig: { tables: ['users', 'orders'] },
   enableArchiver: true,
   archiverConfig: { /* see Archiver section */ },
-  allowUnauthenticated: !process.env.PG_HISTORY_JWT_SECRET,  // dev only
+  allowUnauthenticated: !process.env.PGHISTORY_JWT_SECRET,  // dev only
 })
 
 Bun.serve({ port: 3001, fetch: app.fetch })
@@ -398,8 +398,8 @@ Bun.serve({ port: 3001, fetch: app.fetch })
 | `POST` | `/api/archive` | Cron secret when configured, else JWT | Trigger archival on demand (requires `enableArchiver`) |
 
 **Auth resolution:**
-- **Fail-closed:** with `enableHistory: true` and no `PG_HISTORY_JWT_SECRET`, `createServer` throws at startup unless `allowUnauthenticated: true` is passed.
-- Set `PG_HISTORY_JWT_SECRET` to enable JWT on `/api/*`. Algorithm via `PG_HISTORY_JWT_ALG` (default `HS256`; supports `HS256/384/512`, `RS256/384/512`, `ES256/384/512`).
+- **Fail-closed:** with `enableHistory: true` and no `PGHISTORY_JWT_SECRET`, `createServer` throws at startup unless `allowUnauthenticated: true` is passed.
+- Set `PGHISTORY_JWT_SECRET` to enable JWT on `/api/*`. Algorithm via `PGHISTORY_JWT_ALG` (default `HS256`; supports `HS256/384/512`, `RS256/384/512`, `ES256/384/512`).
 - **Authorization** is separate from authentication: supply an `authorize` hook to scope access per tenant/record (returning `false` → `403`). Without it, any valid token can reach any configured table's history.
 - Set `archiveCronSecret` (or `CRON_SECRET` env) to authenticate the three archiver endpoints via timing-safe HMAC. `/api/archive` checks it whenever it is set — so with both secrets configured, the caller needs the cron bearer token *and* passes the JWT middleware first. `/api/stats` and `/api/health/detailed` fall back to it only when no JWT secret is set.
 - Archiver endpoints also need `enableArchiver: true` with a valid `archiverConfig`; without that, or without any auth at all, they are never registered.
@@ -451,16 +451,16 @@ Reads return the `PaginatedResult` shape (`{data, nextCursor, hasMore}`); revert
 
 ### Standalone
 
-`src/main.ts` is the entrypoint (also published as the `pg-history` bin). It reads config from the environment and binds the port with `Bun.serve` — `src/server.ts` only exports `createServer` and does nothing when executed directly.
+`src/main.ts` is the entrypoint (also published as the `pghistory` bin). It reads config from the environment and binds the port with `Bun.serve` — `src/server.ts` only exports `createServer` and does nothing when executed directly.
 
 ```bash
-PG_HISTORY_DATABASE_URL=postgres://localhost:5432/mydb \
-PG_HISTORY_TABLES=users,orders \
-PG_HISTORY_JWT_SECRET=your-secret \
+PGHISTORY_DATABASE_URL=postgres://localhost:5432/mydb \
+PGHISTORY_TABLES=users,orders \
+PGHISTORY_JWT_SECRET=your-secret \
 bun run src/main.ts
 ```
 
-`PG_HISTORY_TABLES` is what enables the history API — without it the process starts but serves only `/health`. Without `PG_HISTORY_JWT_SECRET`, startup fails closed unless `PG_HISTORY_ALLOW_UNAUTHENTICATED=true`.
+`PGHISTORY_TABLES` is what enables the history API — without it the process starts but serves only `/health`. Without `PGHISTORY_JWT_SECRET`, startup fails closed unless `PGHISTORY_ALLOW_UNAUTHENTICATED=true`.
 
 ## Deployment
 
@@ -469,12 +469,12 @@ bun run src/main.ts
 A `Dockerfile` and `fly.toml` are included. The server runs as a long-lived process with background archival.
 
 ```bash
-fly secrets set PG_HISTORY_DATABASE_URL=postgres://...
-fly secrets set PG_HISTORY_JWT_SECRET=your-secret
-fly secrets set PG_HISTORY_S3_BUCKET=audit-archives
-fly secrets set PG_HISTORY_S3_ENDPOINT=https://...
-fly secrets set PG_HISTORY_S3_ACCESS_KEY_ID=...
-fly secrets set PG_HISTORY_S3_SECRET_ACCESS_KEY=...
+fly secrets set PGHISTORY_DATABASE_URL=postgres://...
+fly secrets set PGHISTORY_JWT_SECRET=your-secret
+fly secrets set PGHISTORY_S3_BUCKET=audit-archives
+fly secrets set PGHISTORY_S3_ENDPOINT=https://...
+fly secrets set PGHISTORY_S3_ACCESS_KEY_ID=...
+fly secrets set PGHISTORY_S3_SECRET_ACCESS_KEY=...
 fly deploy
 ```
 
@@ -483,18 +483,18 @@ The `fly.toml` is configured with:
 - `kill_timeout = 30s` — gives in-flight archival time to finish on deploys
 - `PORT = 8080` — matches Fly's internal port expectation
 
-Archival runs immediately on startup and then on a periodic interval (default: every hour, configurable via `PG_HISTORY_ARCHIVAL_INTERVAL_MS`).
+Archival runs immediately on startup and then on a periodic interval (default: every hour, configurable via `PGHISTORY_ARCHIVAL_INTERVAL_MS`).
 
 ### Next.js (Serverless)
 
-Auditing itself is runtime-independent — the triggers live in PostgreSQL. The `pg-history/next` entry point is a Next.js App Router route handler and runs anywhere Next.js runs; only the *cron scheduling* below is Vercel-specific.
+Auditing itself is runtime-independent — the triggers live in PostgreSQL. The `pghistory/next` entry point is a Next.js App Router route handler and runs anywhere Next.js runs; only the *cron scheduling* below is Vercel-specific.
 
 **Option A: Use the library directly in your API routes**
 
 ```typescript
 // app/api/history/route.ts
 import { Pool } from 'pg'
-import { PgHistory } from 'pg-history'
+import { PgHistory } from 'pghistory'
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 })
 const history = new PgHistory({ pool, tables: ['users', 'orders'] })
@@ -514,20 +514,20 @@ export async function GET(req: Request) {
 
 ```typescript
 // app/api/[[...route]]/route.ts
-export { GET, POST } from 'pg-history/next'
+export { GET, POST } from 'pghistory/next'
 ```
 
 Set environment variables on your host — all three are required:
 
 ```
-PG_HISTORY_DATABASE_URL=postgres://...
-PG_HISTORY_TABLES=users,orders
-PG_HISTORY_JWT_SECRET=your-secret
+PGHISTORY_DATABASE_URL=postgres://...
+PGHISTORY_TABLES=users,orders
+PGHISTORY_JWT_SECRET=your-secret
 ```
 
-The JWT secret is not optional here: this entry point always enables the history API, destructive `revert` included, so without a secret it refuses to start and every request returns `500 INIT_ERROR`. `PG_HISTORY_ALLOW_UNAUTHENTICATED` is deliberately not wired up on this path.
+The JWT secret is not optional here: this entry point always enables the history API, destructive `revert` included, so without a secret it refuses to start and every request returns `500 INIT_ERROR`. `PGHISTORY_ALLOW_UNAUTHENTICATED` is deliberately not wired up on this path.
 
-The `pg-history/next` entry point automatically enables `serverless: true`, which:
+The `pghistory/next` entry point automatically enables `serverless: true`, which:
 - Skips background archival (use [cron archival](#cron-archival-vercel-cron) instead)
 - Skips in-memory rate limiting (handle at API gateway / firewall level)
 - Uses a small pool size (default 3) to stay within connection limits
@@ -549,13 +549,13 @@ Serverless has no persistent process, so archival needs an external trigger. Add
 
 Vercel Cron calls `POST /api/archive` on schedule with `Authorization: Bearer <CRON_SECRET>` injected automatically; the endpoint verifies it, then runs archive → soft delete → hard delete and returns stats.
 
-Two things to know: `POST /api/archive` only exists when `PG_HISTORY_S3_BUCKET` is set (that's what enables the archiver in `pg-history/next`), and the catch-all serves `/api/**` only — the public `GET /health` probe is unreachable here, so use `/api/health/detailed` or add your own `app/health/route.ts`.
+Two things to know: `POST /api/archive` only exists when `PGHISTORY_S3_BUCKET` is set (that's what enables the archiver in `pghistory/next`), and the catch-all serves `/api/**` only — the public `GET /health` probe is unreachable here, so use `/api/health/detailed` or add your own `app/health/route.ts`.
 
 **Vercel plan limits:**
 - **Hobby:** Cron minimum interval 24h, function timeout 10s
 - **Pro:** Cron minimum interval 1h, function timeout 60s
 
-If archival takes longer than the function timeout, it will be interrupted. The design is retry-safe — unfinished records stay unarchived and get picked up on the next run. Set `PG_HISTORY_BATCH_SIZE` to a lower value (1000-2000) to keep individual runs within timeout limits.
+If archival takes longer than the function timeout, it will be interrupted. The design is retry-safe — unfinished records stay unarchived and get picked up on the next run. Set `PGHISTORY_BATCH_SIZE` to a lower value (1000-2000) to keep individual runs within timeout limits.
 
 **Not on Vercel?** `vercel.json` and `CRON_SECRET` injection are the only Vercel-specific pieces. Anywhere else, keep the same route handler and call `POST /api/archive` from your own scheduler (GitHub Actions, AWS EventBridge, Cloud Scheduler, a system crontab), sending `Authorization: Bearer <CRON_SECRET>` yourself.
 
@@ -563,7 +563,7 @@ If archival takes longer than the function timeout, it will be interrupted. The 
 
 | Concern | Impact | Mitigation |
 |---------|--------|------------|
-| Connection pooling | Each invocation may create a pool | Use an external pooler (PgBouncer, Neon, Supabase, RDS Proxy). Set `PG_HISTORY_POOL_MAX` low (2-3). |
+| Connection pooling | Each invocation may create a pool | Use an external pooler (PgBouncer, Neon, Supabase, RDS Proxy). Set `PGHISTORY_POOL_MAX` low (2-3). |
 | Cold starts | `setup()` runs on every cold instance | Already cheap: when the schema exists it short-circuits after one catalog probe (~5ms). Cache the promise at module level and call it freely. |
 | Rate limiting | In-memory rate limiter resets per invocation | Use platform-level rate limiting (API Gateway, Vercel Firewall, Cloudflare). |
 
@@ -637,7 +637,7 @@ const { app } = await createServer({
 Metadata + S3 grow linearly forever. Schedule periodic pruning of archives past compliance retention:
 
 ```typescript
-import { PgHistoryArchiver } from 'pg-history'
+import { PgHistoryArchiver } from 'pghistory'
 
 const archiver = new PgHistoryArchiver({ pool, ...config })
 const cutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000) // 1 year
@@ -662,23 +662,23 @@ To run archival on your own schedule instead of the server's, drive [`Orchestrat
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PG_HISTORY_DATABASE_URL` | Standalone server | PostgreSQL connection string |
-| `PG_HISTORY_PORT` | No | Server port (also reads `PORT`, default `3001`) |
-| `PG_HISTORY_POOL_MAX` | No | Max pool connections (default `5`, use `2-3` for serverless) |
-| `PG_HISTORY_STATEMENT_TIMEOUT_MS` | No | Pool-wide `statement_timeout` (default `30000`; `0` disables). Raise for a one-time archiver index build on a large existing log |
-| `PG_HISTORY_JWT_SECRET` | `pg-history/next` entry point | JWT auth on `/api/*`. The standalone server can skip it only with `PG_HISTORY_ALLOW_UNAUTHENTICATED=true`; `pg-history/next` has no such escape hatch |
-| `PG_HISTORY_JWT_ALG` | No | JWT algorithm: `HS256/384/512`, `RS256/384/512`, `ES256/384/512` (default `HS256`) |
-| `PG_HISTORY_ALLOW_UNAUTHENTICATED` | No | Set `true` to let the standalone server start history endpoints without a JWT (local/trusted only). Read by the standalone server only — `pg-history/next` ignores it |
-| `PG_HISTORY_TABLES` | `pg-history/next` entry point | Comma-separated table names. Also what enables the history API on the standalone server — omit it and only `/health` is served |
-| `PG_HISTORY_S3_BUCKET` | Archival | S3 bucket. Setting it is what enables the archiver on both entry points |
-| `PG_HISTORY_S3_ENDPOINT` | No | Custom S3 endpoint (MinIO, R2, localstack). Omit for AWS; setting it also switches on path-style addressing |
-| `PG_HISTORY_S3_ACCESS_KEY_ID` | No | Explicit access key. Omit both key vars to use the default AWS credential chain (IAM role, instance profile, env) |
-| `PG_HISTORY_S3_SECRET_ACCESS_KEY` | No | Explicit secret key |
-| `PG_HISTORY_S3_REGION` | No | S3 region (default `us-east-1`) |
-| `PG_HISTORY_ARCHIVAL_INTERVAL_MS` | No | Background archival interval (default `3600000` / 1 hour) |
-| `PG_HISTORY_RETENTION_DAYS` | No | Default retention period (default `90`) |
-| `PG_HISTORY_GRACE_PERIOD_DAYS` | No | Grace period before hard delete (default `7`; `0` = no grace, purge once the S3 backup is confirmed) |
-| `PG_HISTORY_BATCH_SIZE` | No | Archival batch size (default `10000`) |
+| `PGHISTORY_DATABASE_URL` | Standalone server | PostgreSQL connection string |
+| `PGHISTORY_PORT` | No | Server port (also reads `PORT`, default `3001`) |
+| `PGHISTORY_POOL_MAX` | No | Max pool connections (default `5`, use `2-3` for serverless) |
+| `PGHISTORY_STATEMENT_TIMEOUT_MS` | No | Pool-wide `statement_timeout` (default `30000`; `0` disables). Raise for a one-time archiver index build on a large existing log |
+| `PGHISTORY_JWT_SECRET` | `pghistory/next` entry point | JWT auth on `/api/*`. The standalone server can skip it only with `PGHISTORY_ALLOW_UNAUTHENTICATED=true`; `pghistory/next` has no such escape hatch |
+| `PGHISTORY_JWT_ALG` | No | JWT algorithm: `HS256/384/512`, `RS256/384/512`, `ES256/384/512` (default `HS256`) |
+| `PGHISTORY_ALLOW_UNAUTHENTICATED` | No | Set `true` to let the standalone server start history endpoints without a JWT (local/trusted only). Read by the standalone server only — `pghistory/next` ignores it |
+| `PGHISTORY_TABLES` | `pghistory/next` entry point | Comma-separated table names. Also what enables the history API on the standalone server — omit it and only `/health` is served |
+| `PGHISTORY_S3_BUCKET` | Archival | S3 bucket. Setting it is what enables the archiver on both entry points |
+| `PGHISTORY_S3_ENDPOINT` | No | Custom S3 endpoint (MinIO, R2, localstack). Omit for AWS; setting it also switches on path-style addressing |
+| `PGHISTORY_S3_ACCESS_KEY_ID` | No | Explicit access key. Omit both key vars to use the default AWS credential chain (IAM role, instance profile, env) |
+| `PGHISTORY_S3_SECRET_ACCESS_KEY` | No | Explicit secret key |
+| `PGHISTORY_S3_REGION` | No | S3 region (default `us-east-1`) |
+| `PGHISTORY_ARCHIVAL_INTERVAL_MS` | No | Background archival interval (default `3600000` / 1 hour) |
+| `PGHISTORY_RETENTION_DAYS` | No | Default retention period (default `90`) |
+| `PGHISTORY_GRACE_PERIOD_DAYS` | No | Grace period before hard delete (default `7`; `0` = no grace, purge once the S3 backup is confirmed) |
+| `PGHISTORY_BATCH_SIZE` | No | Archival batch size (default `10000`) |
 | `CRON_SECRET` | Cron archival (Vercel Cron) | Protects `POST /api/archive`; also authenticates `/api/stats` and `/api/health/detailed` in cron-only deployments |
 
 ## Production Caveats
@@ -712,7 +712,7 @@ Generated trigger functions run with the privileges of their **owner** — whoev
 
 ### Tamper-resistance / append-only
 
-`appendOnly: true` installs a guard trigger that blocks `UPDATE`/`DELETE` on `audit_log` outside the pg-history maintenance context (PostgreSQL 14+). That stops accidental and casual tampering, but a role with write access can still set the bypass flag — so it is tamper-*resistance*, not proof. For genuine WORM guarantees, layer on: `REVOKE UPDATE, DELETE, TRUNCATE ON audit_log` from the application role (run the archiver under a separate privileged role), enforce S3 Object Lock on the archive bucket, and add a per-row hash chain if you need cryptographic evidence.
+`appendOnly: true` installs a guard trigger that blocks `UPDATE`/`DELETE` on `audit_log` outside the pghistory maintenance context (PostgreSQL 14+). That stops accidental and casual tampering, but a role with write access can still set the bypass flag — so it is tamper-*resistance*, not proof. For genuine WORM guarantees, layer on: `REVOKE UPDATE, DELETE, TRUNCATE ON audit_log` from the application role (run the archiver under a separate privileged role), enforce S3 Object Lock on the archive bucket, and add a per-row hash chain if you need cryptographic evidence.
 
 ### Metrics & observability
 
@@ -737,7 +737,7 @@ Typed error classes, all extending `PgHistoryError`:
 
 ```typescript
 import {
-  PgHistoryError,               // Base class for all pg-history errors
+  PgHistoryError,               // Base class for all pghistory errors
   TableNotConfiguredError,       // Table not in configured tables list
   SetupRequiredError,            // setup() not called before query
   AuditEntryNotFoundError,       // Audit entry not found for revert
@@ -745,7 +745,7 @@ import {
   RevertError,                   // Revert operation failure
   AuthorizationError,            // authorize() hook denied the request (HTTP 403)
   SearchConcurrencyLimitError,   // too many concurrent search() calls (HTTP 429)
-} from 'pg-history'
+} from 'pghistory'
 
 try {
   await history.getHistory('unknown_table', '1')

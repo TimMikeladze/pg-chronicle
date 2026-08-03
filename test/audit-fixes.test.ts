@@ -20,8 +20,8 @@ describe('C2: fail closed on missing auth', () => {
 
 	test('createServer throws when history is enabled without a JWT secret', async () => {
 		const pool = await getTestConnection()
-		const original = process.env.PG_HISTORY_JWT_SECRET
-		delete process.env.PG_HISTORY_JWT_SECRET
+		const original = process.env.PGHISTORY_JWT_SECRET
+		delete process.env.PGHISTORY_JWT_SECRET
 		try {
 			await expect(
 				createServer({
@@ -31,14 +31,14 @@ describe('C2: fail closed on missing auth', () => {
 				}),
 			).rejects.toThrow(/Refusing to start/)
 		} finally {
-			if (original !== undefined) process.env.PG_HISTORY_JWT_SECRET = original
+			if (original !== undefined) process.env.PGHISTORY_JWT_SECRET = original
 		}
 	})
 
 	test('createServer starts when allowUnauthenticated is explicitly set', async () => {
 		const pool = await getTestConnection()
-		const original = process.env.PG_HISTORY_JWT_SECRET
-		delete process.env.PG_HISTORY_JWT_SECRET
+		const original = process.env.PGHISTORY_JWT_SECRET
+		delete process.env.PGHISTORY_JWT_SECRET
 		try {
 			const { app } = await createServer({
 				pool,
@@ -48,7 +48,7 @@ describe('C2: fail closed on missing auth', () => {
 			})
 			expect(app).toBeDefined()
 		} finally {
-			if (original !== undefined) process.env.PG_HISTORY_JWT_SECRET = original
+			if (original !== undefined) process.env.PGHISTORY_JWT_SECRET = original
 		}
 	})
 })

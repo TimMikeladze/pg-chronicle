@@ -4,84 +4,112 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Palette is lifted from site/src/style.css so the dashboard and the marketing
- * site read as one product: ink-on-warm-paper in light, true black in dark, with
- * a monochrome accent. The only hues in the whole UI are the four reserved
- * status steps below.
+ * A control-plane surface, not a marketing page: near-monochrome, hairline
+ * borders, and one accent per meaning. The only hues in the entire UI are the
+ * four operation steps below — every other pixel is a step on the neutral ramp.
+ *
+ * Depth comes from hairlines and spacing, not from stacked shadows or nested
+ * panels.
  */
 :root {
-	--radius: 0.625rem;
+	--radius: 0.5rem;
 
-	--background: #fbfaf7;
-	--foreground: #3a352d;
-	--card: #f4f1ea;
-	--card-foreground: #3a352d;
-	--popover: #f4f1ea;
-	--popover-foreground: #3a352d;
+	--background: #ffffff;
+	--surface: #fafafa;
+	--foreground: #171717;
+	--card: #ffffff;
+	--card-foreground: #171717;
+	--popover: #ffffff;
+	--popover-foreground: #171717;
 
-	--primary: #17150f;
-	--primary-foreground: #fffaf2;
-	--secondary: #efebe2;
-	--secondary-foreground: #17150f;
-	--muted: #efebe2;
-	--muted-foreground: #6b6459;
-	--accent: #efebe2;
-	--accent-foreground: #17150f;
+	--primary: #171717;
+	--primary-foreground: #ffffff;
+	--secondary: #fafafa;
+	--secondary-foreground: #171717;
+	--muted: #fafafa;
+	--muted-foreground: #737373;
+	--accent: #f2f2f2;
+	--accent-foreground: #171717;
 
-	--destructive: #d03b3b;
-	--destructive-foreground: #fffaf2;
+	--destructive: #e5484d;
+	--destructive-foreground: #ffffff;
 
-	--border: #e2dcd0;
-	--input: #e2dcd0;
-	--ring: #17150f;
+	--border: #ebebeb;
+	--border-strong: #d4d4d4;
+	--input: #ebebeb;
+	--ring: #171717;
 
 	/* Emphatic ink — headings and hero figures. */
-	--ink: #17150f;
+	--ink: #000000;
 	/* Recessed panel, one step below --card. */
-	--inset: #efebe2;
+	--inset: #fafafa;
 
 	/*
-	 * Reserved status steps. Fixed across themes and never reused for anything
-	 * decorative. Every use is paired with an icon and a text label — these are
-	 * carried as dot/border/tint, never as the text color itself, so the label
-	 * always keeps full foreground contrast.
+	 * Operation identity. These four are the product's entire color vocabulary:
+	 * one hue per audited operation, reused verbatim for the rail, the badge, the
+	 * diff gutter, and the timeline node. Nothing else in the UI may use them, so
+	 * a colored pixel always means "an operation happened here".
+	 *
+	 * Carried as rail/dot/border/tint — never as the label's text color — so a
+	 * label keeps full foreground contrast and stays readable with no color
+	 * perception at all.
 	 */
-	--status-good: #0ca30c;
-	--status-warning: #fab219;
-	--status-serious: #ec835a;
-	--status-critical: #d03b3b;
+	--op-insert: #0e9f6e;
+	--op-update: #d97706;
+	--op-delete: #e5484d;
+	--op-truncate: #8b5cf6;
+
+	/* Operational status reuses the operation ramp so the palette stays closed. */
+	--status-good: #0e9f6e;
+	--status-warning: #d97706;
+	--status-serious: #8b5cf6;
+	--status-critical: #e5484d;
 }
 
 .dark {
-	--background: #000000;
-	--foreground: #d5dae1;
-	--card: #0b0d10;
-	--card-foreground: #d5dae1;
-	--popover: #0b0d10;
-	--popover-foreground: #d5dae1;
+	--background: #0a0a0a;
+	--surface: #0f0f0f;
+	--foreground: #ededed;
+	--card: #0f0f0f;
+	--card-foreground: #ededed;
+	--popover: #0f0f0f;
+	--popover-foreground: #ededed;
 
 	--primary: #ffffff;
-	--primary-foreground: #000000;
-	--secondary: #121419;
+	--primary-foreground: #0a0a0a;
+	--secondary: #171717;
 	--secondary-foreground: #ffffff;
-	--muted: #121419;
-	--muted-foreground: #969fac;
-	--accent: #121419;
+	--muted: #171717;
+	--muted-foreground: #8f8f8f;
+	--accent: #1f1f1f;
 	--accent-foreground: #ffffff;
 
-	--destructive: #d03b3b;
-	--destructive-foreground: #ffffff;
+	--destructive: #ff6166;
+	--destructive-foreground: #0a0a0a;
 
-	--border: #272d36;
-	--input: #272d36;
-	--ring: #ffffff;
+	--border: #1f1f1f;
+	--border-strong: #2e2e2e;
+	--input: #1f1f1f;
+	--ring: #ededed;
 
 	--ink: #ffffff;
-	--inset: #121419;
+	--inset: #141414;
+
+	/* Lifted for legibility on near-black; same hues, same meanings. */
+	--op-insert: #3dd68c;
+	--op-update: #f5a623;
+	--op-delete: #ff6166;
+	--op-truncate: #a78bfa;
+
+	--status-good: #3dd68c;
+	--status-warning: #f5a623;
+	--status-serious: #a78bfa;
+	--status-critical: #ff6166;
 }
 
 @theme inline {
 	--color-background: var(--background);
+	--color-surface: var(--surface);
 	--color-foreground: var(--foreground);
 	--color-card: var(--card);
 	--color-card-foreground: var(--card-foreground);
@@ -98,24 +126,32 @@
 	--color-destructive: var(--destructive);
 	--color-destructive-foreground: var(--destructive-foreground);
 	--color-border: var(--border);
+	--color-border-strong: var(--border-strong);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
 	--color-ink: var(--ink);
 	--color-inset: var(--inset);
+
+	--color-op-insert: var(--op-insert);
+	--color-op-update: var(--op-update);
+	--color-op-delete: var(--op-delete);
+	--color-op-truncate: var(--op-truncate);
 
 	--color-status-good: var(--status-good);
 	--color-status-warning: var(--status-warning);
 	--color-status-serious: var(--status-serious);
 	--color-status-critical: var(--status-critical);
 
-	--radius-sm: calc(var(--radius) - 4px);
-	--radius-md: calc(var(--radius) - 2px);
+	--radius-sm: calc(var(--radius) - 3px);
+	--radius-md: calc(var(--radius) - 1px);
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 4px);
 
-	--font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-	--font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-	--font-display: "Martian Mono", ui-monospace, monospace;
+	--font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+	--font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	/* Identifiers, timestamps, values, actors — everything an auditor copies out
+	   verbatim — are set in mono. */
+	--font-display: "Geist", ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer base {
@@ -126,24 +162,156 @@
 	body {
 		@apply bg-background text-foreground font-sans antialiased;
 		-webkit-font-smoothing: antialiased;
+		text-rendering: optimizeLegibility;
 	}
 
-	/*
-	 * Columns of numbers align on the digit; standalone figures do not. Tabular
-	 * figures at hero sizes look loose, so they are scoped to table cells only.
-	 */
 	.tabular {
 		font-variant-numeric: tabular-nums;
+	}
+
+	/* Timestamps and ids sit next to each other constantly — locking the figure
+	   width stops the whole row from shifting as relative times tick over. */
+	.font-mono {
+		font-variant-numeric: tabular-nums;
+	}
+
+	::selection {
+		background-color: color-mix(in srgb, var(--foreground) 18%, transparent);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		*::before,
+		*::after {
+			animation-duration: 0.01ms;
+			animation-iteration-count: 1;
+			transition-duration: 0.01ms;
+			scroll-behavior: auto;
+		}
 	}
 }
 
 @layer components {
-	/* Ledger rule — the hairline the marketing site uses to separate blocks. */
-	.ledger-rule {
-		background-image: repeating-linear-gradient(
-			to bottom,
-			var(--border) 0 1px,
-			transparent 1px 8px
-		);
+	/*
+	 * Eyebrow — the small uppercase mono label that titles every section. It is
+	 * the only typographic ornament in the system, so it carries the structure.
+	 */
+	.eyebrow {
+		@apply text-muted-foreground font-mono text-[11px] font-medium tracking-[0.08em] uppercase;
 	}
+
+	/*
+	 * Grid backdrop for empty and hero states. Hairlines at the layout gutter's
+	 * pitch, masked out at the edges so content never sits on a hard line.
+	 */
+	.grid-field {
+		background-image:
+			linear-gradient(to right, var(--border) 1px, transparent 1px),
+			linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+		background-size: 32px 32px;
+		mask-image: radial-gradient(ellipse at center, #000 0%, transparent 78%);
+	}
+
+	/*
+	 * The signature device: a 2px spine in the operation's own hue, running the
+	 * full height of an entry. Repeated in every list, so one glance down a page
+	 * reads a record's life as a colored barcode.
+	 *
+	 * Drawn as an inset shadow rather than a border so it adds no width and
+	 * cannot shift the first cell's text. A <tr> establishes no paint area of its
+	 * own in most engines, so on a row the rail is applied to its first cell.
+	 */
+	.op-rail {
+		box-shadow: inset 2px 0 0 0 var(--rail-color, transparent);
+	}
+
+	tr.op-rail {
+		box-shadow: none;
+	}
+
+	tr.op-rail > *:first-child {
+		box-shadow: inset 2px 0 0 0 var(--rail-color, transparent);
+	}
+}
+
+/*
+ * Scalar's API reference ships its own palette. Rather than let a second design
+ * system land inside the shell, its variable contract is remapped onto the
+ * dashboard's tokens — so it inherits the same greys, the same border hairline,
+ * the same Geist pair, and follows the theme toggle with everything else.
+ *
+ * Scoped to .scalar-host (the wrapper on /openapi) so nothing here can leak into
+ * the rest of the app. Not in @layer: Scalar's own stylesheet is unlayered, and
+ * a layered rule would always lose to it.
+ */
+.scalar-host {
+	--scalar-font: var(--font-sans);
+	--scalar-font-code: var(--font-mono);
+
+	--scalar-background-1: var(--background);
+	--scalar-background-2: var(--surface);
+	--scalar-background-3: var(--inset);
+	--scalar-background-accent: var(--accent);
+
+	--scalar-color-1: var(--ink);
+	--scalar-color-2: var(--foreground);
+	--scalar-color-3: var(--muted-foreground);
+	--scalar-color-accent: var(--ink);
+	--scalar-color-disabled: var(--muted-foreground);
+	--scalar-color-ghost: var(--muted-foreground);
+
+	--scalar-border-color: var(--border);
+	--scalar-border-width: 1px;
+
+	/* The method chips and status pills are the one place color carries meaning
+	   here, so they draw from the operation ramp instead of Scalar's own hues —
+	   the palette stays closed. */
+	--scalar-color-green: var(--op-insert);
+	--scalar-color-orange: var(--op-update);
+	--scalar-color-red: var(--op-delete);
+	--scalar-color-purple: var(--op-truncate);
+	--scalar-color-blue: var(--ink);
+	--scalar-color-yellow: var(--status-warning);
+
+	--scalar-background-alert: var(--status-warning);
+	--scalar-color-alert: var(--status-warning);
+	--scalar-background-danger: var(--destructive);
+	--scalar-color-danger: var(--destructive);
+
+	--scalar-button-1: var(--primary);
+	--scalar-button-1-color: var(--primary-foreground);
+	--scalar-button-1-hover: var(--ink);
+
+	--scalar-link-color: var(--foreground);
+	--scalar-link-color-hover: var(--ink);
+
+	--scalar-sidebar-background-1: var(--background);
+	--scalar-sidebar-color-1: var(--foreground);
+	--scalar-sidebar-color-2: var(--muted-foreground);
+	--scalar-sidebar-color-active: var(--ink);
+	--scalar-sidebar-border-color: var(--border);
+	--scalar-sidebar-item-hover-background: var(--inset);
+	--scalar-sidebar-item-hover-color: var(--ink);
+	--scalar-sidebar-item-active-background: var(--inset);
+	--scalar-sidebar-search-background: var(--inset);
+	--scalar-sidebar-search-border-color: var(--border);
+	--scalar-sidebar-search-color: var(--muted-foreground);
+	/* Clears the two-tier nav bar so the sticky sidebar never slides under it. */
+	--scalar-sidebar-sticky-offset: 6.5rem;
+
+	--scalar-radius: var(--radius-md);
+	--scalar-radius-lg: var(--radius-lg);
+	--scalar-radius-xl: var(--radius-xl);
+}
+
+/* Scalar assumes it owns the viewport and paints its own page background. Inside
+   the dashboard shell it is a panel, so it is bordered like one and lets the
+   page background through. */
+.scalar-host .scalar-app,
+.scalar-host .scalar-api-reference {
+	background: transparent;
+}
+
+.scalar-host {
+	@apply border-border overflow-hidden rounded-xl border;
 }

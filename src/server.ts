@@ -19,7 +19,7 @@ import {
 import { consoleLogger, type Logger } from './logger'
 import { Orchestrator } from './orchestrator'
 import { PgHistory } from './PgHistory'
-import { validateIdentifier } from './pg-history-validators'
+import { validateIdentifier } from './pghistory-validators'
 import { getArchivalStats, setupArchiverSchema } from './schema'
 import type { ServerConfig } from './types'
 import { parseRevertBody, parseSearchBody } from './validation'
@@ -37,7 +37,7 @@ export async function createServer(config: ServerConfig): Promise<{
 
 	// Resolve JWT secret once. Trim to catch accidental empty-string values that
 	// would otherwise silently disable auth while `jwtSecret` is falsy.
-	const jwtSecret = process.env.PG_HISTORY_JWT_SECRET?.trim() || undefined
+	const jwtSecret = process.env.PGHISTORY_JWT_SECRET?.trim() || undefined
 
 	// FAIL CLOSED (C2): the history read API and the destructive
 	// POST /api/history/revert endpoint have no authentication unless a JWT
@@ -50,9 +50,9 @@ export async function createServer(config: ServerConfig): Promise<{
 		config.allowUnauthenticated !== true
 	) {
 		throw new Error(
-			'Refusing to start: enableHistory is set but PG_HISTORY_JWT_SECRET is not configured. ' +
+			'Refusing to start: enableHistory is set but PGHISTORY_JWT_SECRET is not configured. ' +
 				'The history read API and the destructive POST /api/history/revert endpoint would be ' +
-				'exposed without authentication. Set PG_HISTORY_JWT_SECRET, or pass ' +
+				'exposed without authentication. Set PGHISTORY_JWT_SECRET, or pass ' +
 				'allowUnauthenticated: true to explicitly opt in (local development / trusted network only).',
 		)
 	}
@@ -387,7 +387,7 @@ export async function createServer(config: ServerConfig): Promise<{
 			const intervalMs = Math.max(
 				MIN_INTERVAL_MS,
 				Number.parseInt(
-					process.env.PG_HISTORY_ARCHIVAL_INTERVAL_MS || '3600000',
+					process.env.PGHISTORY_ARCHIVAL_INTERVAL_MS || '3600000',
 					10,
 				) || 3_600_000,
 			)
@@ -410,7 +410,7 @@ export async function createServer(config: ServerConfig): Promise<{
 		}
 	}
 
-	// Conditionally apply JWT auth if PG_HISTORY_JWT_SECRET is set (resolved once
+	// Conditionally apply JWT auth if PGHISTORY_JWT_SECRET is set (resolved once
 	// at the top of createServer). When set, we also gate the /openapi endpoint
 	// by default unless the consumer explicitly opts into publicOpenApi.
 	if (jwtSecret) {
@@ -430,10 +430,10 @@ export async function createServer(config: ServerConfig): Promise<{
 		] as const
 		type JwtAlg = (typeof SUPPORTED_ALGS)[number]
 		const requestedAlg =
-			process.env.PG_HISTORY_JWT_ALG?.trim().toUpperCase() || 'HS256'
+			process.env.PGHISTORY_JWT_ALG?.trim().toUpperCase() || 'HS256'
 		if (!(SUPPORTED_ALGS as readonly string[]).includes(requestedAlg)) {
 			throw new Error(
-				`PG_HISTORY_JWT_ALG="${requestedAlg}" not supported. Allowed: ${SUPPORTED_ALGS.join(', ')}`,
+				`PGHISTORY_JWT_ALG="${requestedAlg}" not supported. Allowed: ${SUPPORTED_ALGS.join(', ')}`,
 			)
 		}
 		const alg = requestedAlg as JwtAlg
@@ -452,7 +452,7 @@ export async function createServer(config: ServerConfig): Promise<{
 		}
 	} else if (config.enableHistory) {
 		logger.warn(
-			'API endpoints are unauthenticated. Set PG_HISTORY_JWT_SECRET for production use.',
+			'API endpoints are unauthenticated. Set PGHISTORY_JWT_SECRET for production use.',
 		)
 	}
 
@@ -480,7 +480,7 @@ export async function createServer(config: ServerConfig): Promise<{
 	if (config.enableArchiver && !archiverEndpointsAuthorized) {
 		logger.warn(
 			'/api/stats and /api/health/detailed NOT registered: no authentication configured. ' +
-				'Set PG_HISTORY_JWT_SECRET or archiveCronSecret / CRON_SECRET, or pass allowUnauthenticated: true.',
+				'Set PGHISTORY_JWT_SECRET or archiveCronSecret / CRON_SECRET, or pass allowUnauthenticated: true.',
 		)
 	}
 
@@ -581,7 +581,7 @@ export async function createServer(config: ServerConfig): Promise<{
 		if (!cronSecret && !jwtSecret) {
 			logger.error(
 				'/api/archive endpoint NOT registered: no authentication configured. ' +
-					'Set archiveCronSecret / CRON_SECRET or PG_HISTORY_JWT_SECRET to enable it.',
+					'Set archiveCronSecret / CRON_SECRET or PGHISTORY_JWT_SECRET to enable it.',
 			)
 		} else {
 			app.post('/api/archive', async (c) => {
@@ -971,7 +971,7 @@ export async function createServer(config: ServerConfig): Promise<{
 	if (!exposeOpenApi) {
 		logger.warn(
 			'/openapi NOT registered: publicOpenApi is false and no JWT is configured. ' +
-				'Set PG_HISTORY_JWT_SECRET, publicOpenApi: true, or allowUnauthenticated: true.',
+				'Set PGHISTORY_JWT_SECRET, publicOpenApi: true, or allowUnauthenticated: true.',
 		)
 	}
 	if (exposeOpenApi) {
@@ -980,7 +980,7 @@ export async function createServer(config: ServerConfig): Promise<{
 			openAPIRouteHandler(app, {
 				documentation: {
 					info: {
-						title: 'pg-history Archiver API',
+						title: 'pghistory Archiver API',
 						version: '1.0.0',
 						description: 'API for managing audit log archival',
 					},

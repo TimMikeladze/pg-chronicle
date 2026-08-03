@@ -1,21 +1,16 @@
-import Link from 'next/link'
+'use client'
 
-import { OperationBadge } from '@/components/status'
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from '@/components/ui/table'
-import { absoluteTime, relativeTime, truncate } from '@/lib/format'
+import { EntryTable } from '@/components/entry-table'
+import { Callout } from '@/components/status'
 import type { AuditEntryWire } from '@/lib/types'
 
 /**
- * The most recent changes across every audited table. This is the one panel
- * that is useful in every configuration — without it the overview is empty for
- * deployments that have not enabled the archiver.
+ * The overview's feed. Nothing here but framing: the rows themselves are the
+ * same EntryTable used by search and by a table's own page, so a column fix
+ * lands in one place.
+ *
+ * The diff column is dropped — the overview answers "what is happening", and
+ * the changed-column list is detail that belongs where an entry can be opened.
  */
 export function RecentActivity({
 	entries,
@@ -27,70 +22,23 @@ export function RecentActivity({
 	// A failed read must not render as "nothing has happened".
 	if (error) {
 		return (
-			<p
-				className="mx-6 rounded-lg border p-4 text-sm"
-				style={{
-					borderColor:
-						'color-mix(in srgb, var(--status-warning) 45%, transparent)',
-					backgroundColor:
-						'color-mix(in srgb, var(--status-warning) 8%, transparent)',
-				}}
-			>
-				{error}
-			</p>
+			<div className="p-4">
+				<Callout tone="warning" title="Recent activity unavailable">
+					{error}
+				</Callout>
+			</div>
 		)
 	}
 
 	if (entries.length === 0) {
 		return (
-			<p className="text-muted-foreground rounded-xl border border-dashed p-8 text-center text-sm">
+			<p className="text-muted-foreground px-4 py-10 text-center text-[13px] leading-relaxed">
 				No changes recorded yet. Triggers capture writes from the moment{' '}
-				<code className="font-mono text-xs">setup()</code> ran — earlier rows
-				have no history.
+				<code className="text-foreground font-mono text-xs">setup()</code> ran —
+				rows written before that have no history.
 			</p>
 		)
 	}
 
-	return (
-		<Table>
-			<TableHeader>
-				<TableRow>
-					<TableHead className="pl-6">When</TableHead>
-					<TableHead>Operation</TableHead>
-					<TableHead>Table</TableHead>
-					<TableHead>Record</TableHead>
-					<TableHead className="pr-6">Actor</TableHead>
-				</TableRow>
-			</TableHeader>
-			<TableBody>
-				{entries.map((entry) => (
-					<TableRow key={entry.id}>
-						<TableCell
-							className="text-muted-foreground pl-6"
-							title={absoluteTime(entry.changedAt)}
-						>
-							{relativeTime(entry.changedAt)}
-						</TableCell>
-						<TableCell>
-							<OperationBadge operation={entry.operation} />
-						</TableCell>
-						<TableCell className="font-mono text-xs">
-							{entry.tableName}
-						</TableCell>
-						<TableCell>
-							<Link
-								href={`/history/${encodeURIComponent(entry.tableName)}/${encodeURIComponent(entry.recordId)}`}
-								className="font-mono text-xs underline-offset-4 hover:underline"
-							>
-								{truncate(entry.recordId, 24)}
-							</Link>
-						</TableCell>
-						<TableCell className="text-muted-foreground pr-6 font-mono text-xs">
-							{entry.appActor ?? entry.dbUser ?? '—'}
-						</TableCell>
-					</TableRow>
-				))}
-			</TableBody>
-		</Table>
-	)
+	return <EntryTable entries={entries} columns={{ changes: false }} />
 }

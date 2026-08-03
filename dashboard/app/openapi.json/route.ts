@@ -1,15 +1,16 @@
-import { ApiError, getOpenApiSpec } from '@/lib/pg-history-server'
+import { ApiError, getOpenApiSpec } from '@/lib/pghistory-server'
 
 /**
- * Serves the pg-history OpenAPI document.
+ * Serves the pghistory OpenAPI document.
  *
  * The library registers `/openapi` behind the same JWT as `/api/*` (this entry
  * point never opts into `publicOpenApi`), so the browser cannot reach it
  * directly. This route fetches it with the dashboard's own token and returns
- * the spec — point Swagger UI, a client generator, or `curl` at it.
+ * the spec — point Scalar, a client generator, or `curl` at it.
  *
- * It inherits whatever protects the dashboard; do not expose the dashboard
- * publicly if the API shape is sensitive.
+ * `/openapi` renders the human-facing reference; this route is the machine
+ * one. It inherits whatever protects the dashboard; do not expose the
+ * dashboard publicly if the API shape is sensitive.
  */
 export async function GET(): Promise<Response> {
 	try {

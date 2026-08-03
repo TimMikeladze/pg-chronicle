@@ -81,11 +81,11 @@ async function main() {
 		const orchestrator = new Orchestrator(
 			{
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT || 'http://localhost:9000',
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID || 'root',
+				endpoint: process.env.PGHISTORY_S3_ENDPOINT || 'http://localhost:9000',
+				accessKeyId: process.env.PGHISTORY_S3_ACCESS_KEY_ID || 'root',
 				secretAccessKey:
-					process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY || 'password',
-				region: process.env.PG_HISTORY_S3_REGION || 'us-west-1',
+					process.env.PGHISTORY_S3_SECRET_ACCESS_KEY || 'password',
+				region: process.env.PGHISTORY_S3_REGION || 'us-west-1',
 			},
 			{ default: 90 }, // 90 day retention
 			0, // 0 day grace period (for demo — normally 7+)

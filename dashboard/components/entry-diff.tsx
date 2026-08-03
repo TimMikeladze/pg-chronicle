@@ -1,45 +1,47 @@
 'use client'
 
 import type { LucideIcon } from 'lucide-react'
-import {
-	ArrowRightIcon,
-	MinusIcon,
-	PencilLineIcon,
-	PlusIcon,
-} from 'lucide-react'
+import { MinusIcon, PencilLineIcon, PlusIcon } from 'lucide-react'
 import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import type { FieldChange, FieldChangeKind } from '@/lib/diff'
 import { changedFields, diffEntry, renderValue } from '@/lib/diff'
+import { OPERATION_META } from '@/lib/operations'
 import type { AuditEntryWire } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
+/**
+ * Diff kinds borrow the operation palette: a field appearing is the same green
+ * as an INSERT, a field vanishing the same red as a DELETE. One vocabulary for
+ * "something came into existence" across both scales.
+ */
 const KIND_STYLE: Record<
 	Exclude<FieldChangeKind, 'unchanged'>,
 	{ icon: LucideIcon; color: string; srLabel: string }
 > = {
-	added: { icon: PlusIcon, color: 'var(--status-good)', srLabel: 'Added' },
-	removed: {
-		icon: MinusIcon,
-		color: 'var(--status-critical)',
-		srLabel: 'Removed',
-	},
+	added: { icon: PlusIcon, color: 'var(--op-insert)', srLabel: 'Added' },
+	removed: { icon: MinusIcon, color: 'var(--op-delete)', srLabel: 'Removed' },
 	changed: {
 		icon: PencilLineIcon,
-		color: 'var(--status-warning)',
+		color: 'var(--op-update)',
 		srLabel: 'Changed',
 	},
 }
 
 function ValueCell({ value, muted }: { value: unknown; muted?: boolean }) {
 	const text = renderValue(value)
+	// `undefined` renders as an em dash meaning "no such key on this side" — it
+	// must not look like the string "null", which is a value the row actually
+	// holds. The italic treatment marks absence, not content.
+	const absent = value === undefined
 	return (
 		<pre
 			className={cn(
 				'font-mono text-xs leading-relaxed break-words whitespace-pre-wrap',
 				muted ? 'text-muted-foreground' : 'text-foreground',
-				value === undefined && 'text-muted-foreground italic',
+				absent && 'text-muted-foreground/60 italic',
+				value === null && 'text-muted-foreground italic',
 			)}
 		>
 			{text}
@@ -48,34 +50,45 @@ function ValueCell({ value, muted }: { value: unknown; muted?: boolean }) {
 }
 
 function ChangeRow({ change }: { change: FieldChange }) {
-	if (change.kind === 'unchanged') {
-		return (
-			<div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-3 px-3 py-2">
-				<ValueCell value={change.before} muted />
-				<span className="text-muted-foreground/50 pt-0.5 text-xs">=</span>
-				<ValueCell value={change.after} muted />
-			</div>
-		)
-	}
-
-	const style = KIND_STYLE[change.kind]
-	const Icon = style.icon
+	// Narrow before indexing: KIND_STYLE has no 'unchanged' key, and reading it
+	// through the union type would resolve to undefined at runtime.
+	const style = change.kind === 'unchanged' ? null : KIND_STYLE[change.kind]
+	const Icon = style?.icon
 
 	return (
 		<div
-			className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-3 px-3 py-2"
-			style={{
-				backgroundColor: `color-mix(in srgb, ${style.color} 7%, transparent)`,
-			}}
+			className={cn(
+				'grid grid-cols-[minmax(0,1fr)_1.5rem_minmax(0,1fr)] items-start gap-4 px-4 py-2.5',
+				// The rail restates the change kind at the row's leading edge, so a
+				// long diff can be scanned down the gutter without reading values.
+				style && 'op-rail',
+			)}
+			style={
+				style
+					? ({
+							'--rail-color': style.color,
+							backgroundColor: `color-mix(in srgb, ${style.color} 5%, transparent)`,
+						} as React.CSSProperties)
+					: undefined
+			}
 		>
 			<ValueCell value={change.before} muted={change.kind === 'added'} />
-			<span className="flex items-center gap-1 pt-0.5">
-				<Icon aria-hidden className="size-3" style={{ color: style.color }} />
-				<span className="sr-only">{style.srLabel}</span>
-				<ArrowRightIcon
-					aria-hidden
-					className="text-muted-foreground/60 size-3"
-				/>
+			{/* The marker sits in a fixed-width gutter centred between the two
+			    values, so the eye has a consistent hinge to read across even when
+			    one side is a single word and the other a JSON blob. */}
+			<span className="flex items-start justify-center pt-0.5">
+				{Icon && style ? (
+					<>
+						<Icon
+							aria-hidden
+							className="size-3"
+							style={{ color: style.color }}
+						/>
+						<span className="sr-only">{style.srLabel}</span>
+					</>
+				) : (
+					<span className="text-muted-foreground/40 text-xs">=</span>
+				)}
 			</span>
 			<ValueCell value={change.after} muted={change.kind === 'removed'} />
 		</div>
@@ -96,9 +109,9 @@ export function EntryDiff({ entry }: { entry: AuditEntryWire }) {
 
 	if (all.length === 0) {
 		return (
-			<p className="text-muted-foreground rounded-lg border border-dashed p-4 text-sm">
+			<p className="text-muted-foreground rounded-lg border border-dashed p-4 text-[13px] leading-relaxed">
 				{entry.operation === 'TRUNCATE'
-					? 'TRUNCATE is recorded as a table-level marker — there is no row payload to compare.'
+					? OPERATION_META.TRUNCATE.captured
 					: 'This entry carries no column data. Every audited column may be listed in excludeColumns.'}
 			</p>
 		)
@@ -107,14 +120,14 @@ export function EntryDiff({ entry }: { entry: AuditEntryWire }) {
 	return (
 		<div className="flex flex-col gap-2">
 			<div className="overflow-hidden rounded-lg border">
-				<div className="bg-inset text-muted-foreground grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-3 border-b px-3 py-1.5 text-xs font-medium tracking-wide uppercase">
+				<div className="bg-inset text-muted-foreground grid grid-cols-[minmax(0,1fr)_1.5rem_minmax(0,1fr)] gap-4 border-b px-4 py-2 font-mono text-[11px] font-medium tracking-[0.08em] uppercase">
 					<span>Before</span>
-					<span className="w-8" />
+					<span />
 					<span>After</span>
 				</div>
 				{rows.map((change) => (
 					<div key={change.key} className="border-b last:border-b-0">
-						<div className="text-muted-foreground bg-background/60 px-3 pt-2 font-mono text-[11px]">
+						<div className="text-muted-foreground bg-background/40 px-4 pt-2 font-mono text-[11px]">
 							{change.key}
 						</div>
 						<ChangeRow change={change} />
@@ -138,18 +151,47 @@ export function EntryDiff({ entry }: { entry: AuditEntryWire }) {
 	)
 }
 
-/** One-line summary of what moved, for dense table rows. */
+/**
+ * One-line summary of what moved, for dense table rows. Column names are the
+ * scanning target, so they stay in mono at full contrast while the overflow
+ * count recedes.
+ */
 export function ChangeSummary({ entry }: { entry: AuditEntryWire }) {
 	const changed = changedFields(diffEntry(entry))
 	if (changed.length === 0) {
-		return <span className="text-muted-foreground text-xs">no columns</span>
+		return (
+			<span className="text-muted-foreground/60 text-xs italic">
+				{entry.operation === 'TRUNCATE' ? 'table-level' : 'no columns'}
+			</span>
+		)
 	}
-	const shown = changed.slice(0, 3).map((c) => c.key)
+	const shown = changed.slice(0, 3)
 	const rest = changed.length - shown.length
 	return (
-		<span className="text-muted-foreground font-mono text-xs">
-			{shown.join(', ')}
-			{rest > 0 ? ` +${rest}` : ''}
+		<span className="flex flex-wrap items-center gap-1">
+			{shown.map((c) => {
+				// changedFields() has already dropped 'unchanged', but the type does
+				// not carry that — narrow rather than assert so a future change to
+				// the filter cannot silently index a missing key.
+				const color =
+					c.kind === 'unchanged' ? 'var(--border)' : KIND_STYLE[c.kind].color
+				return (
+					<span
+						key={c.key}
+						className="bg-inset text-foreground rounded border px-1.5 py-0.5 font-mono text-[11px]"
+						style={{
+							borderColor: `color-mix(in srgb, ${color} 30%, transparent)`,
+						}}
+					>
+						{c.key}
+					</span>
+				)
+			})}
+			{rest > 0 ? (
+				<span className="text-muted-foreground font-mono text-[11px]">
+					+{rest}
+				</span>
+			) : null}
 		</span>
 	)
 }

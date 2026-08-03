@@ -1,5 +1,5 @@
 /**
- * Wire types for the pg-history REST API.
+ * Wire types for the pghistory REST API.
  *
  * These deliberately mirror — rather than re-export — the library's own
  * `AuditEntry` / `PaginatedResult` types, because those describe the in-process
