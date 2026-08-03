@@ -90,7 +90,9 @@ for (const block of document.querySelectorAll<HTMLElement>('.code-block')) {
  * have to know what theme is active.
  */
 const shots = [...document.querySelectorAll<HTMLElement>('[data-shot]')]
-const shotTabs = [...document.querySelectorAll<HTMLButtonElement>('[data-shot-tab]')]
+const shotTabs = [
+	...document.querySelectorAll<HTMLButtonElement>('[data-shot-tab]'),
+]
 
 for (const tab of shotTabs) {
 	tab.addEventListener('click', () => {
