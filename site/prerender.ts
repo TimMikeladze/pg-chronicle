@@ -41,6 +41,42 @@ const REPO = 'https://github.com/TimMikeladze/pg-history'
 const NPM = 'https://www.npmjs.com/package/pg-history'
 
 /**
+ * One-click deploys. The two targets are not the same app: Fly runs the
+ * long-lived server from the repo's Dockerfile (REST API, dashboard,
+ * background archival), Vercel deploys `examples/next` — the serverless
+ * route handler whose archival is driven by cron instead.
+ */
+const VERCEL_DEPLOY = `https://vercel.com/new/clone?${new URLSearchParams({
+	'repository-url': `${REPO}/tree/main/examples/next`,
+	'project-name': 'pg-history',
+	'repository-name': 'pg-history',
+	env: 'PG_HISTORY_DATABASE_URL,PG_HISTORY_TABLES,PG_HISTORY_JWT_SECRET',
+	envDescription:
+		'Postgres connection string, comma-separated tables to audit, and a JWT signing secret',
+	envLink: `${REPO}#environment-variables`,
+}).toString()}`
+
+const FLY_DEPLOY = `https://fly.io/launch?repo=${REPO}`
+
+const DEPLOY_TARGETS = [
+	{
+		href: FLY_DEPLOY,
+		name: 'Fly.io',
+		blurb:
+			'The full server from the repo’s <code>Dockerfile</code> — REST API, dashboard and background archival in one long-lived process.',
+		// Fly's balloon mark, single path, inherits currentColor like the rest.
+		icon: '<path fill="currentColor" d="M8 1.2a4.6 4.6 0 0 0-4.6 4.6c0 2.5 2.2 5.3 4.2 7.4a.55.55 0 0 0 .8 0c2-2.1 4.2-4.9 4.2-7.4A4.6 4.6 0 0 0 8 1.2Zm0 2.6a2 2 0 1 1 0 4 2 2 0 0 1 0-4ZM4.6 14.2h6.8a.6.6 0 0 1 0 1.2H4.6a.6.6 0 0 1 0-1.2Z"/>',
+	},
+	{
+		href: VERCEL_DEPLOY,
+		name: 'Vercel',
+		blurb:
+			'The serverless route handler from <code>examples/next</code>, with archival driven by Vercel Cron instead of a background loop.',
+		icon: '<path fill="currentColor" d="M8 1.5 15 14H1L8 1.5Z"/>',
+	},
+] as const
+
+/**
  * The three claims that decide whether a visitor keeps reading, drawn from
  * "How It Works" — each is a property of the design, not a feature list entry.
  */
@@ -307,6 +343,7 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 			</a>
 			<nav class="nav-links">
 				<a href="#quick-start">Docs</a>
+				<a href="#deploy-head">Deploy</a>
 				<a href="${REPO}">GitHub</a>
 				<a href="${NPM}">npm</a>
 				<a href="/llms.txt">llms.txt</a>
@@ -409,6 +446,27 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 					</figcaption>
 					${setupHtml}
 				</figure>
+			</div>
+		</section>
+
+		<section class="deploy" aria-labelledby="deploy-head">
+			<div class="deploy-inner">
+				<div class="deploy-intro">
+					<h2 class="deploy-head" id="deploy-head">Deploy it in one click</h2>
+					<p class="deploy-sub">Both targets are in the repo already. Point either at a Postgres URL and the audit trail is live.</p>
+				</div>
+				<div class="deploy-cards">
+					${DEPLOY_TARGETS.map(
+						(target) => `<a class="deploy-card" href="${target.href}">
+						<span class="deploy-card-head">
+							<svg class="deploy-icon" viewBox="0 0 16 16" aria-hidden="true">${target.icon}</svg>
+							<span class="deploy-name">${escapeHtml(target.name)}</span>
+						</span>
+						<span class="deploy-blurb">${target.blurb}</span>
+						<span class="deploy-cta">Deploy to ${escapeHtml(target.name)} <span aria-hidden="true">→</span></span>
+					</a>`,
+					).join('')}
+				</div>
 			</div>
 		</section>
 

@@ -498,7 +498,11 @@ Two behaviours worth knowing: archived history disappears from reads (both `getH
 
 ## Deployment
 
+The two one-click buttons below deploy different things. **Fly.io** runs the full long-lived server (REST API, dashboard, background archival) from the repo's `Dockerfile`. **Vercel** deploys [`examples/next`](./examples/next) — the serverless route handler with cron archival, no background process.
+
 ### Fly.io
+
+[![Deploy to Fly.io](https://fly.io/static/images/deploy.svg)](https://fly.io/launch?repo=https://github.com/TimMikeladze/pg-history)
 
 A `Dockerfile` and `fly.toml` are included. The server runs as a long-lived process with background archival.
 
@@ -520,6 +524,8 @@ The `fly.toml` is configured with:
 Archival runs immediately on startup and then on a periodic interval (default: every hour, configurable via `PG_HISTORY_ARCHIVAL_INTERVAL_MS`).
 
 ### Next.js (Serverless)
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fexamples%2Fnext&project-name=pg-history&repository-name=pg-history&env=PG_HISTORY_DATABASE_URL,PG_HISTORY_TABLES,PG_HISTORY_JWT_SECRET&envDescription=Postgres%20connection%20string%2C%20comma-separated%20tables%20to%20audit%2C%20and%20a%20JWT%20signing%20secret&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
 
 Auditing itself is runtime-independent — the triggers live in PostgreSQL. The `pg-history/next` entry point is a Next.js App Router route handler and runs anywhere Next.js runs; only the *cron scheduling* below is Vercel-specific.
 
