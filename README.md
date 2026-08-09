@@ -57,7 +57,7 @@ const found = await history.search({
 })
 
 // Revert to a previous state — reverting an UPDATE entry restores its `oldData`
-await history.revert('users', '1', result.data[1].id) // back to name 'Alice'
+await history.revert('users', '1', result.data[1].id) // whole row back to that entry's oldData
 // (reverting the INSERT entry would DELETE the row instead — see the revert table below)
 
 await history.close()   // ends only a pool pg-history created itself
@@ -361,7 +361,8 @@ interface PaginatedResult<T> {
 }
 
 // Branded type — search() cursors are NOT interchangeable with getHistory() cursors
-type SearchCursor = string & { readonly __brand: unique symbol }
+declare const _searchCursorBrand: unique symbol
+type SearchCursor = string & { readonly [_searchCursorBrand]: true }
 
 interface OrchestratorStats {
   tables: string[]
@@ -403,7 +404,7 @@ Bun.serve({ port: 3001, fetch: app.fetch })
 |--------|------|------|-------------|
 | `GET` | `/health` | No | Minimal liveness probe (`{status}` only) |
 | `GET` | `/api/health/detailed` | JWT or cron | Archival status + attempts + last completion (requires `enableArchiver`) |
-| `GET` | `/openapi` | JWT (unless `publicOpenApi: true`); not registered at all when neither is configured | OpenAPI spec |
+| `GET` | `/openapi` | JWT (unless `publicOpenApi: true`); not registered unless one of JWT / `publicOpenApi` / `allowUnauthenticated` is configured | OpenAPI spec |
 | `GET` | `/api/stats` | JWT or cron | Archival stats (requires `enableArchiver`) |
 | `GET` | `/api/history/:table/:recordId` | JWT | Record history (requires `enableHistory`) |
 | `POST` | `/api/history/search` | JWT | Search history (requires `enableHistory`) |
@@ -416,7 +417,7 @@ Bun.serve({ port: 3001, fetch: app.fetch })
 - **Authorization** is separate from authentication: supply an `authorize` hook to scope access per tenant/record (returning `false` → `403`). Without it, any valid token can reach any configured table's history.
 - Set `archiveCronSecret` (or `CRON_SECRET` env) to authenticate the three archiver endpoints via timing-safe HMAC. `/api/archive` checks it whenever it is set — so with both secrets configured, the caller needs the cron bearer token *and* passes the JWT middleware first. `/api/stats` and `/api/health/detailed` fall back to it only when no JWT secret is set.
 - Archiver endpoints also need `enableArchiver: true` with a valid `archiverConfig`; without that, or without any auth at all, they are never registered.
-- `/health` is always public. `/openapi` is public with `publicOpenApi: true`, JWT-gated when a JWT secret is set, and unregistered otherwise — so a cron-only deployment doesn't leak the API shape.
+- `/health` is always public. `/openapi` is public with `publicOpenApi: true`, JWT-gated when a JWT secret is set, registered unauthenticated under `allowUnauthenticated: true`, and unregistered otherwise — so a cron-only deployment doesn't leak the API shape.
 - `OPTIONS` preflight bypasses JWT so CORS works.
 
 ### Request & Response Shapes
@@ -495,6 +496,7 @@ It reads the same environment variables the server does — `PG_HISTORY_TABLES` 
 | `/` | Health, archival backlog, recent activity across all tables, jump-to-record |
 | `/search` | JSONB containment or ILIKE search with operation / date-range / table filters, cursor pagination, per-entry diff |
 | `/tables` | Every audited table with its last change, actor and archival backlog |
+| `/tables/[table]` | One table: operation mix, recent changes, jump-to-record |
 | `/history/[table]/[recordId]` | One record's full timeline, oldest/newest ordering, per-entry revert |
 | `/archival` | Archival status and on-demand runs |
 | `/openapi` | The API reference, rendered from the OpenAPI document |
@@ -643,11 +645,19 @@ Move old audit rows to S3 as compressed Parquet files. Hands off to `Orchestrato
 ```
 Day 0:   Record created
 Day 90:  Retention cutoff -> upload to S3 as Parquet -> mark archived_at
-Day 90:  Soft delete (records with confirmed S3 backup)
-Day 97:  Hard delete (after re-verifying S3 file exists + SHA-256 checksum)
+Day 97:  Soft delete (archived_at + gracePeriod, records with confirmed S3 backup)
+Day 104: Hard delete (soft_deleted_at + gracePeriod, after re-verifying S3 file exists + SHA-256 checksum)
 ```
 
+`gracePeriod` is applied twice — once between archive and soft delete, once between soft delete and hard delete. With `gracePeriod: 0` all three stages collapse onto the retention cutoff.
+
 S3 path: `{table}/year={YYYY}/month={MM}/day={DD}/data-{uuid}.parquet`
+
+### What lands in the Parquet file
+
+Seven columns, SNAPPY-compressed: `id` (INT64), `table_name`, `record_id`, `operation`, `changed_at` (TIMESTAMP), `old_data`, `new_data`. The JSONB payloads are written as exact JSON **text**, so integers past 2^53 survive the round trip.
+
+**The actor columns are not archived.** `db_user`, `app_actor`, and `client_addr` exist only in `audit_log` — once a row is hard-deleted, who made the change is gone. If your retention policy requires keeping the actor beyond the archival window, copy those columns out before archival runs, or raise `retention` so rows live in Postgres for as long as you need to attribute them.
 
 ### Configuration
 
@@ -675,7 +685,7 @@ const { app } = await createServer({
   // Optional retry policy for background archival. Defaults shown.
   archivalRetry: {
     maxAttempts: 4,
-    delays: [5_000, 15_000, 60_000], // length must be maxAttempts - 1
+    delays: [5_000, 15_000, 60_000], // needs at least maxAttempts - 1 entries
   },
   // Optional CORS — omit to disable entirely (server-to-server default)
   cors: { origin: 'https://app.example.com', credentials: true },
@@ -732,6 +742,7 @@ To run archival on your own schedule instead of the server's, drive [`Orchestrat
 | `PG_HISTORY_GRACE_PERIOD_DAYS` | No | Grace period before hard delete (default `7`; `0` = no grace, purge once the S3 backup is confirmed) |
 | `PG_HISTORY_BATCH_SIZE` | No | Archival batch size (default `10000`) |
 | `CRON_SECRET` | Cron archival (Vercel Cron) | Protects `POST /api/archive`; also authenticates `/api/stats` and `/api/health/detailed` in cron-only deployments |
+| `PG_HISTORY_SILENT_LOGS` | No | Set `1` to drop all output from the default `consoleLogger` (used by the test suite). No effect on an injected `logger` |
 
 ## Production Caveats
 
