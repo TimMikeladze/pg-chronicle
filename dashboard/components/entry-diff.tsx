@@ -6,7 +6,12 @@ import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import type { FieldChange, FieldChangeKind } from '@/lib/diff'
-import { changedFields, diffEntry, renderValue } from '@/lib/diff'
+import {
+	changedFields,
+	diffEntry,
+	onlyExcludedColumnsChanged,
+	renderValue,
+} from '@/lib/diff'
 import { OPERATION_META } from '@/lib/operations'
 import type { AuditEntryWire } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -117,6 +122,23 @@ export function EntryDiff({ entry }: { entry: AuditEntryWire }) {
 		)
 	}
 
+	// A real change the diff cannot show. Falling through would render a header
+	// with no rows, which reads as a broken entry rather than a redacted one.
+	if (onlyExcludedColumnsChanged(entry, all)) {
+		return (
+			<p className="text-muted-foreground rounded-lg border border-dashed p-4 text-[13px] leading-relaxed">
+				A redacted column changed. Every audited column is identical here, and
+				the trigger only records an UPDATE when the row actually changed — so
+				what moved is listed in{' '}
+				<code className="text-foreground font-mono text-xs">
+					excludeColumns
+				</code>{' '}
+				and is deliberately not captured. The trail keeps the fact and the
+				timing, never the value.
+			</p>
+		)
+	}
+
 	return (
 		<div className="flex flex-col gap-2">
 			<div className="overflow-hidden rounded-lg border">
@@ -157,12 +179,18 @@ export function EntryDiff({ entry }: { entry: AuditEntryWire }) {
  * count recedes.
  */
 export function ChangeSummary({ entry }: { entry: AuditEntryWire }) {
-	const changed = changedFields(diffEntry(entry))
+	const all = diffEntry(entry)
+	const changed = changedFields(all)
 	if (changed.length === 0) {
+		// "no columns" would be wrong for a redacted update: something changed,
+		// it is just not something this trail is allowed to show.
+		const label = onlyExcludedColumnsChanged(entry, all)
+			? 'redacted column'
+			: entry.operation === 'TRUNCATE'
+				? 'table-level'
+				: 'no columns'
 		return (
-			<span className="text-muted-foreground/60 text-xs italic">
-				{entry.operation === 'TRUNCATE' ? 'table-level' : 'no columns'}
-			</span>
+			<span className="text-muted-foreground/60 text-xs italic">{label}</span>
 		)
 	}
 	const shown = changed.slice(0, 3)

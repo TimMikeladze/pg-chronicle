@@ -11,8 +11,9 @@
  */
 
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { Client, Pool } from 'pg'
 import {
 	createServer,
@@ -60,18 +61,18 @@ async function checkModuleFormats() {
 		'the ./next subpath exports a Next.js route handler',
 		async () => {
 			const next = await import('pg-history/next')
-			for (const method of ['GET', 'POST']) {
+			// OPTIONS included: without it Next answers CORS preflight with 405.
+			for (const method of ['GET', 'POST', 'OPTIONS']) {
 				assert.equal(typeof next[method], 'function', `next.${method}`)
 			}
+			assert.equal(typeof next.createHandlers, 'function', 'createHandlers')
 		},
 	)
 
-	await check('the CLI bin loads under Node', () => {
+	await check('the CLI bin rejects a missing database URL', () => {
 		// The server entrypoint refuses to boot without a database URL — reaching
 		// that error proves the bundle parsed and ran under Node.
-		const pkg = require.resolve('pg-history/package.json')
-		const cli = pkg.replace(/package\.json$/, 'dist/main.js')
-		const out = spawnSync(process.execPath, [cli], {
+		const out = spawnSync(process.execPath, [cliPath()], {
 			encoding: 'utf8',
 			env: { ...process.env, PG_HISTORY_DATABASE_URL: '' },
 		})
@@ -85,6 +86,62 @@ async function checkModuleFormats() {
 			/PG_HISTORY_DATABASE_URL environment variable is required/,
 		)
 	})
+
+	// Parsing is not serving. The entrypoint used to call `Bun.serve`
+	// unconditionally, so a Node run got all the way past config validation and
+	// then died with "Bun is not defined" — invisible to any check that stops at
+	// the config error. This one binds a port and completes a request.
+	await check('the CLI bin actually serves HTTP under Node', async () => {
+		const port = 3000 + Math.floor(Math.random() * 20000)
+		const child = spawn(process.execPath, [cliPath()], {
+			env: {
+				...process.env,
+				PG_HISTORY_DATABASE_URL: ADMIN_URL,
+				PG_HISTORY_PORT: String(port),
+				// This check is about the HTTP listener, not the archiver. CI sets
+				// S3 variables job-wide, and inheriting them would switch the
+				// archiver on against a database with no audit_log — a real failure,
+				// but not the one under test here.
+				PG_HISTORY_S3_BUCKET: '',
+				PG_HISTORY_TABLES: '',
+			},
+			stdio: ['ignore', 'pipe', 'pipe'],
+		})
+		let output = ''
+		child.stdout.on('data', (d) => {
+			output += d
+		})
+		child.stderr.on('data', (d) => {
+			output += d
+		})
+		child.on('exit', (code) => {
+			if (code !== 0 && code !== null) {
+				output += `\n[server exited early with code ${code}]`
+			}
+		})
+
+		try {
+			let body
+			for (let attempt = 0; attempt < 40; attempt++) {
+				try {
+					const response = await fetch(`http://127.0.0.1:${port}/health`)
+					body = await response.json()
+					break
+				} catch {
+					await sleep(250)
+				}
+			}
+			assert.ok(body, `server never answered /health.\n${output}`)
+			assert.equal(body.status, 'ok', `unexpected health payload.\n${output}`)
+		} finally {
+			child.kill('SIGTERM')
+		}
+	})
+}
+
+function cliPath() {
+	const pkg = require.resolve('pg-history/package.json')
+	return pkg.replace(/package\.json$/, 'dist/main.js')
 }
 
 async function checkAuditTrail() {

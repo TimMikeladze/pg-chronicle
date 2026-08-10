@@ -46,8 +46,10 @@ const NPM = 'https://www.npmjs.com/package/pg-history'
  *
  * Every listed variable is a required field in the clone form, so only the
  * ones with a sensible non-secret default are prefilled through `envDefaults`;
- * the connection string, the table list and the JWT secret are left to the
- * user. Keep this list in step with the README's Deployment section.
+ * the connection string, the table list, the JWT secret and the dashboard
+ * password are left to the user — a default for any of those would end up in
+ * the clone URL, and from there in browser history. Keep this list in step
+ * with the README's Deployment section.
  */
 const DEPLOY_ENV_DEFAULTS = {
 	PG_HISTORY_JWT_ALG: 'HS256',
@@ -67,11 +69,16 @@ const VERCEL_DEPLOY = `https://vercel.com/new/clone?${new URLSearchParams({
 		'PG_HISTORY_DATABASE_URL',
 		'PG_HISTORY_TABLES',
 		'PG_HISTORY_JWT_SECRET',
+		// Without this the deployed dashboard refuses to serve any page in
+		// production — reaching one grants full audit read plus revert, so the
+		// gate fails closed. Omitting it here would ship a one-click deploy that
+		// 503s on first visit.
+		'PG_HISTORY_DASHBOARD_PASSWORD',
 		...Object.keys(DEPLOY_ENV_DEFAULTS),
 	].join(','),
 	envDefaults: JSON.stringify(DEPLOY_ENV_DEFAULTS),
 	envDescription:
-		'Only the first three need a value: a Postgres connection string, the tables to audit, and a JWT signing secret. The rest arrive prefilled with the library defaults.',
+		'Only the first four need a value: a Postgres connection string, the tables to audit, a JWT signing secret, and a password for the dashboard UI (it can read and revert every audited record). The rest arrive prefilled with the library defaults.',
 	envLink: `${REPO}#environment-variables`,
 }).toString()}`
 
@@ -80,7 +87,7 @@ const DEPLOY_TARGETS = [
 		href: VERCEL_DEPLOY,
 		name: 'Vercel',
 		blurb:
-			'The dashboard and the REST API it runs on, as one project — archival on Vercel Cron, and seven of the ten environment variables already filled in.',
+			'The dashboard and the REST API it runs on, as one project — archival on Vercel Cron, and seven of the eleven environment variables already filled in.',
 		icon: '<path fill="currentColor" d="M8 1.5 15 14H1L8 1.5Z"/>',
 	},
 ] as const

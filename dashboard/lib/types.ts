@@ -77,6 +77,9 @@ export type ApiErrorCode =
 	| 'RATE_LIMITED'
 	| 'DATABASE_ERROR'
 	| 'ARCHIVAL_ERROR'
+	// A run that exhausted its retries. Distinct from ARCHIVAL_ERROR, which is
+	// the endpoint itself throwing rather than the run reporting failure.
+	| 'ARCHIVAL_FAILED'
 	| 'NOT_CONFIGURED'
 	| 'INIT_ERROR'
 

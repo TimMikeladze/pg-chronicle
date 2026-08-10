@@ -7,7 +7,7 @@ It is a **single deployment**: the same app mounts the real pg-history API at
 `/api` and renders the UI. Nothing else needs to be running.
 
 ```bash
-cp .env.example .env.local   # fill in DATABASE_URL, TABLES, JWT_SECRET
+cp .env.example .env.local   # fill in DATABASE_URL, TABLES, JWT_SECRET, DASHBOARD_PASSWORD
 bun install
 ln -sfn ../.. node_modules/pg-history   # develop against the repo, not npm
 bun run dev                  # builds the parent package, then starts Next
@@ -91,12 +91,41 @@ The JWT `sub` carries `PG_HISTORY_DASHBOARD_ACTOR`, which pg-history logs as the
 actor on every revert — that log line is the only record of who used the
 dashboard, so set it to something identifiable.
 
+### The UI is password-gated
+
+Loading a page here means being able to read every audited record and revert
+any of them, and the app authenticates itself to the API — so the gate has to be
+in front of the pages. `middleware.ts` requires a session cookie, minted by
+exchanging `PG_HISTORY_DASHBOARD_PASSWORD` at `/login`.
+
+- **Production fails closed.** With no password set, the middleware serves a 503
+  explaining what to configure instead of rendering the UI.
+- **Development runs open**, so local work needs no ceremony.
+- **`PG_HISTORY_DASHBOARD_ALLOW_ANONYMOUS=true`** is the explicit opt-out for a
+  deployment already behind an access proxy that authenticates every request.
+- Sessions last `PG_HISTORY_DASHBOARD_SESSION_TTL_HOURS` (default 12). The
+  cookie is signed with a key derived from the password, so rotating the
+  password invalidates every session. That is also the *only* revocation there
+  is: with one shared password there are no individual sessions to revoke, and
+  signing out clears the browser's cookie but cannot invalidate a copy someone
+  else already took. Treat the cookie as a bearer token with a 12-hour life.
+- Failed logins are throttled. Each failure doubles the response delay up to 5s,
+  and a client the platform gives us an address for is locked out for 15 minutes
+  after five failures. A client we *cannot* identify is only ever delayed, never
+  locked — a global lockout would let an attacker deny you your own dashboard
+  by failing five times. State is per process, so across serverless instances
+  this is a large constant factor rather than a hard cap: use a long random
+  password.
+- `/api/*` is **not** cookie-gated: it is the real REST API behind its own JWT
+  and cron secret, and schedulers call it.
+
 ### Authorization is still yours to write
 
-Authentication is not authorization. Any valid token can reach every record of
-every configured table unless you supply an `authorize` hook. The dashboard runs
-with a token it minted itself, so **it has blanket access by design** — put it
-behind your own SSO / network boundary. Do not expose it publicly.
+Authentication is not authorization. The password says *someone* may come in; it
+says nothing about which rows they may touch. Past the gate the dashboard's
+self-minted token reaches every record of every configured table. For per-tenant
+scoping, mount the API with an `authorize` hook via `createHandlers` from
+`pg-history/next` instead of re-exporting the default handlers.
 
 ## Two API behaviours worth knowing
 
@@ -105,13 +134,12 @@ paginates descending (`id < cursor`); `getHistory()` honours the requested
 order. Feeding one to the other returns a silently empty page. They carry
 distinct branded types in `lib/types.ts` and never share a variable.
 
-**`CRON_SECRET` disables the "Run archival" button.** With it set,
-`POST /api/archive` requires the Authorization header to be exactly
-`Bearer <CRON_SECRET>`, but the `/api/*` JWT middleware rejects anything that
-is not a valid token before the handler runs — one header cannot be both. Since
-this entry point always runs with a JWT secret, setting `CRON_SECRET` makes
-on-demand archival scheduler-only. The button explains this rather than failing
-with a 401.
+**`CRON_SECRET` and the dashboard's JWT coexist.** On `/api/archive`,
+`/api/stats` and `/api/health/detailed` the cron secret is an *alternative*
+credential: the scheduler presents `Bearer <CRON_SECRET>`, the dashboard
+presents its own token, and both are accepted. (Earlier versions demanded both
+at once, which made the route uncallable and greyed out the "Run archival"
+button whenever `CRON_SECRET` was set.)
 
 ## Design
 

@@ -119,10 +119,18 @@ export interface SearchPaginatedResult<T> {
 	hasMore: boolean
 }
 
+/** Audited SQL operations, as recorded in `audit_log.operation`. */
+export type AuditOperation = 'INSERT' | 'UPDATE' | 'DELETE' | 'TRUNCATE'
+
 export interface SearchOptions {
 	tables: string[]
 	query?: string
-	operation?: 'INSERT' | 'UPDATE' | 'DELETE'
+	/**
+	 * Filter by audited operation. TRUNCATE is included: the statement-level
+	 * trigger records a marker row for every bulk wipe, and a filter that could
+	 * not select them made those rows effectively invisible.
+	 */
+	operation?: AuditOperation
 	dateFrom?: Date
 	dateTo?: Date
 	limit?: number
@@ -194,6 +202,16 @@ export interface OrchestratorConfig {
 	gracePeriod: number
 	/** Batch size for processing (default: 10000). Matches ArchiverConfig.batchSize. */
 	batchSize?: number
+	/**
+	 * Soft memory cap per batch in bytes, forwarded to every archiver this
+	 * orchestrator creates. Matches {@link ArchiverConfig.maxBatchBytes}.
+	 */
+	maxBatchBytes?: number
+	/**
+	 * Stale-claim reaper window in minutes, forwarded to every archiver this
+	 * orchestrator creates. Matches {@link ArchiverConfig.staleClaimMinutes}.
+	 */
+	staleClaimMinutes?: number
 	logger?: Logger
 	/**
 	 * Optional explicit connection string for the standalone advisory-lock
@@ -247,6 +265,30 @@ export interface AuthorizeContext {
  */
 export type AuthorizeFn = (ctx: AuthorizeContext) => boolean | Promise<boolean>
 
+/**
+ * Input to {@link ClientIdentifierFn}. Deliberately expressed in web-standard
+ * terms plus an opaque `env` so this type never depends on the HTTP runtime.
+ */
+export interface ClientIdentityContext {
+	/** The raw incoming Request. */
+	request: Request
+	/**
+	 * Runtime-provided environment object. Bun exposes `{ server }` (call
+	 * `server.requestIP(request)`); `@hono/node-server` exposes
+	 * `{ incoming }` (read `incoming.socket.remoteAddress`).
+	 */
+	env: unknown
+}
+
+/**
+ * Resolve the rate-limit bucket key for a request. Return a stable identifier
+ * (usually the client IP or an API-key id), or `undefined` to fall through to
+ * the built-in resolution.
+ */
+export type ClientIdentifierFn = (
+	ctx: ClientIdentityContext,
+) => string | undefined
+
 export interface ServerConfig {
 	/** PostgreSQL connection pool */
 	pool: Pool
@@ -279,6 +321,25 @@ export interface ServerConfig {
 		gracePeriod: number
 		/** Batch size for processing (default: 10000) */
 		batchSize?: number
+		/**
+		 * Soft memory cap per batch in bytes. Forwarded to
+		 * {@link ArchiverConfig.maxBatchBytes}. Default 64 MiB. Lower it on small
+		 * instances: peak process memory is roughly this × 3.
+		 */
+		maxBatchBytes?: number
+		/**
+		 * Minutes before an unfinalized claim is considered abandoned. Forwarded
+		 * to {@link ArchiverConfig.staleClaimMinutes}. Default 30.
+		 */
+		staleClaimMinutes?: number
+		/**
+		 * Explicit connection string for the orchestrator's standalone
+		 * advisory-lock client. Forwarded to
+		 * {@link OrchestratorConfig.lockConnectionString}. Without it the
+		 * orchestrator reads `pool.options`, an undocumented pg internal that can
+		 * silently fall back to PGHOST/PGUSER/PGPASSWORD.
+		 */
+		lockConnectionString?: string
 	}
 
 	/** Run options forwarded to the archiver (only used if enableArchiver is true). */
@@ -353,11 +414,41 @@ export interface ServerConfig {
 	/**
 	 * Trust the `x-forwarded-for` / `x-real-ip` headers for per-client rate
 	 * limiting. These headers are client-spoofable, so they may only be trusted
-	 * behind a reverse proxy that overwrites them. Default false: when false the
-	 * rate limiter falls back to a single global bucket (a coarse but
-	 * unspoofable backstop) instead of per-IP buckets.
+	 * behind a reverse proxy that overwrites them. Default false.
+	 *
+	 * When false the limiter falls back to the transport-level peer address
+	 * (see {@link ServerConfig.clientIdentifier}), which is unspoofable but
+	 * unavailable on some runtimes; only if that cannot be resolved either does
+	 * it degrade to one shared global bucket.
 	 */
 	trustProxy?: boolean
+
+	/**
+	 * Override how the rate limiter identifies a client. Use this when neither
+	 * proxy headers nor the peer address are the right key — for example to
+	 * bucket by API-key id, or to read a provider-specific header your edge
+	 * guarantees.
+	 *
+	 * Returning `undefined` falls through to the default resolution
+	 * (proxy headers when `trustProxy`, else peer address, else a global bucket).
+	 */
+	clientIdentifier?: ClientIdentifierFn
+
+	/**
+	 * Extra JWT claim verification. Signature checking alone accepts ANY token
+	 * signed with the same key — including tokens minted by a different service
+	 * that happens to share the secret. Set these to pin the token to this API.
+	 *
+	 * Both default to unset (claim not checked), which preserves the previous
+	 * behaviour. They can also be supplied via the `PG_HISTORY_JWT_ISSUER` and
+	 * `PG_HISTORY_JWT_AUDIENCE` environment variables; explicit config wins.
+	 */
+	jwt?: {
+		/** Required `iss` claim. */
+		issuer?: string
+		/** Acceptable `aud` claim value(s). */
+		audience?: string | string[]
+	}
 
 	/**
 	 * Expose /openapi endpoint unauthenticated (default: false).
@@ -387,6 +478,10 @@ export interface OrchestratorStats {
 	totalRecordsArchived: number
 	totalRecordsSoftDeleted: number
 	totalRecordsHardDeleted: number
+	/** S3 objects deleted by the orphan sweep (0 unless `cleanupOrphans` was set). */
+	totalOrphanFilesDeleted: number
+	/** Archive files pruned (0 unless `pruneArchivesOlderThanDays` was set). */
+	totalArchivesPruned: number
 	errors: Array<{
 		table: string
 		operation: string
@@ -400,6 +495,10 @@ export interface TableStats {
 	recordsArchived: number
 	recordsSoftDeleted: number
 	recordsHardDeleted: number
+	/** S3 objects deleted by the orphan sweep for this table. */
+	orphanFilesDeleted: number
+	/** Archive files pruned for this table. */
+	archivesPruned: number
 	durationMs: number
 	/** True when the table was skipped because another instance held its lock. */
 	skipped?: boolean
@@ -416,4 +515,31 @@ export interface ErrorResponse {
 export interface RunOptions {
 	dryRun?: boolean
 	targetTable?: string
+	/**
+	 * After archiving a table, delete S3 objects under its prefix that no
+	 * `audit_archive_metadata` row references — the debris left by runs that
+	 * uploaded a Parquet file and then failed before finalizing.
+	 *
+	 * Off by default because it LISTs the whole table prefix. Enable it on a
+	 * slower schedule than the archival run itself (e.g. a nightly job passing
+	 * `{ cleanupOrphans: true }`). Objects younger than `staleClaimMinutes` are
+	 * never touched, so an in-flight batch cannot be deleted out from under
+	 * itself. Pass an object to override the per-run deletion cap (default
+	 * 10000) or that safety window.
+	 *
+	 * Lowering `minAgeMinutes` — especially to 0 — removes the protection for
+	 * objects uploaded but not yet finalized. Within the orchestrator that is
+	 * survivable because the sweep runs under the table's advisory lock, so no
+	 * other instance is archiving this table. Do not do it when something
+	 * outside the orchestrator is writing to the same prefix.
+	 */
+	cleanupOrphans?: boolean | { maxDeletions?: number; minAgeMinutes?: number }
+	/**
+	 * After archiving a table, delete archive files AND their metadata rows
+	 * older than this many days. This is the long-term storage trim: it removes
+	 * history that has already been purged from Postgres, so only enable it once
+	 * the window exceeds your compliance retention. Omit to keep archives
+	 * forever (the default).
+	 */
+	pruneArchivesOlderThanDays?: number
 }

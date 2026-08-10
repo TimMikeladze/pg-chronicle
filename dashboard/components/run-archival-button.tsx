@@ -18,45 +18,11 @@ import {
 	AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipTrigger,
-} from '@/components/ui/tooltip'
 
-export function RunArchivalButton({ available }: { available: boolean }) {
+export function RunArchivalButton() {
 	const [open, setOpen] = useState(false)
 	const [pending, startTransition] = useTransition()
 	const router = useRouter()
-
-	if (!available) {
-		return (
-			<Tooltip>
-				<TooltipTrigger asChild>
-					{/*
-					 * `aria-disabled` rather than `disabled`: a disabled button is
-					 * removed from the tab order and swallows pointer events, so the
-					 * tooltip explaining *why* it is unavailable would be unreachable by
-					 * both keyboard and hover. This stays focusable and inert.
-					 */}
-					<Button
-						variant="outline"
-						aria-disabled
-						onClick={(event) => event.preventDefault()}
-						className="opacity-50"
-					>
-						<PlayIcon />
-						Run archival
-					</Button>
-				</TooltipTrigger>
-				<TooltipContent className="max-w-xs">
-					CRON_SECRET is set, so POST /api/archive requires that exact bearer
-					token — which cannot also satisfy the JWT middleware guarding /api/*.
-					Trigger archival from your scheduler instead.
-				</TooltipContent>
-			</Tooltip>
-		)
-	}
 
 	function confirm() {
 		startTransition(async () => {

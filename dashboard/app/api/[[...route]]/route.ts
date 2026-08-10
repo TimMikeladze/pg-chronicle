@@ -11,7 +11,7 @@
  *
  * Required env: PG_HISTORY_DATABASE_URL, PG_HISTORY_TABLES, PG_HISTORY_JWT_SECRET.
  */
-export { GET, POST } from 'pg-history/next'
+export { GET, OPTIONS, POST } from 'pg-history/next'
 
 // The pool and the audit triggers are per-instance state; a static render would
 // capture a build-time response.

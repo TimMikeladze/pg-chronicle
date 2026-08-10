@@ -1,23 +1,97 @@
 #!/usr/bin/env node
 /**
- * Bun entrypoint — run with: bun run src/main.ts
+ * Server entrypoint — `bun run src/main.ts`, or the published `pg-history` bin
+ * under Node.
  *
  * Reads connection and feature config from environment variables and starts
  * the Hono HTTP server. Not imported by library consumers.
  */
+import type { Logger } from './logger'
 import { consoleLogger, endPoolWithTimeout } from './logger'
 import { createServer } from './server'
+
+type FetchHandler = (req: Request) => Response | Promise<Response>
 
 interface BunServer {
 	stop(): void
 }
 interface BunRuntime {
-	serve(config: {
-		port: number
-		fetch: (req: Request) => Response | Promise<Response>
-	}): BunServer
+	serve(config: { port: number; fetch: FetchHandler }): BunServer
 }
-declare const Bun: BunRuntime
+
+/** Uniform handle over the Bun and Node servers. */
+interface RunningServer {
+	stop(): Promise<void>
+}
+
+/**
+ * Bind the port using whichever runtime we are on.
+ *
+ * This file is the package's `bin`, and its shebang says `node` — so it has to
+ * work there. `Bun.serve` is only reachable when Bun is actually the host;
+ * under Node we load the standard Hono adapter instead. The adapter import is
+ * dynamic so Bun never pays for loading it.
+ */
+async function listen(
+	port: number,
+	fetchHandler: FetchHandler,
+	logger: Logger,
+): Promise<RunningServer> {
+	const bun = (globalThis as { Bun?: BunRuntime }).Bun
+	if (typeof bun?.serve === 'function') {
+		logger.info('Serving with Bun.serve', { port })
+		const server = bun.serve({ port, fetch: fetchHandler })
+		return { stop: async () => server.stop() }
+	}
+
+	logger.info('Serving with @hono/node-server', { port })
+	const { serve } = await import('@hono/node-server')
+	const server = serve({ fetch: fetchHandler, port })
+	return {
+		// `close()` stops accepting new connections but waits for existing ones,
+		// and an idle keep-alive socket keeps it waiting forever. Bound it: the
+		// drain that matters (in-flight request handlers) is dispose()'s job, and
+		// blocking here would blow past the platform's kill timeout and turn a
+		// graceful shutdown into a SIGKILL.
+		stop: () =>
+			new Promise<void>((resolve) => {
+				const timer = setTimeout(() => {
+					logger.warn('HTTP server did not close in time; forcing', {
+						timeoutMs: SERVER_CLOSE_TIMEOUT_MS,
+					})
+					// Node 18.2+; severs lingering keep-alive sockets so close() lands.
+					const closeAll = (
+						server as unknown as { closeAllConnections?: () => void }
+					).closeAllConnections
+					if (typeof closeAll === 'function') closeAll.call(server)
+					resolve()
+				}, SERVER_CLOSE_TIMEOUT_MS)
+				timer.unref?.()
+				server.close(() => {
+					clearTimeout(timer)
+					resolve()
+				})
+			}),
+	}
+}
+
+/**
+ * Shutdown budget. The three phases run in sequence, so their timeouts ADD UP,
+ * and the total has to stay under the platform's kill timeout — `fly.toml` sets
+ * `kill_timeout = '30s'`, and anything past that is a SIGKILL in the middle of
+ * archival rather than a graceful stop.
+ *
+ *   close listener   2s  ┐
+ *   drain + archival 15s ├─ 27s, 3s of headroom
+ *   close pool       10s ┘
+ *
+ * Closing the listener gets the smallest share on purpose: it only stops new
+ * connections, and the drain that actually matters (in-flight handlers, a
+ * running archival) is the next phase's job.
+ */
+const SERVER_CLOSE_TIMEOUT_MS = 2_000
+const SHUTDOWN_DRAIN_TIMEOUT_MS = 15_000
+const POOL_CLOSE_TIMEOUT_MS = 10_000
 
 ;(async () => {
 	const { Pool } = await import('pg')
@@ -115,23 +189,26 @@ declare const Bun: BunRuntime
 	})
 
 	startupLogger.info('Starting server', { port })
-	const server = Bun.serve({
-		port,
-		fetch: app.fetch,
-	})
+	const server = await listen(port, app.fetch, startupLogger)
 
 	// Graceful shutdown — stop accepting new requests, drain in-flight
-	// handlers and archival via dispose(), then close the pool.
-	const SHUTDOWN_DRAIN_TIMEOUT_MS = 15_000
+	// handlers and archival via dispose(), then close the pool. Each phase is
+	// bounded; see the shutdown budget above for why the three have to sum to
+	// less than the platform's kill timeout.
 	const shutdown = async (signal: string): Promise<void> => {
 		startupLogger.info('Received signal, shutting down gracefully', { signal })
 		let exitCode = 0
 		try {
-			server.stop()
+			await server.stop()
 			await dispose(SHUTDOWN_DRAIN_TIMEOUT_MS)
 			// Bounded: a bare pool.end() waits forever on a client still held by a
 			// hung query, which would blow past Fly's kill_timeout and get SIGKILLed.
-			await endPoolWithTimeout(pool, 10_000, startupLogger, 'main')
+			await endPoolWithTimeout(
+				pool,
+				POOL_CLOSE_TIMEOUT_MS,
+				startupLogger,
+				'main',
+			)
 		} catch (err) {
 			startupLogger.error('Error during shutdown', { err })
 			exitCode = 1

@@ -8,6 +8,7 @@
 		"prebuild": "bun run build:lib",
 		"build": "next build",
 		"start": "next start",
+		"test": "bun test ./lib",
 		"pretsc": "bun run build:lib",
 		"tsc": "tsc --noEmit",
 		"build:lib": "[ -f ../package.json ] || exit 0; cd .. && bun run build"
@@ -43,6 +44,7 @@
 	},
 	"devDependencies": {
 		"@tailwindcss/postcss": "^4.1.3",
+		"@types/bun": "^1.3.14",
 		"@types/node": "^22.14.0",
 		"@types/pg": "^8.11.11",
 		"@types/react": "^19.1.0",

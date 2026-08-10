@@ -80,22 +80,86 @@ async function getSchemaPrefix(pool: Pool): Promise<string> {
 	return prefix
 }
 
-export async function setupArchiverSchema(pool: Pool): Promise<void> {
-	const s = await getSchemaPrefix(pool)
-	const auditTable = `${s}."audit_log"`
-	const metadataTable = `${s}."audit_archive_metadata"`
-	const statsTable = `${s}."audit_archival_stats"`
+// Distinct from PgHistory's setup namespace (73616469) and the orchestrator's
+// per-table namespace (73616468) so the three lock families never collide.
+const ARCHIVER_SETUP_LOCK_NAMESPACE = 73_616_470
 
-	// Fast path: if all expected columns + tables + indexes already exist,
-	// skip the 10+ DDL roundtrips. Critical on serverless cold starts where
-	// every roundtrip lands on the first request's latency budget. Indexes
-	// are checked too — without them, archival queries fall back to seq
-	// scans and the perf regression is invisible without an EXPLAIN.
+/** How long a waiter polls before giving up on the process doing the build. */
+const SETUP_LOCK_WAIT_MS = 5 * 60_000
+const SETUP_LOCK_POLL_MS = 250
+
+const LOCK_SQL = `SELECT pg_try_advisory_lock(hashtextextended('pg-history:archiver-setup:' || current_schema(), $1::bigint)) AS acquired`
+const UNLOCK_SQL = `SELECT pg_advisory_unlock(hashtextextended('pg-history:archiver-setup:' || current_schema(), $1::bigint))`
+
+/**
+ * Take the archiver-setup lock without ever *blocking* on it.
+ *
+ * Deliberately `pg_try_advisory_lock` in a poll loop rather than the blocking
+ * `pg_advisory_lock`. A session parked inside `pg_advisory_lock()` is running a
+ * statement, and therefore has an open transaction — and `CREATE INDEX
+ * CONCURRENTLY` (which the holder is about to run) waits for every such
+ * transaction to finish. Blocking here would deadlock the two against each
+ * other: the holder waiting for the waiter's transaction, the waiter waiting
+ * for the holder's lock. Between polls this session is idle with no
+ * transaction, which CIC is happy to ignore.
+ */
+export async function setupArchiverSchema(pool: Pool): Promise<void> {
+	// Probe outside the lock: the steady state is "already set up", and taking a
+	// lock on every boot would serialize an otherwise free no-op.
+	if (await archiverSchemaIsCurrent(pool)) return
+
+	const deadline = Date.now() + SETUP_LOCK_WAIT_MS
+	for (;;) {
+		const lockClient = await pool.connect()
+		let acquired = false
+		try {
+			const result = await lockClient.query(LOCK_SQL, [
+				ARCHIVER_SETUP_LOCK_NAMESPACE,
+			])
+			acquired = result.rows[0]?.acquired === true
+
+			if (acquired) {
+				// Re-probe under the lock: the process we queued behind has very
+				// likely just finished, and without this the loser repeats every DDL
+				// statement including the CONCURRENTLY index builds.
+				if (await archiverSchemaIsCurrent(pool)) return
+				await applyArchiverSchema(pool)
+				return
+			}
+		} finally {
+			if (acquired) {
+				await lockClient
+					.query(UNLOCK_SQL, [ARCHIVER_SETUP_LOCK_NAMESPACE])
+					.catch(() => {})
+			}
+			lockClient.release()
+		}
+
+		// Someone else holds it. Watch for their result instead of queueing.
+		if (await archiverSchemaIsCurrent(pool)) return
+		if (Date.now() > deadline) {
+			throw new Error(
+				'setupArchiverSchema: timed out waiting for another process to finish archiver schema setup. ' +
+					'Check for a stuck CREATE INDEX CONCURRENTLY on audit_log (pg_stat_activity).',
+			)
+		}
+		await new Promise((resolve) => setTimeout(resolve, SETUP_LOCK_POLL_MS))
+	}
+}
+
+/**
+ * True when every archiver column, table and index is present and valid.
+ * Critical on serverless cold starts: it collapses 10+ DDL roundtrips into one
+ * probe query. Indexes are checked too — without them, archival queries fall
+ * back to seq scans and the perf regression is invisible without an EXPLAIN.
+ */
+async function archiverSchemaIsCurrent(pool: Pool): Promise<boolean> {
 	const probe = await pool.query(
 		`SELECT
        (SELECT COUNT(*) FROM information_schema.columns
         WHERE table_schema = current_schema() AND table_name = 'audit_log'
-          AND column_name IN ('archived_at', 's3_path', 'soft_deleted_at', 'claim_id', 'claimed_at')) AS col_count,
+          AND column_name IN ('archived_at', 's3_path', 'soft_deleted_at', 'claim_id', 'claimed_at',
+                              'db_user', 'app_actor', 'client_addr')) AS col_count,
        (SELECT COUNT(*) FROM information_schema.tables
         WHERE table_schema = current_schema()
           AND table_name IN ('audit_archive_metadata', 'audit_archival_stats')) AS tbl_count,
@@ -124,8 +188,32 @@ export async function setupArchiverSchema(pool: Pool): Promise<void> {
 	const tblCount = Number(probe.rows[0]?.tbl_count ?? 0)
 	const idxCount = Number(probe.rows[0]?.idx_count ?? 0)
 	const metaCk = Number(probe.rows[0]?.meta_ck ?? 0)
-	if (colCount === 5 && tblCount === 2 && idxCount === 7 && metaCk === 1) {
-		return
+	return colCount === 8 && tblCount === 2 && idxCount === 7 && metaCk === 1
+}
+
+async function applyArchiverSchema(pool: Pool): Promise<void> {
+	const s = await getSchemaPrefix(pool)
+	const auditTable = `${s}."audit_log"`
+	const metadataTable = `${s}."audit_archive_metadata"`
+	const statsTable = `${s}."audit_archival_stats"`
+
+	// The archiver extends the table PgHistory.setup() creates; it does not
+	// create it. Enabling the archiver first (S3 variables set, no audited
+	// tables) otherwise fails on the first ALTER with a bare
+	// `relation "public.audit_log" does not exist`, which says nothing about
+	// what the operator actually got wrong.
+	const auditLogExists = await pool.query(
+		`SELECT 1 FROM pg_class c
+		 JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = current_schema() AND c.relname = 'audit_log'`,
+	)
+	if (auditLogExists.rows.length === 0) {
+		throw new Error(
+			`pg-history: cannot set up the archiver — ${auditTable} does not exist. ` +
+				'The archiver extends the audit table rather than creating it, so run ' +
+				'PgHistory.setup() first (on the standalone server, that means setting ' +
+				'PG_HISTORY_TABLES alongside the S3 configuration).',
+		)
 	}
 
 	// Drop any INVALID archiver parent indexes (from an interrupted CONCURRENTLY
@@ -166,6 +254,21 @@ export async function setupArchiverSchema(pool: Pool): Promise<void> {
     ALTER TABLE ${auditTable}
       ADD COLUMN IF NOT EXISTS soft_deleted_at TIMESTAMPTZ
   `)
+
+	// Attribution columns. PgHistory.setup() owns audit_log's shape and creates
+	// these, but a cron-only deployment may run the archiver against a table
+	// written by an older pg-history elsewhere. The archiver now copies these
+	// into the Parquet archive, so it must be able to read them: assert they
+	// exist rather than failing the batch with "column does not exist".
+	await pool.query(
+		`ALTER TABLE ${auditTable} ADD COLUMN IF NOT EXISTS db_user TEXT`,
+	)
+	await pool.query(
+		`ALTER TABLE ${auditTable} ADD COLUMN IF NOT EXISTS app_actor TEXT`,
+	)
+	await pool.query(
+		`ALTER TABLE ${auditTable} ADD COLUMN IF NOT EXISTS client_addr INET`,
+	)
 
 	// Claim columns implement non-blocking archival: a worker UPDATEs claim_id
 	// on a batch of rows in one short transaction, releases the lock, performs
@@ -438,4 +541,7 @@ export async function teardownArchiverSchema(pool: Pool): Promise<void> {
 	)
 	await pool.query(`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS claim_id`)
 	await pool.query(`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS claimed_at`)
+	// db_user / app_actor / client_addr are deliberately NOT dropped: they are
+	// audit content owned by PgHistory.setup(), not archiver bookkeeping. The
+	// archiver only ensures they exist.
 }

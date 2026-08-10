@@ -98,6 +98,19 @@ export async function executeRevert(args: RevertArgs): Promise<void> {
 		throw new AuditEntryNotFoundError(auditEntryId, tableName, recordId)
 	}
 
+	// TRUNCATE is recorded as a single statement-level marker with no OLD/NEW
+	// payload, so there is nothing to restore from. Say that plainly — falling
+	// through to the UPDATE branch produced a misleading "no old_data available".
+	if (entry.operation === 'TRUNCATE') {
+		throw new RevertError(
+			`Cannot revert entry ${auditEntryId}: it records a TRUNCATE of "${tableName}". ` +
+				'TRUNCATE fires a statement-level trigger with no per-row data, so the ' +
+				'audit trail marks that the wipe happened but cannot reconstruct the rows. ' +
+				'Restore from a database backup or from the archived Parquet files ' +
+				'(PgHistoryArchiver.listArchives / readArchive).',
+		)
+	}
+
 	if (pkColumns.length === 0) {
 		throw new RevertError(
 			`Cannot revert table "${tableName}" - no primary key defined`,

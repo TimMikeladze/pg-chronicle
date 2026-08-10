@@ -217,19 +217,22 @@ describe('Review Fix #15: rate limiter cleanup runs on a timer', () => {
 // ─────────────────────────────────────────────────────────
 
 describe('Review Fix #20: Bun.serve is gated', () => {
-	test('main.ts is isolated as a Bun-only entrypoint', async () => {
+	test('main.ts runs on Node as well as Bun', async () => {
 		const fs = await import('node:fs/promises')
-		// The Bun entrypoint was extracted to src/main.ts so server.ts stays
-		// importable by Node/Next.js without referencing Bun globals.
-		// main.ts is not in the package exports map and not imported anywhere —
-		// its isolation is structural (not a typeof guard at runtime).
 		const source = await fs.readFile('./src/main.ts', 'utf-8')
 		const serverSource = await fs.readFile('./src/server.ts', 'utf-8')
 
-		// server.ts must NOT reference Bun globals — it's imported in Node/Next.js
-		expect(serverSource).not.toContain('Bun.serve')
-		// main.ts declares the Bun type explicitly (not as a global assumption)
-		expect(source).toContain('declare const Bun')
+		// server.ts must NOT call into Bun globals — it is imported by Node and
+		// Next.js. (Naming `Bun.serve` in a comment is fine; invoking it is not.)
+		expect(serverSource).not.toMatch(/(?<!`|\w)Bun\.serve\(/)
+
+		// main.ts IS the published `bin`, with a `#!/usr/bin/env node` shebang, so
+		// it must never assume the Bun global exists: it used to call `Bun.serve`
+		// unconditionally and died with "Bun is not defined" under Node. The
+		// global is now reached through a guarded lookup with a Node fallback.
+		expect(source).not.toMatch(/(?<!\w)Bun\.serve\(/)
+		expect(source).toContain('globalThis as { Bun?: BunRuntime }')
+		expect(source).toContain('@hono/node-server')
 	})
 })
 

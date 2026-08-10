@@ -5,7 +5,7 @@ PostgreSQL audit trails with automated S3 archival.
 [![npm version](https://img.shields.io/npm/v/pg-history.svg)](https://www.npmjs.com/package/pg-history)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fdashboard&project-name=pg-history-dashboard&repository-name=pg-history-dashboard&env=PG_HISTORY_DATABASE_URL%2CPG_HISTORY_TABLES%2CPG_HISTORY_JWT_SECRET%2CPG_HISTORY_JWT_ALG%2CPG_HISTORY_POOL_MAX%2CPG_HISTORY_STATEMENT_TIMEOUT_MS%2CPG_HISTORY_DASHBOARD_ACTOR%2CPG_HISTORY_RETENTION_DAYS%2CPG_HISTORY_GRACE_PERIOD_DAYS%2CPG_HISTORY_BATCH_SIZE&envDefaults=%7B%22PG_HISTORY_JWT_ALG%22%3A%22HS256%22%2C%22PG_HISTORY_POOL_MAX%22%3A%223%22%2C%22PG_HISTORY_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_HISTORY_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_HISTORY_RETENTION_DAYS%22%3A%2290%22%2C%22PG_HISTORY_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_HISTORY_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+three+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+and+a+JWT+signing+secret.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fdashboard&project-name=pg-history-dashboard&repository-name=pg-history-dashboard&env=PG_HISTORY_DATABASE_URL%2CPG_HISTORY_TABLES%2CPG_HISTORY_JWT_SECRET%2CPG_HISTORY_DASHBOARD_PASSWORD%2CPG_HISTORY_JWT_ALG%2CPG_HISTORY_POOL_MAX%2CPG_HISTORY_STATEMENT_TIMEOUT_MS%2CPG_HISTORY_DASHBOARD_ACTOR%2CPG_HISTORY_RETENTION_DAYS%2CPG_HISTORY_GRACE_PERIOD_DAYS%2CPG_HISTORY_BATCH_SIZE&envDefaults=%7B%22PG_HISTORY_JWT_ALG%22%3A%22HS256%22%2C%22PG_HISTORY_POOL_MAX%22%3A%223%22%2C%22PG_HISTORY_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_HISTORY_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_HISTORY_RETENTION_DAYS%22%3A%2290%22%2C%22PG_HISTORY_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_HISTORY_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+four+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+a+JWT+signing+secret%2C+and+a+password+for+the+dashboard+UI+%28it+can+read+and+revert+every+audited+record%29.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
 
 ## Table of Contents
 
@@ -63,7 +63,7 @@ await history.close()   // ends only a pool pg-history created itself
 await pool.end()        // your pool stays yours to close
 ```
 
-**Skip auditing secrets/PII** by listing the columns to strip per table:
+**Skip auditing secrets/PII** by listing the columns to strip per table (an update that touches only an excluded column still records an entry — with identical `oldData` and `newData` — so the trail shows *that* a secret changed and when, never what it changed to):
 
 ```typescript
 new PgHistory({
@@ -84,9 +84,9 @@ new PgHistory({ pool, tables: ['users'], logger: pino() })
 
 Nothing above needs a server — the triggers live in PostgreSQL. This deploys the parts that do: the REST API, the dashboard and cron archival, as one Vercel project. Full details in [Deployment](#deployment).
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fdashboard&project-name=pg-history-dashboard&repository-name=pg-history-dashboard&env=PG_HISTORY_DATABASE_URL%2CPG_HISTORY_TABLES%2CPG_HISTORY_JWT_SECRET%2CPG_HISTORY_JWT_ALG%2CPG_HISTORY_POOL_MAX%2CPG_HISTORY_STATEMENT_TIMEOUT_MS%2CPG_HISTORY_DASHBOARD_ACTOR%2CPG_HISTORY_RETENTION_DAYS%2CPG_HISTORY_GRACE_PERIOD_DAYS%2CPG_HISTORY_BATCH_SIZE&envDefaults=%7B%22PG_HISTORY_JWT_ALG%22%3A%22HS256%22%2C%22PG_HISTORY_POOL_MAX%22%3A%223%22%2C%22PG_HISTORY_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_HISTORY_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_HISTORY_RETENTION_DAYS%22%3A%2290%22%2C%22PG_HISTORY_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_HISTORY_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+three+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+and+a+JWT+signing+secret.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fdashboard&project-name=pg-history-dashboard&repository-name=pg-history-dashboard&env=PG_HISTORY_DATABASE_URL%2CPG_HISTORY_TABLES%2CPG_HISTORY_JWT_SECRET%2CPG_HISTORY_DASHBOARD_PASSWORD%2CPG_HISTORY_JWT_ALG%2CPG_HISTORY_POOL_MAX%2CPG_HISTORY_STATEMENT_TIMEOUT_MS%2CPG_HISTORY_DASHBOARD_ACTOR%2CPG_HISTORY_RETENTION_DAYS%2CPG_HISTORY_GRACE_PERIOD_DAYS%2CPG_HISTORY_BATCH_SIZE&envDefaults=%7B%22PG_HISTORY_JWT_ALG%22%3A%22HS256%22%2C%22PG_HISTORY_POOL_MAX%22%3A%223%22%2C%22PG_HISTORY_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_HISTORY_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_HISTORY_RETENTION_DAYS%22%3A%2290%22%2C%22PG_HISTORY_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_HISTORY_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+four+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+a+JWT+signing+secret%2C+and+a+password+for+the+dashboard+UI+%28it+can+read+and+revert+every+audited+record%29.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
 
-The button clones [`dashboard/`](./dashboard) — the UI *and* the REST API it is built on, mounted at `/api`. Ten environment variables come up in the clone form and seven are already filled in; only `PG_HISTORY_DATABASE_URL`, `PG_HISTORY_TABLES` and `PG_HISTORY_JWT_SECRET` need you.
+The button clones [`dashboard/`](./dashboard) — the UI *and* the REST API it is built on, mounted at `/api`. Eleven environment variables come up in the clone form and seven are already filled in; only `PG_HISTORY_DATABASE_URL`, `PG_HISTORY_TABLES`, `PG_HISTORY_JWT_SECRET` and `PG_HISTORY_DASHBOARD_PASSWORD` need you.
 
 ## Installation
 
@@ -293,7 +293,9 @@ await archiver.setup()                 // idempotent — adds claim/archive colu
 | `softDeleteArchived(table)` | Set `soft_deleted_at` on rows past grace period with confirmed S3 backup. |
 | `hardDeletePurged(table)` | Verify S3 existence + checksum, then DELETE rows past second grace period inside a locked TX (no network I/O under lock). |
 | `reapStaleClaims(minutes?)` | Release claims older than `staleClaimMinutes` (worker-crash recovery). |
-| `cleanupOrphanedFiles(table, {maxDeletions=10000})` | Delete S3 files not referenced in `audit_archive_metadata`. |
+| `listArchives(table, {from?, to?, limit?})` | The archive index: `{s3Path, archiveDate, recordCount, fileSize, checksumSha256, archivedAt}` per file, newest first. |
+| `readArchive(s3Path, {verifyChecksum?})` | Fetch and decode one archived Parquet file back into audit rows. Verifies the recorded SHA-256 by default. |
+| `cleanupOrphanedFiles(table, {maxDeletions=10000, minAgeMinutes?})` | Delete S3 files not referenced in `audit_archive_metadata`. |
 | `pruneArchive(table, olderThan)` | Paired DELETE of metadata + S3 for archives past compliance retention. |
 | `close(timeoutMs?)` | End internal Pool with timeout. |
 
@@ -407,13 +409,13 @@ Bun.serve({ port: 3001, fetch: app.fetch })
 | `GET` | `/api/history/:table/:recordId` | JWT | Record history (requires `enableHistory`) |
 | `POST` | `/api/history/search` | JWT | Search history (requires `enableHistory`) |
 | `POST` | `/api/history/revert` | JWT | Revert a record (requires `enableHistory`) |
-| `POST` | `/api/archive` | Cron secret when configured, else JWT | Trigger archival on demand (requires `enableArchiver`) |
+| `POST` | `/api/archive` | JWT or cron | Trigger archival on demand (requires `enableArchiver`) |
 
 **Auth resolution:**
 - **Fail-closed:** with `enableHistory: true` and no `PG_HISTORY_JWT_SECRET`, `createServer` throws at startup unless `allowUnauthenticated: true` is passed.
-- Set `PG_HISTORY_JWT_SECRET` to enable JWT on `/api/*`. Algorithm via `PG_HISTORY_JWT_ALG` (default `HS256`; supports `HS256/384/512`, `RS256/384/512`, `ES256/384/512`).
-- **Authorization** is separate from authentication: supply an `authorize` hook to scope access per tenant/record (returning `false` → `403`). Without it, any valid token can reach any configured table's history.
-- Set `archiveCronSecret` (or `CRON_SECRET` env) to authenticate the three archiver endpoints via timing-safe HMAC. `/api/archive` checks it whenever it is set — so with both secrets configured, the caller needs the cron bearer token *and* passes the JWT middleware first. `/api/stats` and `/api/health/detailed` fall back to it only when no JWT secret is set.
+- Set `PG_HISTORY_JWT_SECRET` to enable JWT on `/api/*`. Algorithm via `PG_HISTORY_JWT_ALG` (default `HS256`; supports `HS256/384/512`, `RS256/384/512`, `ES256/384/512`). Pin the token to this API with `jwt: { issuer, audience }` (or `PG_HISTORY_JWT_ISSUER` / `PG_HISTORY_JWT_AUDIENCE`) — signature checking alone accepts any token signed with the same key, including one minted by another service that shares the secret.
+- **Authorization** is separate from authentication: supply an `authorize` hook to scope access per tenant/record (returning `false` → `403`). Without it, any valid token can reach any configured table's history. On `pg-history/next`, pass it through `createHandlers`.
+- Set `archiveCronSecret` (or `CRON_SECRET` env) to authenticate the three archiver endpoints via timing-safe HMAC. It is an **alternative** credential, not an additional one: on `/api/archive`, `/api/stats` and `/api/health/detailed` a request is accepted if it presents either a valid JWT or the exact cron secret. (A request carries one `Authorization` header — demanding both made the route uncallable whenever both were configured.)
 - Archiver endpoints also need `enableArchiver: true` with a valid `archiverConfig`; without that, or without any auth at all, they are never registered.
 - `/health` is always public. `/openapi` is public with `publicOpenApi: true`, JWT-gated when a JWT secret is set, registered unauthenticated under `allowUnauthenticated: true`, and unregistered otherwise — so a cron-only deployment doesn't leak the API shape.
 - `OPTIONS` preflight bypasses JWT so CORS works.
@@ -499,14 +501,21 @@ It reads the same environment variables the server does — `PG_HISTORY_TABLES` 
 | `/archival` | Archival status and on-demand runs |
 | `/openapi` | The API reference, rendered from the OpenAPI document |
 | `/api/*` | The pg-history REST API itself — for cron, scripts and other services |
+| `/login` | The password gate |
 
-### It never issues a token to the browser
+### Access control
 
-Server components and server actions mint a 60-second HS256 JWT with `jose` and invoke the very same route handlers mounted at `/api`, in-process with a synthetic `Request`. No network hop, no CORS, one connection pool, and identical auth, validation and error semantics to any external caller. The JWT `sub` carries `PG_HISTORY_DASHBOARD_ACTOR`, which pg-history logs on every revert — set it to something identifiable per deployment.
+**The UI is password-gated.** Set `PG_HISTORY_DASHBOARD_PASSWORD`; visitors exchange it for a signed, httpOnly session cookie (12 hours by default — `PG_HISTORY_DASHBOARD_SESSION_TTL_HOURS`). In production the middleware **refuses to serve the UI** until a password is set, because a page load is enough to read and revert every audited record. Development runs open. If an access proxy or SSO already authenticates every request, acknowledge that with `PG_HISTORY_DASHBOARD_ALLOW_ANONYMOUS=true` instead of leaving it accidental.
 
-**Authentication is not authorization.** The dashboard runs with a token it minted itself, so it has blanket access to every record of every configured table by design. Put it behind your own SSO or network boundary, and supply an `authorize` hook if you need per-tenant scoping. Do not expose it publicly.
+Failed logins are throttled — escalating delay for everyone, plus a 15-minute lockout for clients the platform can identify (an unidentifiable client is never locked out, or an attacker could lock *you* out by failing five times). Rotating the password invalidates every session, and it is the only revocation there is: one shared password means no individual sessions to revoke, so treat the cookie as a 12-hour bearer token.
 
-Two behaviours worth knowing: archived history disappears from reads (both `getHistory` and `search` filter out soft-deleted rows, so once the archiver has run that history is in S3 and no longer visible here), and setting `CRON_SECRET` disables the "Run archival" button — `/api/archive` then requires a `Bearer <CRON_SECRET>` header, but the `/api/*` JWT middleware rejects anything that is not a valid token first, so archival becomes scheduler-only.
+`/api/*` is deliberately outside the cookie gate: it is the real REST API with its own JWT (and cron secret), and schedulers call it.
+
+**It never issues a token to the browser.** Server components and server actions mint a 60-second HS256 JWT with `jose` and invoke the very same route handlers mounted at `/api`, in-process with a synthetic `Request`. No network hop, no CORS, one connection pool, and identical auth, validation and error semantics to any external caller. The JWT `sub` carries `PG_HISTORY_DASHBOARD_ACTOR`, which pg-history logs on every revert — set it to something identifiable per deployment.
+
+**Authentication is not authorization.** Past the gate, the dashboard's self-minted token has blanket access to every record of every configured table. For per-tenant scoping, mount the API with an `authorize` hook via `createHandlers` (see [Next.js](#nextjs-serverless)) — the shared password says *someone* is allowed in, not *which rows* they may touch.
+
+One behaviour worth knowing: archived history disappears from reads. Both `getHistory` and `search` filter out soft-deleted rows, so once the archiver has run, that history lives in S3 — reachable through `listArchives` / `readArchive`, not through these screens.
 
 ## Deployment
 
@@ -514,23 +523,24 @@ Click the button below to get the dashboard and the REST API as one Vercel proje
 
 ### One click: the dashboard on Vercel
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fdashboard&project-name=pg-history-dashboard&repository-name=pg-history-dashboard&env=PG_HISTORY_DATABASE_URL%2CPG_HISTORY_TABLES%2CPG_HISTORY_JWT_SECRET%2CPG_HISTORY_JWT_ALG%2CPG_HISTORY_POOL_MAX%2CPG_HISTORY_STATEMENT_TIMEOUT_MS%2CPG_HISTORY_DASHBOARD_ACTOR%2CPG_HISTORY_RETENTION_DAYS%2CPG_HISTORY_GRACE_PERIOD_DAYS%2CPG_HISTORY_BATCH_SIZE&envDefaults=%7B%22PG_HISTORY_JWT_ALG%22%3A%22HS256%22%2C%22PG_HISTORY_POOL_MAX%22%3A%223%22%2C%22PG_HISTORY_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_HISTORY_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_HISTORY_RETENTION_DAYS%22%3A%2290%22%2C%22PG_HISTORY_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_HISTORY_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+three+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+and+a+JWT+signing+secret.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fdashboard&project-name=pg-history-dashboard&repository-name=pg-history-dashboard&env=PG_HISTORY_DATABASE_URL%2CPG_HISTORY_TABLES%2CPG_HISTORY_JWT_SECRET%2CPG_HISTORY_DASHBOARD_PASSWORD%2CPG_HISTORY_JWT_ALG%2CPG_HISTORY_POOL_MAX%2CPG_HISTORY_STATEMENT_TIMEOUT_MS%2CPG_HISTORY_DASHBOARD_ACTOR%2CPG_HISTORY_RETENTION_DAYS%2CPG_HISTORY_GRACE_PERIOD_DAYS%2CPG_HISTORY_BATCH_SIZE&envDefaults=%7B%22PG_HISTORY_JWT_ALG%22%3A%22HS256%22%2C%22PG_HISTORY_POOL_MAX%22%3A%223%22%2C%22PG_HISTORY_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_HISTORY_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_HISTORY_RETENTION_DAYS%22%3A%2290%22%2C%22PG_HISTORY_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_HISTORY_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+four+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+a+JWT+signing+secret%2C+and+a+password+for+the+dashboard+UI+%28it+can+read+and+revert+every+audited+record%29.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
 
 The button clones [`dashboard/`](./dashboard) on its own — the [Dashboard](#dashboard) UI and the REST API it runs on, in one project, with `dashboard/vercel.json` registering the archival cron. The clone consumes `pg-history` from npm, so nothing else in this repo has to build for it to deploy — Vercel's Root Directory cannot reach a parent directory, which is what makes the published package the dependency here.
 
-**What you fill in.** Three variables:
+**What you fill in.** Four variables:
 
 | Variable | Value |
 |----------|-------|
 | `PG_HISTORY_DATABASE_URL` | Postgres connection string. Point it at a pooled endpoint (Neon, Supabase, PgBouncer) — every invocation opens its own pool |
 | `PG_HISTORY_TABLES` | Comma-separated tables to audit, e.g. `users,orders`. They must already exist: the app installs triggers on them at first request |
 | `PG_HISTORY_JWT_SECRET` | Long random string. The dashboard signs its own short-lived tokens with it and it never reaches the browser |
+| `PG_HISTORY_DASHBOARD_PASSWORD` | Long random string. The password for the UI itself — without it the deployed dashboard refuses to serve pages, because reaching one means being able to read and revert every audited record |
 
 **What arrives prefilled**, straight from the library's defaults, so the form is a click-through: `PG_HISTORY_JWT_ALG=HS256`, `PG_HISTORY_POOL_MAX=3`, `PG_HISTORY_STATEMENT_TIMEOUT_MS=30000`, `PG_HISTORY_DASHBOARD_ACTOR=dashboard`, `PG_HISTORY_RETENTION_DAYS=90`, `PG_HISTORY_GRACE_PERIOD_DAYS=7`, `PG_HISTORY_BATCH_SIZE=10000`. Defaults are only ever passed for non-secret values — the clone URL ends up in browser history, which is why the three above are the ones left blank.
 
-**After the first deploy**, add the archiver's own variables in the project settings — `PG_HISTORY_S3_BUCKET` (this is the switch: without it there is no `/api/archive` and no archival UI), the S3 credentials, and `CRON_SECRET`. Until `CRON_SECRET` is set the nightly cron gets a `401` from the JWT middleware; until the bucket is set it gets a `404`. Both are inert, not broken — see [Cron Archival](#cron-archival-vercel-cron).
+**After the first deploy**, add the archiver's own variables in the project settings — `PG_HISTORY_S3_BUCKET` (this is the switch: without it there is no `/api/archive` and no archival UI), the S3 credentials, and `CRON_SECRET`. Until `CRON_SECRET` is set the nightly cron gets a `401`; until the bucket is set it gets a `404`. Both are inert, not broken — see [Cron Archival](#cron-archival-vercel-cron).
 
-The dashboard has blanket access to every audited row by design. Put it behind SSO or a network boundary before pointing it at production — see [Authentication is not authorization](#it-never-issues-a-token-to-the-browser).
+Past the password gate the dashboard has blanket access to every audited row by design — the password is a lock on the door, not per-user authorization. Put it behind SSO or a network boundary too before pointing it at production, and supply an `authorize` hook for per-tenant scoping — see [Access control](#access-control).
 
 ### Next.js (Serverless)
 
@@ -561,7 +571,7 @@ export async function GET(req: Request) {
 
 ```typescript
 // app/api/[[...route]]/route.ts
-export { GET, POST } from 'pg-history/next'
+export { GET, POST, OPTIONS } from 'pg-history/next'
 ```
 
 Set environment variables on your host — all three are required:
@@ -573,6 +583,28 @@ PG_HISTORY_JWT_SECRET=your-secret
 ```
 
 The JWT secret is not optional here: this entry point always enables the history API, destructive `revert` included, so without a secret it refuses to start and every request returns `500 INIT_ERROR`. `PG_HISTORY_ALLOW_UNAUTHENTICATED` is deliberately not wired up on this path.
+
+Export `OPTIONS` too if anything calls the API cross-origin — without it Next answers preflight with `405` and the browser blocks the real request, whatever `cors` says.
+
+**Anything that isn't an environment variable** — above all the `authorize` hook, which is the only per-tenant isolation there is — goes through `createHandlers`:
+
+```typescript
+// app/api/[[...route]]/route.ts
+import { createHandlers } from 'pg-history/next'
+
+export const { GET, POST, OPTIONS } = createHandlers({
+  // Without this, any valid token reaches every record of every audited table.
+  authorize: async ({ actor, table, recordId, action }) => {
+    if (action === 'revert') return actor === 'admin'
+    return tenantOwns(actor, table, recordId)
+  },
+  cors: { origin: 'https://app.example.com', credentials: true },
+})
+
+export const dynamic = 'force-dynamic'
+```
+
+Everything not overridden still comes from the environment, and the handlers keep their own lazily-initialised app and pool. Pass `pool` to supply your own — pg-history will not close a pool it did not create.
 
 The `pg-history/next` entry point automatically enables `serverless: true`, which:
 - Skips background archival (use [cron archival](#cron-archival-vercel-cron) instead)
@@ -597,6 +629,16 @@ Serverless has no persistent process, so archival needs an external trigger. Add
 Daily is the one schedule every plan accepts — Hobby rejects anything more frequent at build time. On Pro, drop to `0 */6 * * *` or hourly.
 
 Vercel Cron calls `POST /api/archive` on schedule with `Authorization: Bearer <CRON_SECRET>` injected automatically; the endpoint verifies it, then runs archive → soft delete → hard delete and returns stats.
+
+The response distinguishes three outcomes, so a scheduler's history reflects what actually happened:
+
+| Outcome | Status | Body |
+|---------|--------|------|
+| The run succeeded | `200` | `{ success: true, ran: true, archival }` |
+| A run was already in flight; this trigger did nothing | `200` | `{ success: true, ran: false, message, archival }` |
+| Every attempt failed | `500` | `{ success: false, ran: true, error: { code: "ARCHIVAL_FAILED" }, archival }` |
+
+A failed run answers `500` deliberately — a broken archiver reporting `200` puts a green tick in the cron history while the audit log grows unchecked. The cron secret is accepted *instead of* a JWT on the operational routes (`/api/archive`, `/api/stats`, `/api/health/detailed`), so a deployment can have both credentials and let each caller present its own.
 
 Two things to know: `POST /api/archive` only exists when `PG_HISTORY_S3_BUCKET` is set (that's what enables the archiver in `pg-history/next`), and the catch-all serves `/api/**` only — the public `GET /health` probe is unreachable here, so use `/api/health/detailed` or add your own `app/health/route.ts`.
 
@@ -654,9 +696,22 @@ S3 path: `{table}/year={YYYY}/month={MM}/day={DD}/data-{uuid}.parquet`
 
 ### What lands in the Parquet file
 
-Seven columns, SNAPPY-compressed: `id` (INT64), `table_name`, `record_id`, `operation`, `changed_at` (TIMESTAMP), `old_data`, `new_data`. The JSONB payloads are written as exact JSON **text**, so integers past 2^53 survive the round trip.
+Ten columns, SNAPPY-compressed: `id` (INT64), `table_name`, `record_id`, `operation`, `changed_at` (TIMESTAMP), `old_data`, `new_data`, `db_user`, `app_actor`, `client_addr`. The JSONB payloads are written as exact JSON **text**, so integers past 2^53 survive the round trip. The attribution columns are archived with the rest: once a row is hard-deleted the Parquet file is the only remaining record of the change, and it has to be able to say who made it.
 
-**The actor columns are not archived.** `db_user`, `app_actor`, and `client_addr` exist only in `audit_log` — once a row is hard-deleted, who made the change is gone. If your retention policy requires keeping the actor beyond the archival window, copy those columns out before archival runs, or raise `retention` so rows live in Postgres for as long as you need to attribute them.
+### Reading an archive back
+
+Archived rows are filtered out of `getHistory()` and `search()` (they are on their way out of Postgres), so the archive is where that history lives. Both halves are on the archiver:
+
+```typescript
+const archives = await archiver.listArchives('users', { limit: 20 })
+// → [{ s3Path, archiveDate, recordCount, fileSize, checksumSha256, archivedAt }, ...]
+
+const rows = await archiver.readArchive(archives[0].s3Path)
+// → [{ id, table_name, record_id, operation, changed_at, old_data, new_data,
+//      db_user, app_actor, client_addr }, ...]
+```
+
+`readArchive` verifies the object against the SHA-256 recorded at upload time and throws on a mismatch, so a silently corrupted or replaced archive cannot be read back as if it were genuine. Pass `{ verifyChecksum: false }` to read an object that has no metadata row. For files already on local disk, `readParquet` / `writeParquet` are exported too.
 
 ### Configuration
 
@@ -679,8 +734,17 @@ const { app } = await createServer({
     gracePeriod: 7,   // days between archive→soft-delete and soft→hard-delete.
                       // 0 = no grace (purge once the S3 backup is confirmed).
     batchSize: 10000,
+    maxBatchBytes: 64 * 1024 * 1024, // soft memory cap per batch; peak RSS ≈ 3×
+    staleClaimMinutes: 30,           // when an unfinalized claim is reclaimable
+    lockConnectionString: process.env.DATABASE_URL, // advisory-lock client
   },
-  runOptions: { dryRun: false },
+  runOptions: {
+    dryRun: false,
+    // Opt-in maintenance, run after each table's archival. Both touch S3, so
+    // schedule them on a slower cadence than archival itself.
+    cleanupOrphans: true,
+    pruneArchivesOlderThanDays: 365,
+  },
   // Optional retry policy for background archival. Defaults shown.
   archivalRetry: {
     maxAttempts: 4,
@@ -691,11 +755,11 @@ const { app } = await createServer({
 })
 ```
 
-`archiverConfig` on `createServer` accepts only `s3`, `retention`, `gracePeriod`, and `batchSize`. The finer knobs — `maxBatchBytes` (default 64 MiB), `staleClaimMinutes`, and a per-archiver `logger` — are only available when constructing `PgHistoryArchiver` directly.
+The archiver's `logger` is the server's. Everything else — including `maxBatchBytes`, `staleClaimMinutes` and `lockConnectionString` — is forwarded to the `PgHistoryArchiver` the server builds, so you no longer have to construct one by hand to change them.
 
 ### Pruning long-term archives
 
-Metadata + S3 grow linearly forever. Schedule periodic pruning of archives past compliance retention:
+Metadata + S3 grow linearly forever. Set `runOptions.pruneArchivesOlderThanDays` to trim archives past compliance retention as part of the run, or drive it yourself:
 
 ```typescript
 import { PgHistoryArchiver } from 'pg-history'
@@ -709,13 +773,13 @@ Removes both the S3 object and its `audit_archive_metadata` row in lockstep.
 
 ### Cleaning up orphan S3 files
 
-Run periodically to delete S3 files left behind by crashed archival workers:
+Files uploaded by a run that died before finalizing are referenced by no metadata row. Set `runOptions.cleanupOrphans` to sweep them as part of the run, or call it directly:
 
 ```typescript
 const orphans = await archiver.cleanupOrphanedFiles('users', { maxDeletions: 10000 })
 ```
 
-Bounded per-call so a bucket with millions of orphans doesn't tie up one DB connection for hours. Idempotent — resume on next invocation.
+Bounded per-call so a bucket with millions of orphans doesn't tie up one DB connection for hours. Idempotent — resume on next invocation. Objects younger than `staleClaimMinutes` are never deleted, so a batch still mid-upload is safe; override that window with `minAgeMinutes` when reconciling a bucket nothing is archiving into.
 
 To run archival on your own schedule instead of the server's, drive [`Orchestrator`](#orchestrator) directly.
 
@@ -729,6 +793,8 @@ To run archival on your own schedule instead of the server's, drive [`Orchestrat
 | `PG_HISTORY_STATEMENT_TIMEOUT_MS` | No | Pool-wide `statement_timeout` (default `30000`; `0` disables). Raise for a one-time archiver index build on a large existing log |
 | `PG_HISTORY_JWT_SECRET` | `pg-history/next` entry point | JWT auth on `/api/*`. The standalone server can skip it only with `PG_HISTORY_ALLOW_UNAUTHENTICATED=true`; `pg-history/next` has no such escape hatch |
 | `PG_HISTORY_JWT_ALG` | No | JWT algorithm: `HS256/384/512`, `RS256/384/512`, `ES256/384/512` (default `HS256`) |
+| `PG_HISTORY_JWT_ISSUER` | No | Required `iss` claim. Unset means the claim is not checked — any token signed with the same key is accepted, including one minted by another service |
+| `PG_HISTORY_JWT_AUDIENCE` | No | Acceptable `aud` claim(s), comma-separated |
 | `PG_HISTORY_ALLOW_UNAUTHENTICATED` | No | Set `true` to let the standalone server start history endpoints without a JWT (local/trusted only). Read by the standalone server only — `pg-history/next` ignores it |
 | `PG_HISTORY_TABLES` | `pg-history/next` entry point | Comma-separated table names. Also what enables the history API on the standalone server — omit it and only `/health` is served |
 | `PG_HISTORY_S3_BUCKET` | Archival | S3 bucket. Setting it is what enables the archiver on both entry points |
@@ -740,7 +806,9 @@ To run archival on your own schedule instead of the server's, drive [`Orchestrat
 | `PG_HISTORY_RETENTION_DAYS` | No | Default retention period (default `90`) |
 | `PG_HISTORY_GRACE_PERIOD_DAYS` | No | Grace period before hard delete (default `7`; `0` = no grace, purge once the S3 backup is confirmed) |
 | `PG_HISTORY_BATCH_SIZE` | No | Archival batch size (default `10000`) |
-| `CRON_SECRET` | Cron archival (Vercel Cron) | Protects `POST /api/archive`; also authenticates `/api/stats` and `/api/health/detailed` in cron-only deployments |
+| `PG_HISTORY_MAX_BATCH_BYTES` | No | Soft memory cap per batch in bytes (default `67108864` / 64 MiB). `pg-history/next` only; the standalone server takes it from `archiverConfig` |
+| `PG_HISTORY_STALE_CLAIM_MINUTES` | No | When an unfinalized claim is reclaimable, and the orphan-sweep safety window (default `30`) |
+| `CRON_SECRET` | Cron archival (Vercel Cron) | Authenticates `POST /api/archive`, `/api/stats` and `/api/health/detailed`. Accepted **instead of** a JWT on those routes, so setting both is fine |
 | `PG_HISTORY_SILENT_LOGS` | No | Set `1` to drop all output from the default `consoleLogger` (used by the test suite). No effect on an injected `logger` |
 
 ## Production Caveats
@@ -754,7 +822,14 @@ Knobs and trade-offs, not bugs.
 
 ### Rate limiting
 
-Built-in `/api/*` rate limiter is **per-process in-memory**: 100 requests/minute per IP with `trustProxy: true`, or a single global 1000/minute bucket otherwise. It only trusts `x-forwarded-for` / `x-real-ip` under `trustProxy` (behind a proxy that overwrites those headers) — a spoofable header would otherwise hand every request a fresh bucket. `serverless: true` skips the in-process limiter entirely — the mode-independent DoS backstop is the `search()` concurrency cap (`maxConcurrentSearches`). For production, also terminate rate limiting at your API gateway (Cloudflare, AWS API Gateway, Vercel Firewall).
+Built-in `/api/*` rate limiter is **per-process in-memory**, 100 requests/minute per client. It picks the bucket key in this order:
+
+1. `clientIdentifier(ctx)` — your own function, given the raw `Request` and the runtime `env`. Use it to bucket by API-key id or a header your edge guarantees.
+2. `x-forwarded-for` / `x-real-ip`, **only** under `trustProxy: true`. These are client-spoofable, and a per-request-spoofed header would hand every request a fresh bucket.
+3. The transport peer address (Bun and `@hono/node-server` expose it). Unspoofable, so an untrusted-proxy deployment still gets per-client buckets.
+4. A single global 1000/minute bucket — last resort, on runtimes exposing no peer address. One noisy client can consume it and 429 everyone else, so configure `clientIdentifier` or `trustProxy` rather than relying on it.
+
+`serverless: true` skips the in-process limiter entirely — the mode-independent DoS backstop is the `search()` concurrency cap (`maxConcurrentSearches`). For production, also terminate rate limiting at your API gateway (Cloudflare, AWS API Gateway, Vercel Firewall).
 
 ### `audit_archive_metadata` and S3 growth
 
@@ -774,7 +849,7 @@ Generated trigger functions run with the privileges of their **owner** — whoev
 
 ### Tamper-resistance / append-only
 
-`appendOnly: true` installs a guard trigger that blocks `UPDATE`/`DELETE` on `audit_log` outside the pg-history maintenance context (PostgreSQL 14+). That stops accidental and casual tampering, but a role with write access can still set the bypass flag — so it is tamper-*resistance*, not proof. For genuine WORM guarantees, layer on: `REVOKE UPDATE, DELETE, TRUNCATE ON audit_log` from the application role (run the archiver under a separate privileged role), enforce S3 Object Lock on the archive bucket, and add a per-row hash chain if you need cryptographic evidence.
+`appendOnly: true` installs a guard trigger that blocks `UPDATE`/`DELETE` on `audit_log` outside the pg-history maintenance context (PostgreSQL 14+). That stops accidental and casual tampering, but the context is just a session GUC: **any role that can reach the database can run `SET pg_history.maintenance = 'on'` and walk straight past the guard.** It is tamper-*resistance* against mistakes and careless code, not evidence against a motivated actor — do not describe it to an auditor as WORM. For genuine WORM guarantees, layer on: `REVOKE UPDATE, DELETE, TRUNCATE ON audit_log` from the application role (run the archiver under a separate privileged role), enforce S3 Object Lock on the archive bucket, and add a per-row hash chain if you need cryptographic evidence.
 
 ### Metrics & observability
 
@@ -820,13 +895,14 @@ try {
 
 ## Limitations
 
-- **TRUNCATE is audited** as a single marker entry (`operation: 'TRUNCATE'`, `record_id: '(truncate)'`) — it has no per-row before/after images.
+- **TRUNCATE is audited** as a single marker entry (`operation: 'TRUNCATE'`, `record_id: '(truncate)'`), searchable like any other operation. It has no per-row before/after images, so it cannot be reverted — restore from a backup or from the Parquet archive.
 - **DDL not audited.** `ALTER TABLE`, `DROP TABLE`, etc.
 - **Revert requires a primary key.**
 - **PK changes require re-setup.** Call `teardown()` then `setup()`.
 - **Column changes are fine.** JSONB adapts automatically.
 - **Text search (ILIKE) is slow on large tables.** Use JSON containment queries (`{"key": "value"}`) for indexed search. Text search has a 5-second timeout, and concurrent searches are capped (`maxConcurrentSearches`).
-- **Append-only enforcement is opt-in** (`appendOnly: true`, PostgreSQL 14+) and is tamper-resistance, not cryptographic tamper-evidence — see [Production Caveats](#tamper-resistance--append-only).
+- **Append-only enforcement is opt-in** (`appendOnly: true`, PostgreSQL 14+) and is tamper-resistance, not cryptographic tamper-evidence: any role that can reach the database can set the bypass GUC — see [Production Caveats](#tamper-resistance--append-only).
+- **Archived history leaves the read API.** Once the archiver soft-deletes a row, `getHistory` and `search` no longer return it; read it back with `listArchives` / `readArchive`.
 
 ## License
 
