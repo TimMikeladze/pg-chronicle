@@ -163,9 +163,17 @@ jobs:
       - name: Build library
         run: bun run build
 
+      # `pg-history` is declared as a published npm dependency so the dashboard
+      # can deploy on its own (the README's Vercel button clones only this
+      # directory). CI wants the opposite — the library in THIS commit — and
+      # replaces it with a symlink two steps down. Drop the declaration before
+      # installing: leaving it in makes the install resolve against the
+      # registry, which fails outright until a version is published there.
       - name: Install dashboard dependencies
-        run: bun install --frozen-lockfile
         working-directory: dashboard
+        run: |
+          bun pm pkg delete dependencies.pg-history
+          bun install
 
       # The dashboard declares `pg-history` as a published npm dependency so it
       # can be deployed on its own — the README's one-click Vercel button clones

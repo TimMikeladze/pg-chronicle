@@ -307,6 +307,23 @@ describe('/openapi is registered only when something guards it', () => {
 	})
 })
 
+describe('archiver setup without an audit log', () => {
+	/**
+	 * Setting the S3 variables without configuring any audited tables is an easy
+	 * mistake — the standalone server enables the archiver off `S3_BUCKET` alone.
+	 * The first ALTER then failed with a bare `relation "public.audit_log" does
+	 * not exist`, which names the symptom and not the cause.
+	 */
+	test('fails with an error that names the actual mistake', async () => {
+		const pool = await getTestConnection()
+		const { setupArchiverSchema } = await import('../src/schema')
+
+		await expect(setupArchiverSchema(pool)).rejects.toThrow(
+			/archiver extends the audit table/i,
+		)
+	})
+})
+
 describe('request hardening', () => {
 	test('oversized bodies are rejected before any handler runs', async () => {
 		const pool = await getTestConnection()

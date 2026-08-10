@@ -197,6 +197,25 @@ async function applyArchiverSchema(pool: Pool): Promise<void> {
 	const metadataTable = `${s}."audit_archive_metadata"`
 	const statsTable = `${s}."audit_archival_stats"`
 
+	// The archiver extends the table PgHistory.setup() creates; it does not
+	// create it. Enabling the archiver first (S3 variables set, no audited
+	// tables) otherwise fails on the first ALTER with a bare
+	// `relation "public.audit_log" does not exist`, which says nothing about
+	// what the operator actually got wrong.
+	const auditLogExists = await pool.query(
+		`SELECT 1 FROM pg_class c
+		 JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = current_schema() AND c.relname = 'audit_log'`,
+	)
+	if (auditLogExists.rows.length === 0) {
+		throw new Error(
+			`pg-history: cannot set up the archiver — ${auditTable} does not exist. ` +
+				'The archiver extends the audit table rather than creating it, so run ' +
+				'PgHistory.setup() first (on the standalone server, that means setting ' +
+				'PG_HISTORY_TABLES alongside the S3 configuration).',
+		)
+	}
+
 	// Drop any INVALID archiver parent indexes (from an interrupted CONCURRENTLY
 	// build) so the CREATE ... IF NOT EXISTS below actually rebuilds them instead
 	// of skipping over the broken one. Dropping a partitioned parent index

@@ -98,6 +98,12 @@ async function checkModuleFormats() {
 				...process.env,
 				PG_HISTORY_DATABASE_URL: ADMIN_URL,
 				PG_HISTORY_PORT: String(port),
+				// This check is about the HTTP listener, not the archiver. CI sets
+				// S3 variables job-wide, and inheriting them would switch the
+				// archiver on against a database with no audit_log — a real failure,
+				// but not the one under test here.
+				PG_HISTORY_S3_BUCKET: '',
+				PG_HISTORY_TABLES: '',
 			},
 			stdio: ['ignore', 'pipe', 'pipe'],
 		})
