@@ -119,6 +119,7 @@ Examples assert their own output, so they exit non-zero if the behavior they doc
 | [archival-lifecycle.ts](./examples/archival-lifecycle.ts) | Full S3 archival pipeline: archive, soft delete, hard delete |
 | [error-handling.ts](./examples/error-handling.ts) | Typed error classes, catching specific errors |
 | [next/](./examples/next) | Files to copy into a Next.js app: catch-all route handler, `vercel.json` cron, plus `test-locally.ts` that exercises the serverless setup against Docker |
+| [node/](./examples/node) | Plain Node.js consumer of the built package — ESM import, CommonJS `require`, the `pg-history` bin, and a live audit round trip, so a broken build fails here and not in a user's app |
 
 ## How It Works
 
@@ -128,8 +129,10 @@ pg-history uses PostgreSQL's own trigger system to capture every change. Nothing
 
 When you call `history.setup()`, pg-history creates:
 - A partitioned `audit_log` table (one partition per tracked table for fast queries)
-- An `AFTER` trigger on each tracked table
-- GIN indexes on the JSONB columns for fast search
+- Two `AFTER` triggers on each tracked table: a row trigger for INSERT/UPDATE/DELETE and a statement trigger for TRUNCATE (row triggers never fire on TRUNCATE)
+- GIN indexes (`jsonb_path_ops`) on `old_data` / `new_data` for containment search, plus btree indexes on `changed_at` and `(table_name, record_id, changed_at)`
+
+An UPDATE that changes nothing (`OLD IS NOT DISTINCT FROM NEW` — e.g. `UPDATE users SET name = name`) writes no audit row. PostgreSQL fires a row trigger for every UPDATE statement whether or not a value moved, and recording those would bloat the trail with no-ops. The comparison is on the whole row, so an update touching only an excluded column still records an entry.
 
 The triggers run inside PostgreSQL. Once installed, **every write is audited regardless of what connects** — your app, a migration script, `psql`, another microservice, or a serverless function. If it touches the table, it gets logged.
 
@@ -182,6 +185,8 @@ SET LOCAL pg_history.actor = 'user-42';   -- same transaction as the DML
 
 When the archiver is enabled, additional columns track lifecycle: `archived_at`, `s3_path`, `soft_deleted_at`, `claim_id`, `claimed_at`. Treat these as internal — `getHistory` and `search` filter on them automatically (soft-deleted rows hidden, archived rows still visible until hard-deleted).
 
+`archiver.setup()` also creates two side tables: `audit_archive_metadata` (one row per uploaded Parquet file — path, day, record count, size, SHA-256; this is what `listArchives` reads) and `audit_archival_stats` (a per-table cache of pending-archive / pending-delete counts, so `/api/stats` never has to scan `audit_log`).
+
 ### Primary Key Handling
 
 `record_id` is derived from the source table's PK:
@@ -233,7 +238,7 @@ Excludes soft-deleted entries when the archiver schema is present.
 
 #### `search(options): Promise<SearchPaginatedResult<AuditEntry>>`
 
-Options: `tables` (required), `query`, `operation` (`'INSERT'` / `'UPDATE'` / `'DELETE'`), `dateFrom`, `dateTo`, `limit` (default 100, max 1000), `cursor` (typed `SearchCursor`).
+Options: `tables` (required), `query`, `operation` (`'INSERT'` / `'UPDATE'` / `'DELETE'` / `'TRUNCATE'`), `dateFrom`, `dateTo`, `limit` (default 100, max 1000), `cursor` (typed `SearchCursor`).
 
 If `query` looks like JSON (`{...}`), uses `@>` containment (GIN-indexed) with a 30s timeout. Otherwise falls back to `ILIKE` text search with a 5s timeout. Both timeouts use `SET LOCAL statement_timeout` so the pooled connection returns clean.
 
@@ -247,11 +252,12 @@ Restores a record to the state in the given audit entry. Runs in a single transa
 |-------------|---------------|
 | `INSERT` | Deletes the row |
 | `DELETE` | Re-inserts from `old_data` (unique/FK violations surface as `RevertError`) |
-| `UPDATE` | Restores `old_data` values via PK |
+| `UPDATE` | Restores `old_data` values via PK (non-PK columns only) |
+| `TRUNCATE` | Rejected with `RevertError` — the marker entry has no per-row data |
 
-Cross-checks audit columns against current schema; rejects revert if columns drifted. `GENERATED ALWAYS` columns are excluded from the INSERT.
+Cross-checks audit columns against current schema; rejects revert if columns drifted. `GENERATED ALWAYS` columns are excluded from the INSERT. Soft-deleted audit entries are not usable as a revert source: the row is on its way out of Postgres and may vanish mid-transaction.
 
-**Reverts are audited by default** (`suppressAuditTriggers: false`) — the revert's own write fires the audit trigger, so the trail records that the data was changed back (no silent repudiation) and no special DB privilege is needed. Pass `{ suppressAuditTriggers: true }` to skip re-auditing (avoids "revert of revert" chains); that path uses `session_replication_role = 'replica'` and requires the `pg_replication` role or superuser. Over the REST API, send `"suppressAuditTriggers": true` in the request body.
+**Reverts are audited by default** (`suppressAuditTriggers: false`) — the revert's own write fires the audit trigger, so the trail records that the data was changed back (no silent repudiation) and no special DB privilege is needed. Pass `{ suppressAuditTriggers: true }` to skip re-auditing (avoids "revert of revert" chains); that path uses `session_replication_role = 'replica'` and requires superuser, or the `pg_replication` role on PostgreSQL 16+. Without the privilege it fails with a `RevertError` naming the missing grant, not a raw `42501`. Over the REST API, send `"suppressAuditTriggers": true` in the request body.
 
 #### `invalidatePrimaryKeyCache(tableName?): void`
 
@@ -289,15 +295,19 @@ await archiver.setup()                 // idempotent — adds claim/archive colu
 
 | Method | Purpose |
 |--------|---------|
-| `processBatch(table, cutoffDate)` | Claim → upload → finalize one day-bounded batch. Returns `{recordCount, fileSize, s3Path, status}`. |
-| `softDeleteArchived(table)` | Set `soft_deleted_at` on rows past grace period with confirmed S3 backup. |
-| `hardDeletePurged(table)` | Verify S3 existence + checksum, then DELETE rows past second grace period inside a locked TX (no network I/O under lock). |
+| `processBatch(table, cutoffDate)` | Claim → upload → finalize one day-bounded batch. Returns `BatchResult`: `{recordCount, fileSize, s3Path, status, errorMessage?}`. |
+| `softDeleteArchived(table)` | Set `soft_deleted_at` on rows past grace period with confirmed S3 backup. One `batchSize` batch per call. |
+| `hardDeletePurged(table)` | Verify S3 existence + checksum, then DELETE rows past second grace period inside a locked TX (no network I/O under lock). One `batchSize` batch per call. |
 | `reapStaleClaims(minutes?)` | Release claims older than `staleClaimMinutes` (worker-crash recovery). |
-| `listArchives(table, {from?, to?, limit?})` | The archive index: `{s3Path, archiveDate, recordCount, fileSize, checksumSha256, archivedAt}` per file, newest first. |
+| `listArchives(table, {from?, to?, limit?})` | The archive index: an `ArchiveFile` (`{tableName, s3Path, archiveDate, recordCount, fileSize, checksumSha256, archivedAt}`) per file, newest first. `limit` defaults to 100, capped at 1000. |
 | `readArchive(s3Path, {verifyChecksum?})` | Fetch and decode one archived Parquet file back into audit rows. Verifies the recorded SHA-256 by default. |
 | `cleanupOrphanedFiles(table, {maxDeletions=10000, minAgeMinutes?})` | Delete S3 files not referenced in `audit_archive_metadata`. |
 | `pruneArchive(table, olderThan)` | Paired DELETE of metadata + S3 for archives past compliance retention. |
 | `close(timeoutMs?)` | End internal Pool with timeout. |
+
+**All three lifecycle methods return after one batch.** Driving them yourself means looping each to exhaustion — `softDeleteArchived` and `hardDeletePurged` until they return `0`, and `processBatch` until `status: 'completed'` **with `recordCount === 0`**, which is the only signal a table is drained. `'reaped'` (the claim was released under it) and `'contended'` (another worker holds the rows) both mean this attempt produced nothing while rows are still pending — keep going, under a retry bound. `Orchestrator.run()` already does all of this.
+
+`hardDeletePurged` compares bytes, not just existence: it re-checks the SHA-256 recorded at upload and refuses to delete rows whose object no longer matches. Archives written before checksum tracking have no recorded hash and fall back to an existence check.
 
 ### `Orchestrator`
 
@@ -305,13 +315,19 @@ await archiver.setup()                 // idempotent — adds claim/archive colu
 const orch = new Orchestrator({
   s3, retention, gracePeriod,
   batchSize: 10000,                    // optional, default 10000
+  maxBatchBytes: 64 * 1024 * 1024,     // optional, forwarded to every archiver it creates
+  staleClaimMinutes: 30,               // optional, forwarded to every archiver it creates
   lockConnectionString: 'postgres://...', // optional — bypass pooler
   logger,
 })
 const stats = await orch.run(pool, { dryRun: false, targetTable: 'users' })
 ```
 
-`run()` discovers audited tables (or processes `targetTable`), takes a 64-bit advisory lock per table, reaps stale claims, then loops `processBatch → softDelete → hardDelete`. Stats per table aggregated into `OrchestratorStats`.
+`run()` discovers audited tables by looking for pg-history triggers in the current schema (or processes `targetTable`), takes a 64-bit advisory lock per table, reaps stale claims, then loops `processBatch → softDelete → hardDelete` to exhaustion. Stats per table aggregated into `OrchestratorStats`.
+
+The per-table lock is **`pg_try_advisory_lock`** — a table another instance is already working on is skipped, not waited on, and comes back with `skipped: true` in its `TableStats`. Two overlapping runs therefore divide the tables between them rather than one blocking; a table skipped by every run in a window is simply picked up by the next one.
+
+`{ dryRun: true }` reports without writing: it counts the rows each stage *would* touch, uploads nothing and deletes nothing, and skips the archival-stats refresh. Those counts go to the **logger only** — one `DRY RUN` record per table carrying `wouldArchive` / `wouldSoftDelete` / `wouldHardDelete`. The returned `OrchestratorStats` counters stay at `0`, so read the log (or inject a capturing `logger`) rather than the return value.
 
 ### `createServer`
 
@@ -326,7 +342,9 @@ const { app, dispose } = await createServer({
   runOptions: { dryRun: false, targetTable: 'users' },
   // Auth — see "Server & REST API"
   allowUnauthenticated: false,          // required opt-in to serve history without a JWT
+  jwt: { issuer: 'https://issuer', audience: 'pg-history' }, // pin the token to this API
   trustProxy: false,                    // trust x-forwarded-for for rate limiting (proxy only)
+  clientIdentifier: ({ request, env }) => request.headers.get('x-api-key-id') ?? undefined,
   authorize: async ({ actor, table, recordId, action }) => {
     // return false or throw to deny with 403
     return true
@@ -369,12 +387,16 @@ interface OrchestratorStats {
   totalRecordsArchived: number
   totalRecordsSoftDeleted: number
   totalRecordsHardDeleted: number
+  totalOrphanFilesDeleted: number   // 0 unless runOptions.cleanupOrphans was set
+  totalArchivesPruned: number       // 0 unless runOptions.pruneArchivesOlderThanDays was set
   errors: Array<{ table: string; operation: string; error: string }>
   durationMs: number
 }
 ```
 
-All types exported from `pg-history` root: `ArchiverConfig`, `AuditEntry`, `AuthorizeContext`, `AuthorizeFn`, `GetHistoryOptions`, `OrchestratorConfig`, `OrchestratorStats`, `PaginatedResult`, `PgHistoryConfig`, `RetentionConfig`, `RunOptions`, `S3Config`, `SearchCursor`, `SearchOptions`, `SearchPaginatedResult`, `ServerConfig`.
+Types exported from the `pg-history` root: `ArchiveFile`, `ArchiverConfig`, `AuditEntry`, `AuthorizeContext`, `AuthorizeFn`, `BatchResult`, `ClientIdentifierFn`, `ClientIdentityContext`, `GetHistoryOptions`, `LogContext`, `Logger`, `LogLevel`, `OrchestratorConfig`, `OrchestratorStats`, `PaginatedResult`, `PgHistoryConfig`, `RetentionConfig`, `RunOptions`, `S3Config`, `SearchCursor`, `SearchOptions`, `SearchPaginatedResult`, `ServerConfig`, `TableStats`.
+
+Values exported alongside them: `PgHistory`, `PgHistoryArchiver`, `Orchestrator`, `createServer`, `readParquet`, `writeParquet`, `consoleLogger`, `silentLogger`, and the [error classes](#error-handling).
 
 ## Server & REST API
 
@@ -405,7 +427,7 @@ Bun.serve({ port: 3001, fetch: app.fetch })
 | `GET` | `/health` | No | Minimal liveness probe (`{status}` only) |
 | `GET` | `/api/health/detailed` | JWT or cron | Archival status + attempts + last completion (requires `enableArchiver`) |
 | `GET` | `/openapi` | JWT (unless `publicOpenApi: true`); not registered unless one of JWT / `publicOpenApi` / `allowUnauthenticated` is configured | OpenAPI spec |
-| `GET` | `/api/stats` | JWT or cron | Archival stats (requires `enableArchiver`) |
+| `GET` | `/api/stats` | JWT or cron | Archival backlog per table, as of the last run — not live (requires `enableArchiver`) |
 | `GET` | `/api/history/:table/:recordId` | JWT | Record history (requires `enableHistory`) |
 | `POST` | `/api/history/search` | JWT | Search history (requires `enableHistory`) |
 | `POST` | `/api/history/revert` | JWT | Revert a record (requires `enableHistory`) |
@@ -434,6 +456,8 @@ Bun.serve({ port: 3001, fetch: app.fetch })
 { "table": "users", "recordId": "1", "auditEntryId": "42",
   "suppressAuditTriggers": false }
 ```
+
+`recordId` is capped at 512 characters over HTTP (and may not contain a null byte). The trigger stores composite keys in full, so a pathologically long composite key is recorded and correlated correctly but cannot be fetched through the REST API — use `getHistory` in-process for those.
 
 Reads return the `PaginatedResult` shape (`{data, nextCursor, hasMore}`); revert returns `{success: true}`. Failures return `{ "error": { "code": "VALIDATION_ERROR", "message": "..." } }` — codes are `VALIDATION_ERROR` / `INVALID_TABLE` (400), `UNAUTHORIZED` (401), `FORBIDDEN` (403), `NOT_FOUND` (404), `REVERT_ERROR` (422), `RATE_LIMITED` (429), and `DATABASE_ERROR` / `ARCHIVAL_ERROR` / `NOT_CONFIGURED` (500). Bodies over 1 MB are rejected.
 
@@ -500,7 +524,9 @@ It reads the same environment variables the server does — `PG_HISTORY_TABLES` 
 | `/history/[table]/[recordId]` | One record's full timeline, oldest/newest ordering, per-entry revert |
 | `/archival` | Archival status and on-demand runs |
 | `/openapi` | The API reference, rendered from the OpenAPI document |
+| `/openapi.json` | That document itself |
 | `/api/*` | The pg-history REST API itself — for cron, scripts and other services |
+| `/health` | Public liveness probe, added by the dashboard because the catch-all only serves `/api/**` |
 | `/login` | The password gate |
 
 ### Access control
@@ -536,7 +562,7 @@ The button clones [`dashboard/`](./dashboard) on its own — the [Dashboard](#da
 | `PG_HISTORY_JWT_SECRET` | Long random string. The dashboard signs its own short-lived tokens with it and it never reaches the browser |
 | `PG_HISTORY_DASHBOARD_PASSWORD` | Long random string. The password for the UI itself — without it the deployed dashboard refuses to serve pages, because reaching one means being able to read and revert every audited record |
 
-**What arrives prefilled**, straight from the library's defaults, so the form is a click-through: `PG_HISTORY_JWT_ALG=HS256`, `PG_HISTORY_POOL_MAX=3`, `PG_HISTORY_STATEMENT_TIMEOUT_MS=30000`, `PG_HISTORY_DASHBOARD_ACTOR=dashboard`, `PG_HISTORY_RETENTION_DAYS=90`, `PG_HISTORY_GRACE_PERIOD_DAYS=7`, `PG_HISTORY_BATCH_SIZE=10000`. Defaults are only ever passed for non-secret values — the clone URL ends up in browser history, which is why the three above are the ones left blank.
+**What arrives prefilled**, straight from the library's defaults, so the form is a click-through: `PG_HISTORY_JWT_ALG=HS256`, `PG_HISTORY_POOL_MAX=3`, `PG_HISTORY_STATEMENT_TIMEOUT_MS=30000`, `PG_HISTORY_DASHBOARD_ACTOR=dashboard`, `PG_HISTORY_RETENTION_DAYS=90`, `PG_HISTORY_GRACE_PERIOD_DAYS=7`, `PG_HISTORY_BATCH_SIZE=10000`. Defaults are only ever passed for non-secret values — the clone URL ends up in browser history, which is why the two secrets above arrive blank (as does the connection string, which carries a password).
 
 **After the first deploy**, add the archiver's own variables in the project settings — `PG_HISTORY_S3_BUCKET` (this is the switch: without it there is no `/api/archive` and no archival UI), the S3 credentials, and `CRON_SECRET`. Until `CRON_SECRET` is set the nightly cron gets a `401`; until the bucket is set it gets a `404`. Both are inert, not broken — see [Cron Archival](#cron-archival-vercel-cron).
 
@@ -648,6 +674,15 @@ Two things to know: `POST /api/archive` only exists when `PG_HISTORY_S3_BUCKET` 
 
 If archival takes longer than the function timeout, it will be interrupted. The design is retry-safe — unfinished records stay unarchived and get picked up on the next run. Set `PG_HISTORY_BATCH_SIZE` to a lower value (1000-2000) to keep individual runs within timeout limits.
 
+**Turn the retry loop off under cron.** `POST /api/archive` runs the same `archivalRetry` policy as background archival — up to 4 attempts, sleeping 5s / 15s / 60s (plus 0-25% jitter) *inside the request*. On a serverless function that is a guaranteed timeout rather than a recovery, and the scheduler is already the retry mechanism. One-shot it:
+
+```typescript
+// app/api/[[...route]]/route.ts
+export const { GET, POST, OPTIONS } = createHandlers({
+  archivalRetry: { maxAttempts: 1 },   // the cron schedule is the retry
+})
+```
+
 **Not on Vercel?** `vercel.json` and `CRON_SECRET` injection are the only Vercel-specific pieces. Anywhere else, keep the same route handler and call `POST /api/archive` from your own scheduler (GitHub Actions, AWS EventBridge, Cloud Scheduler, a system crontab), sending `Authorization: Bearer <CRON_SECRET>` yourself.
 
 ### Serverless Considerations
@@ -655,7 +690,7 @@ If archival takes longer than the function timeout, it will be interrupted. The 
 | Concern | Impact | Mitigation |
 |---------|--------|------------|
 | Connection pooling | Each invocation may create a pool | Use an external pooler (PgBouncer, Neon, Supabase, RDS Proxy). Set `PG_HISTORY_POOL_MAX` low (2-3). |
-| Cold starts | `setup()` runs on every cold instance | Already cheap: when the schema exists it short-circuits after one catalog probe (~5ms). Cache the promise at module level and call it freely. |
+| Cold starts | `setup()` runs on every cold instance | It re-runs the whole idempotent DDL sweep (~15 round trips for one table) under an advisory lock, not a single probe — nothing is created twice, but it isn't free. Cache the promise at module level so it happens once per instance, not once per request. |
 | Rate limiting | In-memory rate limiter resets per invocation | Use platform-level rate limiting (API Gateway, Vercel Firewall, Cloudflare). |
 
 ### Long-lived server (Docker)
@@ -696,7 +731,9 @@ S3 path: `{table}/year={YYYY}/month={MM}/day={DD}/data-{uuid}.parquet`
 
 ### What lands in the Parquet file
 
-Ten columns, SNAPPY-compressed: `id` (INT64), `table_name`, `record_id`, `operation`, `changed_at` (TIMESTAMP), `old_data`, `new_data`, `db_user`, `app_actor`, `client_addr`. The JSONB payloads are written as exact JSON **text**, so integers past 2^53 survive the round trip. The attribution columns are archived with the rest: once a row is hard-deleted the Parquet file is the only remaining record of the change, and it has to be able to say who made it.
+Ten columns, SNAPPY-compressed: `id` (INT64), `table_name`, `record_id`, `operation`, `changed_at` (TIMESTAMP), `old_data`, `new_data`, `db_user`, `app_actor`, `client_addr`. The attribution columns are archived with the rest: once a row is hard-deleted the Parquet file is the only remaining record of the change, and it has to be able to say who made it.
+
+The JSONB payloads are written as exact JSON **text** — the archiver selects them `::text` and passes the string through untouched, so an integer past 2^53 is stored losslessly and a DuckDB or Athena consumer reading the column as text gets the full value. `readArchive` / `readParquet` hand it back through `JSON.parse`, which is where such a value would lose precision: the *file* preserves it, the JavaScript objects those helpers return do not. Parse it yourself from the raw column if that matters. (A payload that fails to parse is not dropped — the row comes back with `{ _raw, _parseError: true }` in place of the object and a logged warning.)
 
 ### Reading an archive back
 
@@ -711,7 +748,7 @@ const rows = await archiver.readArchive(archives[0].s3Path)
 //      db_user, app_actor, client_addr }, ...]
 ```
 
-`readArchive` verifies the object against the SHA-256 recorded at upload time and throws on a mismatch, so a silently corrupted or replaced archive cannot be read back as if it were genuine. Pass `{ verifyChecksum: false }` to read an object that has no metadata row. For files already on local disk, `readParquet` / `writeParquet` are exported too.
+`readArchive` verifies the object against the SHA-256 recorded at upload time and throws on a mismatch, so a silently corrupted or replaced archive cannot be read back as if it were genuine. An object with no metadata row at all is refused outright — pass `{ verifyChecksum: false }` to read one anyway. A metadata row that predates checksum tracking has nothing to compare against: those reads succeed but log `returning UNVERIFIED contents`, because "no checksum stored" and "checksum matched" must not look alike from the outside. For files already on local disk, `readParquet` / `writeParquet` are exported too.
 
 ### Configuration
 
@@ -745,10 +782,12 @@ const { app } = await createServer({
     cleanupOrphans: true,
     pruneArchivesOlderThanDays: 365,
   },
-  // Optional retry policy for background archival. Defaults shown.
+  // Optional retry policy. Defaults shown. Applies to background archival AND
+  // to POST /api/archive — set maxAttempts: 1 under cron (see Cron Archival).
   archivalRetry: {
     maxAttempts: 4,
-    delays: [5_000, 15_000, 60_000], // needs at least maxAttempts - 1 entries
+    delays: [5_000, 15_000, 60_000], // needs at least maxAttempts - 1 entries;
+                                     // each is used with 0-25% added jitter
   },
   // Optional CORS — omit to disable entirely (server-to-server default)
   cors: { origin: 'https://app.example.com', credentials: true },
@@ -802,14 +841,26 @@ To run archival on your own schedule instead of the server's, drive [`Orchestrat
 | `PG_HISTORY_S3_ACCESS_KEY_ID` | No | Explicit access key. Omit both key vars to use the default AWS credential chain (IAM role, instance profile, env) |
 | `PG_HISTORY_S3_SECRET_ACCESS_KEY` | No | Explicit secret key |
 | `PG_HISTORY_S3_REGION` | No | S3 region (default `us-east-1`) |
-| `PG_HISTORY_ARCHIVAL_INTERVAL_MS` | No | Background archival interval (default `3600000` / 1 hour) |
+| `PG_HISTORY_ARCHIVAL_INTERVAL_MS` | No | Background archival interval (default `3600000` / 1 hour, floored at `60000` so a bad value can't spin a tight loop). Long-lived server only — `serverless: true` runs no background archival |
 | `PG_HISTORY_RETENTION_DAYS` | No | Default retention period (default `90`) |
 | `PG_HISTORY_GRACE_PERIOD_DAYS` | No | Grace period before hard delete (default `7`; `0` = no grace, purge once the S3 backup is confirmed) |
 | `PG_HISTORY_BATCH_SIZE` | No | Archival batch size (default `10000`) |
 | `PG_HISTORY_MAX_BATCH_BYTES` | No | Soft memory cap per batch in bytes (default `67108864` / 64 MiB). `pg-history/next` only; the standalone server takes it from `archiverConfig` |
-| `PG_HISTORY_STALE_CLAIM_MINUTES` | No | When an unfinalized claim is reclaimable, and the orphan-sweep safety window (default `30`) |
+| `PG_HISTORY_STALE_CLAIM_MINUTES` | No | When an unfinalized claim is reclaimable, and the orphan-sweep safety window (default `30`). `pg-history/next` only; the standalone server takes it from `archiverConfig` |
 | `CRON_SECRET` | Cron archival (Vercel Cron) | Authenticates `POST /api/archive`, `/api/stats` and `/api/health/detailed`. Accepted **instead of** a JWT on those routes, so setting both is fine |
 | `PG_HISTORY_SILENT_LOGS` | No | Set `1` to drop all output from the default `consoleLogger` (used by the test suite). No effect on an injected `logger` |
+| `VERCEL_URL` | No | Injected by Vercel. Used as the OpenAPI `servers[].url` when `baseUrl` is unset |
+
+### Dashboard-only
+
+Read by [`dashboard/`](./dashboard), not by the library. It also reads every variable above — `PG_HISTORY_TABLES` enables the history screens and `PG_HISTORY_S3_BUCKET` turns on the archival panels. One narrowing: `PG_HISTORY_JWT_ALG` must be symmetric here (`HS256/384/512`), because the dashboard both signs and verifies with the same secret; it refuses to start on an `RS*`/`ES*` value.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PG_HISTORY_DASHBOARD_PASSWORD` | Production UI | Password for the UI. Without it (and without the opt-out below) the deployed dashboard refuses to render, because a page load is enough to read and revert every audited record. Development runs open |
+| `PG_HISTORY_DASHBOARD_ALLOW_ANONYMOUS` | No | Set `true` to serve the UI unauthenticated in production. Only correct behind an access proxy / SSO that authenticates every request |
+| `PG_HISTORY_DASHBOARD_SESSION_TTL_HOURS` | No | Lifetime of a dashboard sign-in cookie (default `12`) |
+| `PG_HISTORY_DASHBOARD_ACTOR` | No | Written to the `sub` of the token the dashboard mints for itself, which pg-history logs as `app_actor` on every revert (default `dashboard`) |
 
 ## Production Caveats
 
@@ -841,7 +892,9 @@ S3 existence + checksum verification happens **before** the delete transaction; 
 
 ### Memory under wide rows
 
-`maxBatchBytes` (default 64 MiB) is a **soft cap based on serialized JSON length**. Peak process memory is roughly this ×3 (decoded rows + Parquet buffer + upload buffer), so the 64 MiB default stays safe on a 512 MB VM. If you audit columns with multi-MB jsonb, keep `maxBatchBytes` well under 30-50% of available RSS. Excluded columns (`excludeColumns`) reduce the per-row payload at source.
+`maxBatchBytes` (default 64 MiB) is a **soft cap based on serialized JSON length**. The claim transaction sums `old_data` + `new_data` string length per row and releases the tail back for the next run once the running total crosses the limit. Peak process memory is roughly this ×3 (decoded rows + Parquet buffer + upload buffer), so the 64 MiB default stays safe on a 512 MB VM. If you audit columns with multi-MB jsonb, keep `maxBatchBytes` well under 30-50% of available RSS. Excluded columns (`excludeColumns`) reduce the per-row payload at source.
+
+The cap trims the tail, never the first row: a single row larger than `maxBatchBytes` is still processed alone, because releasing it too would make the batch empty and stall the table forever. Lowering the cap cannot defend against one enormous jsonb value — `excludeColumns` is the only thing that can.
 
 ### Trigger ownership (SECURITY DEFINER)
 

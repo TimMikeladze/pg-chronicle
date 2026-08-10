@@ -95,7 +95,7 @@ function jsonbPayload(rowVar: 'NEW' | 'OLD', excludeColumns: string[]): string {
  * record_id is derived from the primary key:
  *   - 0 PK columns: md5(row_to_json) — stable hash
  *   - 1 PK column: column value cast to text
- *   - N PK columns: columns joined with '|' delimiter
+ *   - N PK columns: columns joined with chr(31), the ASCII unit separator
  */
 export function buildTriggerFunctionSql(
 	args: BuildTriggerFunctionArgs,
