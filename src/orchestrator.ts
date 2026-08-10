@@ -23,6 +23,8 @@ export class Orchestrator {
 	private retentionConfig: RetentionConfig
 	private gracePeriod: number
 	private batchSize: number
+	private maxBatchBytes: number | undefined
+	private staleClaimMinutes: number | undefined
 	private logger: Logger
 	private lockConnectionString: string | undefined
 
@@ -55,6 +57,8 @@ export class Orchestrator {
 			this.retentionConfig = cfg.retention
 			this.gracePeriod = cfg.gracePeriod
 			this.batchSize = cfg.batchSize ?? 10_000
+			this.maxBatchBytes = cfg.maxBatchBytes
+			this.staleClaimMinutes = cfg.staleClaimMinutes
 			this.logger = cfg.logger ?? consoleLogger
 			this.lockConnectionString = cfg.lockConnectionString
 		} else {
@@ -162,6 +166,17 @@ export class Orchestrator {
 		return result.rows.map((row: { table_name: string }) => row.table_name)
 	}
 
+	/**
+	 * Retention cutoff for a table, computed from the **Node** clock.
+	 *
+	 * `run()` deliberately does NOT use this: it derives both cutoffs from the
+	 * database clock, so archival cannot disagree with `softDeleteArchived` /
+	 * `hardDeletePurged` (which do their interval arithmetic in SQL) under
+	 * app-server/DB clock skew. This method remains for callers driving
+	 * `PgHistoryArchiver.processBatch` themselves, and for inspecting the
+	 * configured policy — if the two ever need to agree exactly, ask the
+	 * database, not this.
+	 */
 	getRetentionCutoff(tableName: string): Date {
 		const retentionDays =
 			this.retentionConfig.tables?.[tableName] ?? this.retentionConfig.default
@@ -182,6 +197,8 @@ export class Orchestrator {
 			totalRecordsArchived: 0,
 			totalRecordsSoftDeleted: 0,
 			totalRecordsHardDeleted: 0,
+			totalOrphanFilesDeleted: 0,
+			totalArchivesPruned: 0,
 			errors: [],
 			durationMs: 0,
 		}
@@ -208,6 +225,8 @@ export class Orchestrator {
 				stats.totalRecordsArchived += tableStats.recordsArchived
 				stats.totalRecordsSoftDeleted += tableStats.recordsSoftDeleted
 				stats.totalRecordsHardDeleted += tableStats.recordsHardDeleted
+				stats.totalOrphanFilesDeleted += tableStats.orphanFilesDeleted
+				stats.totalArchivesPruned += tableStats.archivesPruned
 
 				// Update archival stats OUTSIDE the advisory lock (held by processTable).
 				// updateArchivalStats scans audit_log with FILTER aggregates which can be
@@ -260,6 +279,8 @@ export class Orchestrator {
 			recordsArchived: 0,
 			recordsSoftDeleted: 0,
 			recordsHardDeleted: 0,
+			orphanFilesDeleted: 0,
+			archivesPruned: 0,
 			durationMs: 0,
 		}
 
@@ -372,6 +393,8 @@ export class Orchestrator {
 				retention: this.retentionConfig,
 				gracePeriod: this.gracePeriod,
 				batchSize: this.batchSize,
+				maxBatchBytes: this.maxBatchBytes,
+				staleClaimMinutes: this.staleClaimMinutes,
 				logger: this.logger,
 			})
 			// Schema is already initialized by callers that use the archiver
@@ -401,9 +424,9 @@ export class Orchestrator {
 			// Archive old records in batches
 			let hasMore = true
 			let batchNumber = 0
-			// Bound reaper-race retries so a pathological repeat can't loop forever.
-			let reapedRetries = 0
-			const MAX_REAPED_RETRIES = 5
+			// Bound contention retries so a pathological repeat can't loop forever.
+			let contendedRetries = 0
+			const MAX_CONTENDED_RETRIES = 5
 
 			while (hasMore) {
 				batchNumber++
@@ -413,22 +436,32 @@ export class Orchestrator {
 
 					stats.recordsArchived += batchResult.recordCount
 
-					if (batchResult.status === 'reaped') {
-						// The batch's rows were released back to pending (a reaper reset
-						// the claim mid-upload), NOT "no work left". Keep looping so they
-						// get re-claimed, but cap retries to avoid an infinite loop.
-						reapedRetries++
-						if (reapedRetries > MAX_REAPED_RETRIES) {
+					if (
+						batchResult.status === 'reaped' ||
+						batchResult.status === 'contended'
+					) {
+						// Two ways a batch can produce nothing while work remains:
+						//   reaped     a reaper reset our claim mid-upload
+						//   contended  another archiver claimed the rows we peeked at
+						// Neither means "no work left" — keep looping so the rows get
+						// picked up, but cap retries to avoid spinning against a peer
+						// that is steadily out-racing us (it is making progress too).
+						contendedRetries++
+						if (contendedRetries > MAX_CONTENDED_RETRIES) {
 							this.logger.warn(
-								'Aborting table archival after repeated reaper races; remaining rows will be picked up next run',
-								{ table: tableName, retries: reapedRetries },
+								'Aborting table archival after repeated claim races; remaining rows will be picked up next run',
+								{
+									table: tableName,
+									retries: contendedRetries,
+									lastStatus: batchResult.status,
+								},
 							)
 							hasMore = false
 						}
 					} else if (batchResult.recordCount === 0) {
 						hasMore = false
 					} else {
-						reapedRetries = 0
+						contendedRetries = 0
 						this.logger.info('Batch archived', {
 							table: tableName,
 							batch: batchNumber,
@@ -491,6 +524,72 @@ export class Orchestrator {
 			}
 
 			stats.recordsHardDeleted = totalHardDeleted
+
+			// Optional maintenance phases. Both are opt-in because they LIST or
+			// DELETE in S3 and are meant to run on a slower cadence than archival.
+			// They run last so a failure here cannot cost us the archival work
+			// already committed above — hence the try/catch rather than a throw.
+			//
+			// Deliberately INSIDE the table's advisory lock. That extends how long
+			// the lock is held (an orphan sweep LISTs the whole table prefix), but
+			// it is what makes the sweep safe: no other instance can be mid-upload
+			// for this table, so the only thing protecting an in-flight object is
+			// not the age window alone.
+			if (options.cleanupOrphans) {
+				try {
+					const cleanupOpts =
+						typeof options.cleanupOrphans === 'object'
+							? options.cleanupOrphans
+							: {}
+					stats.orphanFilesDeleted = await archiver.cleanupOrphanedFiles(
+						tableName,
+						cleanupOpts,
+					)
+					if (stats.orphanFilesDeleted > 0) {
+						this.logger.info('Deleted orphaned archive files', {
+							table: tableName,
+							count: stats.orphanFilesDeleted,
+						})
+					}
+				} catch (error) {
+					this.logger.warn('Orphan cleanup failed', {
+						table: tableName,
+						err: error,
+					})
+				}
+			}
+
+			if (options.pruneArchivesOlderThanDays !== undefined) {
+				try {
+					const days = options.pruneArchivesOlderThanDays
+					if (!Number.isFinite(days) || days < 1) {
+						throw new Error(
+							`pruneArchivesOlderThanDays must be a positive number of days (got: ${days})`,
+						)
+					}
+					// DB clock again, for the same reason the retention cutoffs use it.
+					const pruneResult = await lockClient.query(
+						`SELECT NOW() - ($1 * INTERVAL '1 day') AS cutoff`,
+						[days],
+					)
+					stats.archivesPruned = await archiver.pruneArchive(
+						tableName,
+						pruneResult.rows[0].cutoff as Date,
+					)
+					if (stats.archivesPruned > 0) {
+						this.logger.info('Pruned archive files past compliance retention', {
+							table: tableName,
+							count: stats.archivesPruned,
+							olderThanDays: days,
+						})
+					}
+				} catch (error) {
+					this.logger.warn('Archive prune failed', {
+						table: tableName,
+						err: error,
+					})
+				}
+			}
 
 			stats.durationMs = Date.now() - startTime
 			return stats

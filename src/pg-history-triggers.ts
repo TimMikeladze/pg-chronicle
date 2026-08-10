@@ -148,6 +148,13 @@ BEGIN
 		-- fires row triggers for every UPDATE statement regardless of whether
 		-- any column actually changed; without this guard, "UPDATE x SET c = c"
 		-- would bloat audit_log with no-op rows.
+		--
+		-- Compared on the WHOLE row, not on the stripped payload, on purpose:
+		-- when an update touches only an excludeColumns column the audit row is
+		-- still written, with old_data and new_data identical. That records THAT
+		-- a secret changed and when, without recording what it changed to —
+		-- which is the point of excluding it. Comparing payloads instead would
+		-- erase the event entirely.
 		IF OLD IS DISTINCT FROM NEW THEN
 			INSERT INTO ${auditTable} (table_name, record_id, operation, old_data, new_data, ${actorCols})
 			VALUES (TG_TABLE_NAME, md5(row_to_json(NEW)::text), TG_OP, ${oldPayload}, ${newPayload}, ${actorVals});

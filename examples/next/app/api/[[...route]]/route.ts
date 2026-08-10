@@ -24,7 +24,19 @@
  *                              PG_HISTORY_ALLOW_UNAUTHENTICATED is ignored here.
  *
  * Optional:
- *   CRON_SECRET              - Vercel Cron injects this; required for /api/archive
+ *   CRON_SECRET              - Vercel Cron injects this. Accepted INSTEAD of a
+ *                              JWT on /api/archive, /api/stats and
+ *                              /api/health/detailed, so a scheduler and a
+ *                              token-bearing client can both get in.
  *   PG_HISTORY_S3_BUCKET, _ENDPOINT, _ACCESS_KEY_ID, _SECRET_ACCESS_KEY, _REGION
+ *
+ * OPTIONS is exported so CORS preflight works; without it Next answers 405 and
+ * the browser blocks the real cross-origin request.
+ *
+ * Need an `authorize` hook, custom CORS, or your own pool? Those cannot come
+ * from environment variables — use `createHandlers` instead:
+ *
+ *   import { createHandlers } from 'pg-history/next'
+ *   export const { GET, POST, OPTIONS } = createHandlers({ authorize: ... })
  */
-export { GET, POST } from 'pg-history/next'
+export { GET, OPTIONS, POST } from 'pg-history/next'

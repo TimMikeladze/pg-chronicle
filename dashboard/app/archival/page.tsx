@@ -100,9 +100,7 @@ export default async function ArchivalPage() {
 								'Nothing waiting to be archived'
 							)
 						}
-						action={
-							<RunArchivalButton available={config.archiveTriggerAvailable} />
-						}
+						action={<RunArchivalButton />}
 					/>
 
 					<StatRow>

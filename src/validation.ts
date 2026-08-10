@@ -8,9 +8,16 @@
  */
 import { ValidationError } from './errors'
 import { validateCursor, validateIdentifier } from './pg-history-validators'
-import type { SearchCursor, SearchOptions } from './types'
+import type { AuditOperation, SearchCursor, SearchOptions } from './types'
 
-const VALID_OPERATIONS = new Set(['INSERT', 'UPDATE', 'DELETE'])
+// TRUNCATE included: the statement-level trigger writes a marker row for every
+// bulk wipe, so it must be selectable like any other operation.
+const VALID_OPERATIONS = new Set<AuditOperation>([
+	'INSERT',
+	'UPDATE',
+	'DELETE',
+	'TRUNCATE',
+])
 
 /**
  * Parse and validate the body of POST /api/history/search.
@@ -46,14 +53,14 @@ export function parseSearchBody(body: unknown): SearchOptions {
 		throw new ValidationError('query must be a string')
 	}
 
-	// operation — optional, one of INSERT/UPDATE/DELETE
+	// operation — optional, one of INSERT/UPDATE/DELETE/TRUNCATE
 	if (body.operation !== undefined) {
 		if (
 			typeof body.operation !== 'string' ||
-			!VALID_OPERATIONS.has(body.operation)
+			!VALID_OPERATIONS.has(body.operation as AuditOperation)
 		) {
 			throw new ValidationError(
-				'operation must be one of: INSERT, UPDATE, DELETE',
+				'operation must be one of: INSERT, UPDATE, DELETE, TRUNCATE',
 			)
 		}
 	}
@@ -96,7 +103,7 @@ export function parseSearchBody(body: unknown): SearchOptions {
 	return {
 		tables: body.tables as string[],
 		query: body.query as string | undefined,
-		operation: body.operation as 'INSERT' | 'UPDATE' | 'DELETE' | undefined,
+		operation: body.operation as AuditOperation | undefined,
 		dateFrom,
 		dateTo,
 		limit,

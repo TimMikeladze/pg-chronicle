@@ -104,8 +104,8 @@ async function main() {
 			() =>
 				history.search({
 					tables: ['users'],
-					// @ts-expect-error intentionally passing invalid operation
-					operation: 'TRUNCATE',
+					// @ts-expect-error intentionally passing an operation that is not audited
+					operation: 'MERGE',
 				}),
 			(e) => e instanceof Error && e.message.includes('Invalid operation'),
 			'an unknown operation should be rejected',

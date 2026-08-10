@@ -1,9 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { createWriteStream } from 'node:fs'
 import { chmod, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Readable, Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import {
 	DeleteObjectCommand,
+	GetObjectCommand,
 	HeadObjectCommand,
 	ListObjectsV2Command,
 	PutObjectCommand,
@@ -17,7 +21,7 @@ import {
 	endPoolWithTimeout,
 	type Logger,
 } from './logger'
-import { writeParquet } from './parquet'
+import { readParquet, writeParquet } from './parquet'
 import { validateIdentifier } from './pg-history-validators'
 import { setupArchiverSchema } from './schema'
 import type { ArchiverConfig } from './types'
@@ -26,6 +30,11 @@ import type { ArchiverConfig } from './types'
 // optional append-only guard trigger (PgHistoryConfig.appendOnly). A no-op when
 // the guard is not installed. Must be issued inside a transaction (SET LOCAL).
 const MAINTENANCE_ON = "SET LOCAL pg_history.maintenance = 'on'"
+
+/** `YYYY-MM-DD` for a Date's UTC calendar day, matching `archive_date`. */
+function utcDay(date: Date): string {
+	return date.toISOString().slice(0, 10)
+}
 
 export class PgHistoryArchiver {
 	private pool!: Pool
@@ -321,6 +330,9 @@ export class PgHistoryArchiver {
 			// old_data/new_data are cast to ::text so the exact serialized JSON bytes
 			// (including integers > 2^53) survive — node-postgres would otherwise
 			// JSON.parse jsonb into lossy IEEE-754 doubles before Parquet.
+			// client_addr goes through host() rather than ::text: casting an inet to
+			// text appends the netmask ("203.0.113.7/32"), which would not match the
+			// value the read API returns for the same row.
 			const claimResult = await claimClient.query(
 				`UPDATE ${this.auditTable} a
         SET claim_id = $5, claimed_at = NOW()
@@ -338,19 +350,32 @@ export class PgHistoryArchiver {
         ) picked
         WHERE a.id = picked.id
         RETURNING a.id, a.table_name, a.record_id, a.operation,
-                  a.changed_at, a.old_data::text AS old_data, a.new_data::text AS new_data`,
+                  a.changed_at, a.old_data::text AS old_data, a.new_data::text AS new_data,
+                  a.db_user, a.app_actor, host(a.client_addr) AS client_addr`,
 				[tableName, dayStart, dayEnd, batchSize, claimId, cutoffDate],
 			)
 
 			records = claimResult.rows as Array<Record<string, unknown>>
 
 			if (records.length === 0) {
+				// The peek saw eligible rows but the claim matched none: a concurrent
+				// archiver claimed them in between. This is NOT "table done" — those
+				// rows still need archiving (by us on a later pass, or by the worker
+				// that took them). Reporting 'completed' here made the orchestrator's
+				// batch loop exit and abandon the rest of the backlog.
 				await claimClient.query('ROLLBACK')
+				this.logger.debug(
+					'Claim matched zero rows; another archiver won the race',
+					{
+						table: tableName,
+						claimId,
+					},
+				)
 				return {
 					recordCount: 0,
 					fileSize: 0,
 					s3Path: '',
-					status: 'completed',
+					status: 'contended',
 				}
 			}
 
@@ -604,6 +629,167 @@ export class PgHistoryArchiver {
 	}
 
 	/**
+	 * List the archive files recorded for a table, newest first.
+	 *
+	 * This is the index for reading history back: archived rows are filtered out
+	 * of `getHistory`/`search` and eventually hard-deleted, so once a day has
+	 * been archived the Parquet file is the only copy. Pair with
+	 * {@link readArchive} to fetch one.
+	 */
+	async listArchives(
+		tableName: string,
+		options: { from?: Date; to?: Date; limit?: number } = {},
+	): Promise<ArchiveFile[]> {
+		await this.ensureSchemaReady()
+		validateIdentifier(tableName, 'table')
+		await this.ensurePool()
+
+		const limit = Math.min(Math.max(options.limit ?? 100, 1), 1000)
+		const conditions = ['table_name = $1']
+		const params: unknown[] = [tableName]
+		// archive_date is a DATE holding a UTC calendar day. Compare against the
+		// UTC day of the bound, not the raw timestamp: letting PG coerce a
+		// timestamptz would resolve it in the session time zone and drop (or add)
+		// a day for callers east or west of UTC.
+		if (options.from) {
+			params.push(utcDay(options.from))
+			conditions.push(`archive_date >= $${params.length}::date`)
+		}
+		if (options.to) {
+			params.push(utcDay(options.to))
+			conditions.push(`archive_date <= $${params.length}::date`)
+		}
+		params.push(limit)
+
+		const result = await this.pool.query(
+			`SELECT table_name, archive_date, s3_path, record_count, file_size,
+			        checksum_sha256, archived_at
+			 FROM ${this.metadataTable}
+			 WHERE ${conditions.join(' AND ')}
+			 ORDER BY archive_date DESC, archived_at DESC
+			 LIMIT $${params.length}`,
+			params,
+		)
+
+		return (
+			result.rows as Array<{
+				table_name: string
+				archive_date: Date
+				s3_path: string
+				record_count: number
+				file_size: string | number
+				checksum_sha256: string | null
+				archived_at: Date
+			}>
+		).map((row) => ({
+			tableName: row.table_name,
+			archiveDate: row.archive_date,
+			s3Path: row.s3_path,
+			recordCount: Number(row.record_count),
+			fileSize: Number(row.file_size),
+			checksumSha256: row.checksum_sha256,
+			archivedAt: row.archived_at,
+		}))
+	}
+
+	/**
+	 * Download an archived Parquet file and decode it back into audit rows.
+	 *
+	 * The counterpart to archival: this is how history that has left Postgres is
+	 * read again. Rows come back in the archived column shape (snake_case, with
+	 * `old_data`/`new_data` parsed from JSON text and the actor columns intact).
+	 *
+	 * The object is verified against the checksum recorded at upload time unless
+	 * `verifyChecksum: false` is passed — a silently corrupted or replaced
+	 * archive would otherwise be indistinguishable from a good one.
+	 */
+	async readArchive(
+		s3Path: string,
+		options: { verifyChecksum?: boolean } = {},
+	): Promise<Array<Record<string, unknown>>> {
+		await this.ensurePool()
+		if (typeof s3Path !== 'string' || s3Path.length === 0) {
+			throw new Error('PgHistoryArchiver: s3Path is required')
+		}
+
+		const verify = options.verifyChecksum !== false
+		let expected: string | null = null
+		if (verify) {
+			await this.ensureSchemaReady()
+			const meta = await this.pool.query(
+				`SELECT checksum_sha256 FROM ${this.metadataTable} WHERE s3_path = $1`,
+				[s3Path],
+			)
+			if (meta.rows.length === 0) {
+				throw new Error(
+					`PgHistoryArchiver: no archive metadata for "${s3Path}". Pass { verifyChecksum: false } to read an unrecorded object.`,
+				)
+			}
+			expected = (meta.rows[0] as { checksum_sha256: string | null })
+				.checksum_sha256
+			if (!expected) {
+				// Written before checksums were recorded. Read it, but never let the
+				// caller believe it was verified — "no checksum stored" and "checksum
+				// matched" must not look the same from the outside.
+				this.logger.warn(
+					'Archive has no recorded checksum; returning UNVERIFIED contents',
+					{ s3Path },
+				)
+			}
+		}
+
+		const result = await this.s3Client.send(
+			new GetObjectCommand({ Bucket: this.config.s3.bucket, Key: s3Path }),
+		)
+		if (!result.Body) {
+			throw new Error(`PgHistoryArchiver: empty response body for "${s3Path}"`)
+		}
+
+		// hyparquet reads from a file handle, so the object has to land on disk
+		// either way. Stream it there and hash in passing rather than buffering
+		// the whole archive first: at the 64 MiB default that is the difference
+		// between one transient copy and two (network buffer + file contents).
+		const tmpDir = await mkdtemp(join(tmpdir(), 'pg-history-read-'))
+		await chmod(tmpDir, 0o700)
+		const tmpFile = join(tmpDir, 'data.parquet')
+		try {
+			const hash = createHash('sha256')
+			await pipeline(
+				// Readable.from() accepts both shapes the SDK can hand back: a Node
+				// Readable (what NodeHttpHandler produces) and a web stream.
+				Readable.from(result.Body as unknown as AsyncIterable<Uint8Array>),
+				new Transform({
+					transform(chunk, _encoding, callback) {
+						hash.update(chunk)
+						callback(null, chunk)
+					},
+				}),
+				createWriteStream(tmpFile),
+			)
+
+			if (expected) {
+				const actual = hash.digest('base64')
+				if (actual !== expected) {
+					// Thrown before the file is parsed or returned, so unverified bytes
+					// never reach the caller.
+					throw new Error(
+						`PgHistoryArchiver: checksum mismatch for "${s3Path}" — expected ${expected}, got ${actual}. The archive has been modified or corrupted.`,
+					)
+				}
+			}
+
+			return await readParquet(tmpFile, { logger: this.logger })
+		} finally {
+			await rm(tmpDir, { recursive: true }).catch((err) => {
+				this.logger.warn('Failed to remove temp directory after archive read', {
+					tmpDir,
+					err,
+				})
+			})
+		}
+	}
+
+	/**
 	 * Release a claim so its rows return to the pending pool. Idempotent and
 	 * safe to call after a successful archival — the archived_at IS NULL guard
 	 * prevents touching rows that were already finalized by a concurrent path.
@@ -716,7 +902,7 @@ export class PgHistoryArchiver {
 	 */
 	async cleanupOrphanedFiles(
 		tableName: string,
-		opts: { maxDeletions?: number } = {},
+		opts: { maxDeletions?: number; minAgeMinutes?: number } = {},
 	): Promise<number> {
 		await this.ensureSchemaReady()
 		validateIdentifier(tableName, 'table')
@@ -734,7 +920,17 @@ export class PgHistoryArchiver {
 		// metadata and would otherwise look like an orphan — deleting it corrupts a
 		// batch that is about to mark its rows archived against a now-missing file.
 		// Tie the window to staleClaimMinutes (the max claim→finalize lifetime).
-		const minAgeMs = (this.config.staleClaimMinutes ?? 30) * 60_000
+		// `minAgeMinutes` overrides it — useful when reconciling a bucket you know
+		// has no archival running against it, and required by tests that cannot
+		// age an object.
+		const minAgeMinutes =
+			opts.minAgeMinutes ?? this.config.staleClaimMinutes ?? 30
+		if (!Number.isFinite(minAgeMinutes) || minAgeMinutes < 0) {
+			throw new Error(
+				`cleanupOrphanedFiles: minAgeMinutes must be a non-negative finite number (got: ${minAgeMinutes})`,
+			)
+		}
+		const minAgeMs = minAgeMinutes * 60_000
 		const nowMs = Date.now()
 
 		let continuationToken: string | undefined
@@ -1085,10 +1281,32 @@ export class PgHistoryArchiver {
 	}
 }
 
-interface BatchResult {
+/** One archived Parquet file, as recorded in `audit_archive_metadata`. */
+export interface ArchiveFile {
+	tableName: string
+	/** UTC calendar day the file's rows belong to. */
+	archiveDate: Date
+	/** Object key, the handle for {@link PgHistoryArchiver.readArchive}. */
+	s3Path: string
+	recordCount: number
+	fileSize: number
+	/** Base64 SHA-256 recorded at upload; null for pre-checksum archives. */
+	checksumSha256: string | null
+	archivedAt: Date
+}
+
+/**
+ * Outcome of one {@link PgHistoryArchiver.processBatch} call.
+ *
+ * `completed` with `recordCount === 0` is the ONLY signal that a table has no
+ * more work. `reaped` and `contended` both mean "this attempt produced nothing,
+ * but rows are still pending" — a caller looping over batches must keep going
+ * (with a retry bound) rather than treating them as done.
+ */
+export interface BatchResult {
 	recordCount: number
 	fileSize: number
 	s3Path: string
-	status: 'completed' | 'failed' | 'reaped'
+	status: 'completed' | 'failed' | 'reaped' | 'contended'
 	errorMessage?: string
 }

@@ -28,6 +28,46 @@ type Variables = JwtVariables & {
 	pgHistory?: PgHistory
 }
 
+/** Result of one archival trigger. See `runArchival` for what each means. */
+type ArchivalOutcome = 'completed' | 'failed' | 'skipped'
+
+/**
+ * Best-effort transport-level peer address, used as the rate-limit bucket key
+ * when proxy headers are not trusted. Unlike `x-forwarded-for` this cannot be
+ * spoofed by the client, so a single flooder is confined to its own bucket
+ * instead of consuming a shared global one.
+ *
+ * Shapes handled:
+ *   Bun            `Bun.serve` passes the Server as the Hono env, and
+ *                  `server.requestIP(request)` returns the peer.
+ *   Hono/Bun nest  some adapters expose it as `env.server` instead.
+ *   Node           `@hono/node-server` sets `env.incoming` to the Node
+ *                  IncomingMessage, whose socket carries `remoteAddress`.
+ * Anything else (Vercel, Workers) returns undefined — those platforms
+ * terminate TLS upstream and are expected to run with `trustProxy: true`.
+ */
+type RequestIpFn = (request: Request) => { address?: string } | null | undefined
+
+function peerAddress(env: unknown, request: Request): string | undefined {
+	if (!env || typeof env !== 'object') return undefined
+	const candidate = env as {
+		requestIP?: RequestIpFn
+		server?: { requestIP?: RequestIpFn }
+		incoming?: { socket?: { remoteAddress?: string } }
+	}
+	for (const requestIP of [candidate.requestIP, candidate.server?.requestIP]) {
+		if (typeof requestIP !== 'function') continue
+		try {
+			const address = requestIP(request)?.address
+			if (address) return address
+		} catch {
+			// A runtime that exposes requestIP but rejects this request object is
+			// not a fatal condition — fall through to the next strategy.
+		}
+	}
+	return candidate.incoming?.socket?.remoteAddress || undefined
+}
+
 export async function createServer(config: ServerConfig): Promise<{
 	app: Hono<{ Variables: Variables }>
 	dispose: (drainTimeoutMs?: number) => Promise<void>
@@ -109,11 +149,18 @@ export async function createServer(config: ServerConfig): Promise<{
 	// SERVERLESS DEPLOYMENTS (e.g. Vercel) get NO application-layer rate limiting and
 	// MUST configure gateway/edge rate limiting. The mode-independent DoS backstop is
 	// the search-concurrency limit in PgHistory (maxConcurrentSearches).
-	// x-forwarded-for / x-real-ip are client-spoofable, so per-IP buckets are only
-	// meaningful behind a trusted proxy that overwrites them — gated on config.trustProxy.
-	// When trustProxy is false (default) we fall back to a single GLOBAL bucket: a coarse
-	// but unspoofable flood backstop, since a per-request-spoofed header would otherwise
-	// hand every request a fresh bucket and defeat the limiter entirely.
+	//
+	// Bucket identity, in precedence order:
+	//   1. config.clientIdentifier — the caller knows best (API key id, edge header).
+	//   2. x-forwarded-for / x-real-ip, but ONLY under config.trustProxy: these are
+	//      client-spoofable, and a per-request-spoofed header hands every request a
+	//      fresh bucket, defeating the limiter entirely.
+	//   3. The transport peer address. Unspoofable and available on Bun and Node,
+	//      so an untrusted-proxy deployment still gets per-client buckets.
+	//   4. A single global bucket. Last resort for runtimes that expose no peer
+	//      address: an unspoofable flood ceiling, but one noisy client can consume
+	//      it and 429 everyone else — configure clientIdentifier or trustProxy to
+	//      avoid landing here.
 	if (!config.serverless) {
 		const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
 		const RATE_LIMIT_WINDOW_MS = 60_000 // 1 minute
@@ -147,16 +194,26 @@ export async function createServer(config: ServerConfig): Promise<{
 		}
 
 		app.use('/api/*', async (c, next) => {
-			// Only trust client-supplied IP headers behind a trusted proxy;
-			// otherwise use one global bucket that cannot be spoofed away.
-			const key = config.trustProxy
+			const custom = config.clientIdentifier?.({
+				request: c.req.raw,
+				env: c.env,
+			})
+			const proxied = config.trustProxy
 				? c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
-					c.req.header('x-real-ip') ||
-					'unknown'
-				: 'global'
-			const maxForKey = config.trustProxy
-				? RATE_LIMIT_MAX
-				: RATE_LIMIT_MAX_GLOBAL
+					c.req.header('x-real-ip')
+				: undefined
+			const identified =
+				custom || proxied || peerAddress(c.env, c.req.raw) || undefined
+
+			// An identified client gets its own bucket at the per-client rate; only
+			// unidentifiable traffic shares the coarser global ceiling.
+			//
+			// The `id:` prefix keeps the two key spaces apart. Without it a client
+			// that reports its identity as the literal string "global" (trivial with
+			// a spoofed x-forwarded-for under trustProxy) lands in the shared bucket
+			// and burns down the allowance for everyone who could not be identified.
+			const key = identified ? `id:${identified}` : 'global'
+			const maxForKey = identified ? RATE_LIMIT_MAX : RATE_LIMIT_MAX_GLOBAL
 
 			const now = Date.now()
 			const entry = rateLimitMap.get(key)
@@ -225,8 +282,16 @@ export async function createServer(config: ServerConfig): Promise<{
 		lastCompletedAt: null,
 	}
 
-	// Archival runner — shared by background scheduler and on-demand endpoint
-	let runArchival: () => Promise<void> = () => Promise.resolve()
+	// Archival runner — shared by background scheduler and on-demand endpoint.
+	//
+	// Three outcomes, because the on-demand endpoint has to tell them apart:
+	//   'completed' a run finished successfully
+	//   'failed'    every attempt was exhausted
+	//   'skipped'   a run was already in flight; this call did nothing
+	// Collapsing the last two into one "didn't succeed" would let the endpoint
+	// answer a genuine failure with "already in progress".
+	let runArchival: () => Promise<ArchivalOutcome> = () =>
+		Promise.resolve('skipped')
 
 	if (config.enableArchiver && config.archiverConfig) {
 		// Validate retry config BEFORE schema setup so misconfiguration surfaces
@@ -251,8 +316,8 @@ export async function createServer(config: ServerConfig): Promise<{
 		const runOptions = config.runOptions || {}
 		let archivalRunning = false
 
-		runArchival = async (): Promise<void> => {
-			if (archivalRunning) return // prevent overlapping runs
+		runArchival = async (): Promise<ArchivalOutcome> => {
+			if (archivalRunning) return 'skipped' // prevent overlapping runs
 			archivalRunning = true
 
 			try {
@@ -266,6 +331,12 @@ export async function createServer(config: ServerConfig): Promise<{
 							retention: archiverConfig.retention,
 							gracePeriod: archiverConfig.gracePeriod,
 							batchSize: archiverConfig.batchSize ?? 10_000,
+							// Forward the memory / claim-lifetime / lock-connection knobs.
+							// Omitting them here pinned every server-hosted archiver to the
+							// library defaults with no way to override.
+							maxBatchBytes: archiverConfig.maxBatchBytes,
+							staleClaimMinutes: archiverConfig.staleClaimMinutes,
+							lockConnectionString: archiverConfig.lockConnectionString,
 							logger,
 						})
 
@@ -315,7 +386,7 @@ export async function createServer(config: ServerConfig): Promise<{
 						// last success", not "lifetime archival count" — operators
 						// reading /api/health/detailed expect the former.
 						archivalHealth.attempts = 0
-						return
+						return 'completed'
 					} catch (err) {
 						const message = err instanceof Error ? err.message : String(err)
 						archivalHealth.status = 'failed'
@@ -355,7 +426,10 @@ export async function createServer(config: ServerConfig): Promise<{
 									).unref()
 								}
 							})
-							if (disposed) return
+							// Shutting down mid-backoff: the run did not succeed, and
+							// saying so keeps 'failed' meaning "attempts exhausted or
+							// abandoned" rather than "someone else is running".
+							if (disposed) return 'failed'
 						} else {
 							logger.error('Background archival failed after all attempts', {
 								attempts: MAX_ATTEMPTS,
@@ -364,6 +438,7 @@ export async function createServer(config: ServerConfig): Promise<{
 						}
 					}
 				}
+				return 'failed'
 			} finally {
 				archivalRunning = false
 			}
@@ -371,11 +446,13 @@ export async function createServer(config: ServerConfig): Promise<{
 
 		// In long-running mode: run immediately + schedule periodic runs
 		if (!config.serverless) {
-			const trackAndRun = (): Promise<void> => {
+			const trackAndRun = (): Promise<ArchivalOutcome> => {
 				const p = runArchival()
-				currentArchivalPromise = p
-				p.finally(() => {
-					if (currentArchivalPromise === p) currentArchivalPromise = null
+				// dispose() awaits this, and only needs completion, not the outcome.
+				currentArchivalPromise = p.then(() => undefined)
+				const tracked = currentArchivalPromise
+				tracked.finally(() => {
+					if (currentArchivalPromise === tracked) currentArchivalPromise = null
 				})
 				return p
 			}
@@ -410,6 +487,37 @@ export async function createServer(config: ServerConfig): Promise<{
 		}
 	}
 
+	// Resolve cron secret once. Used by /api/archive, /api/stats, and
+	// /api/health/detailed so none are exposed unauthenticated in cron-only
+	// deployments (where jwtSecret is unset and the global /api/* JWT
+	// middleware therefore wasn't registered).
+	//
+	// Resolved BEFORE the JWT middleware is registered because that middleware
+	// has to know about it: see OPERATIONAL_PATHS below.
+	const cronSecret = config.enableArchiver
+		? (config.archiveCronSecret || process.env.CRON_SECRET)?.trim() || undefined
+		: undefined
+
+	async function verifyCronSecret(authHeader: string): Promise<boolean> {
+		if (!cronSecret) return true // not configured — JWT path is authoritative
+		const { createHmac } = await import('node:crypto')
+		const expected = `Bearer ${cronSecret}`
+		const key = Buffer.from(cronSecret)
+		const mac = (v: string) => createHmac('sha256', key).update(v).digest()
+		return timingSafeEqual(mac(authHeader), mac(expected))
+	}
+
+	// Endpoints a scheduler drives with `Authorization: Bearer <cronSecret>`.
+	// The cron secret is an ALTERNATIVE credential on these paths, not an
+	// additional one: a request carries a single Authorization header, so
+	// requiring both a valid JWT *and* the cron secret would make the route
+	// impossible to call whenever both are configured.
+	const OPERATIONAL_PATHS = new Set([
+		'/api/archive',
+		'/api/stats',
+		'/api/health/detailed',
+	])
+
 	// Conditionally apply JWT auth if PG_HISTORY_JWT_SECRET is set (resolved once
 	// at the top of createServer). When set, we also gate the /openapi endpoint
 	// by default unless the consumer explicitly opts into publicOpenApi.
@@ -437,15 +545,55 @@ export async function createServer(config: ServerConfig): Promise<{
 			)
 		}
 		const alg = requestedAlg as JwtAlg
-		logger.info('JWT authentication enabled', { alg })
-		const jwtMiddleware = jwt({ secret: jwtSecret, alg })
+
+		// Pin the token to this API. Signature verification alone accepts any
+		// token signed with the same key, including one minted by a different
+		// service that shares the secret. Unset (the default) leaves the claim
+		// unchecked, matching prior behaviour.
+		const issuer =
+			config.jwt?.issuer ?? process.env.PG_HISTORY_JWT_ISSUER?.trim()
+		const audienceEnv = process.env.PG_HISTORY_JWT_AUDIENCE?.trim()
+		const audience =
+			config.jwt?.audience ??
+			(audienceEnv
+				? audienceEnv
+						.split(',')
+						.map((a) => a.trim())
+						.filter(Boolean)
+				: undefined)
+		const normalizedAudience =
+			Array.isArray(audience) && audience.length === 1 ? audience[0] : audience
+		const verification = {
+			...(issuer ? { iss: issuer } : {}),
+			...(normalizedAudience !== undefined &&
+			(!Array.isArray(normalizedAudience) || normalizedAudience.length > 0)
+				? { aud: normalizedAudience }
+				: {}),
+		}
+		logger.info('JWT authentication enabled', {
+			alg,
+			issuer: issuer ?? null,
+			audience: normalizedAudience ?? null,
+		})
+		const jwtMiddleware = jwt({ secret: jwtSecret, alg, verification })
 		// Skip JWT for CORS preflight — browsers send OPTIONS without auth.
 		// Without this, preflight returns 401 and the browser blocks the
 		// real request.
-		const jwtSkipOptions = (
+		//
+		// A valid cron secret is accepted INSTEAD of a JWT on the operational
+		// endpoints, so a scheduler can still reach them when both credentials
+		// are configured.
+		const jwtSkipOptions = async (
 			c: Parameters<typeof jwtMiddleware>[0],
 			next: Parameters<typeof jwtMiddleware>[1],
-		) => (c.req.method === 'OPTIONS' ? next() : jwtMiddleware(c, next))
+		) => {
+			if (c.req.method === 'OPTIONS') return next()
+			if (cronSecret && OPERATIONAL_PATHS.has(new URL(c.req.url).pathname)) {
+				const presented = c.req.header('authorization') ?? ''
+				if (await verifyCronSecret(presented)) return next()
+			}
+			return jwtMiddleware(c, next)
+		}
 		app.use('/api/*', jwtSkipOptions)
 		if (!config.publicOpenApi) {
 			app.use('/openapi', jwtSkipOptions)
@@ -463,14 +611,6 @@ export async function createServer(config: ServerConfig): Promise<{
 		c.header('X-Frame-Options', 'DENY')
 	})
 
-	// Resolve cron secret once. Used by /api/archive, /api/stats, and
-	// /api/health/detailed so none are exposed unauthenticated in cron-only
-	// deployments (where jwtSecret is unset and the global /api/* JWT
-	// middleware therefore wasn't registered).
-	const cronSecret = config.enableArchiver
-		? (config.archiveCronSecret || process.env.CRON_SECRET)?.trim() || undefined
-		: undefined
-
 	// Fail closed: the archiver stats / detailed-health endpoints leak table
 	// names, row volumes, and failure state. Only register them when SOME auth
 	// exists (JWT or cron secret) or the operator explicitly opted out. Without
@@ -482,15 +622,6 @@ export async function createServer(config: ServerConfig): Promise<{
 			'/api/stats and /api/health/detailed NOT registered: no authentication configured. ' +
 				'Set PG_HISTORY_JWT_SECRET or archiveCronSecret / CRON_SECRET, or pass allowUnauthenticated: true.',
 		)
-	}
-
-	async function verifyCronSecret(authHeader: string): Promise<boolean> {
-		if (!cronSecret) return true // not configured — JWT path is authoritative
-		const { createHmac } = await import('node:crypto')
-		const expected = `Bearer ${cronSecret}`
-		const key = Buffer.from(cronSecret)
-		const mac = (v: string) => createHmac('sha256', key).update(v).digest()
-		return timingSafeEqual(mac(authHeader), mac(expected))
 	}
 
 	// Public health endpoint — minimal surface. Returns only status to avoid
@@ -585,10 +716,12 @@ export async function createServer(config: ServerConfig): Promise<{
 			)
 		} else {
 			app.post('/api/archive', async (c) => {
-				// Auth contract: when cronSecret is set, verify HMAC here. When only
-				// jwtSecret is set, the JWT middleware registered for '/api/*' has
-				// already authenticated this request before it reaches the handler.
-				if (cronSecret) {
+				// Auth contract, matching /api/stats and /api/health/detailed: when a
+				// JWT secret is configured the '/api/*' middleware already accepted
+				// this request — via a valid token OR the cron secret, whichever the
+				// caller presented. Only in a cron-only deployment (no JWT secret, so
+				// no middleware was registered) does the handler verify the secret.
+				if (!jwtSecret && cronSecret) {
 					const ok = await verifyCronSecret(c.req.header('authorization') ?? '')
 					if (!ok) {
 						return c.json(
@@ -599,14 +732,44 @@ export async function createServer(config: ServerConfig): Promise<{
 				}
 
 				try {
-					await runArchival()
+					// A scheduler needs to distinguish "your trigger did the work",
+					// "someone else was already doing it", and "it ran and failed" —
+					// the last of which must not come back as a 200 success, or a
+					// broken archiver looks like a healthy one in the cron history.
+					const outcome = await runArchival()
+					const archival = {
+						status: archivalHealth.status,
+						attempts: archivalHealth.attempts,
+						lastCompletedAt: archivalHealth.lastCompletedAt,
+					}
+
+					if (outcome === 'failed') {
+						return c.json(
+							{
+								success: false,
+								ran: true,
+								error: {
+									code: 'ARCHIVAL_FAILED',
+									message:
+										archivalHealth.lastError ??
+										'Archival failed; see server logs.',
+								},
+								archival,
+							},
+							500,
+						)
+					}
+
 					return c.json({
 						success: true,
-						archival: {
-							status: archivalHealth.status,
-							attempts: archivalHealth.attempts,
-							lastCompletedAt: archivalHealth.lastCompletedAt,
-						},
+						ran: outcome === 'completed',
+						...(outcome === 'skipped'
+							? {
+									message:
+										'An archival run was already in progress; this request did not start another.',
+								}
+							: {}),
+						archival,
 					})
 				} catch (error) {
 					logger.error('archival error', { err: error })

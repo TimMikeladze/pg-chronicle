@@ -3,12 +3,14 @@
 import {
 	ChevronRightIcon,
 	DatabaseIcon,
+	LogOutIcon,
 	SearchIcon,
 	TableIcon,
 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
+import { logoutAction } from '@/app/login/actions'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
 import {
@@ -118,10 +120,13 @@ function TableSwitcher({ tables }: { tables: string[] }) {
 export function Nav({
 	tables,
 	health,
+	canSignOut,
 }: {
 	tables: string[]
 	/** Rendered by the bar so no page carries a status badge of its own. */
 	health?: React.ReactNode
+	/** False when the deployment has no dashboard password to sign out of. */
+	canSignOut?: boolean
 }) {
 	const pathname = usePathname()
 	const openApiActive = pathname.startsWith('/openapi')
@@ -160,6 +165,19 @@ export function Nav({
 						</Link>
 					</Button>
 					<ThemeToggle />
+					{canSignOut ? (
+						<form action={logoutAction}>
+							<Button
+								type="submit"
+								variant="ghost"
+								size="icon"
+								title="Sign out"
+							>
+								<LogOutIcon />
+								<span className="sr-only">Sign out</span>
+							</Button>
+						</form>
+					) : null}
 				</div>
 			</div>
 

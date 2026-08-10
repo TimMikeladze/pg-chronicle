@@ -554,8 +554,11 @@ export class PgHistory {
 
 		let queryResult: { rows: unknown[] }
 		if (options.cursor) {
-			// Cursor-based pagination — cast cursor to bigint explicitly so the
-			// query planner uses the idx_audit_record_id index predictably
+			// Cursor-based pagination. The ::bigint cast keeps the comparison off
+			// the text type the driver would otherwise send; the ordering itself is
+			// served by the (id, table_name) primary-key index, NOT by
+			// idx_audit_record_id, which is keyed (table_name, record_id,
+			// changed_at) and cannot order by id.
 			if (order === 'desc') {
 				const whereClause = [...baseConditions, 'id < $3::bigint'].join(' AND ')
 				queryResult = await this.pool.query(
@@ -656,10 +659,12 @@ export class PgHistory {
 		}
 
 		if (options.operation) {
-			const validOperations = ['INSERT', 'UPDATE', 'DELETE'] as const
-			if (!validOperations.includes(options.operation)) {
+			// TRUNCATE included: the statement trigger records a marker row for every
+			// bulk wipe, and omitting it here made those rows unfindable.
+			const validOps = ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'] as const
+			if (!validOps.includes(options.operation)) {
 				throw new Error(
-					`PgHistory: Invalid operation "${options.operation}". Must be one of: INSERT, UPDATE, DELETE`,
+					`PgHistory: Invalid operation "${options.operation}". Must be one of: ${validOps.join(', ')}`,
 				)
 			}
 			conditions.push(`operation = $${paramIndex}`)
@@ -680,7 +685,7 @@ export class PgHistory {
 		}
 
 		if (options.cursor) {
-			// Cast to bigint for predictable index usage
+			// Cast to bigint so the comparison is numeric, not text
 			conditions.push(`id < $${paramIndex}::bigint`)
 			params.push(options.cursor)
 			paramIndex++

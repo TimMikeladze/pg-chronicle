@@ -17,13 +17,25 @@ export {
 } from './logger'
 export { Orchestrator } from './orchestrator'
 export { PgHistory } from './PgHistory'
-export { PgHistoryArchiver } from './PgHistoryArchiver'
+export {
+	type ArchiveFile,
+	type BatchResult,
+	PgHistoryArchiver,
+} from './PgHistoryArchiver'
+// Decoding an archived Parquet file is part of the product, not an internal:
+// archived history is filtered out of getHistory/search and eventually deleted
+// from Postgres, so these are how it is read back. Prefer
+// PgHistoryArchiver.listArchives/readArchive, which handle S3 and checksums;
+// reach for these directly only for files you already have on disk.
+export { readParquet, writeParquet } from './parquet'
 export { createServer } from './server'
 export type {
 	ArchiverConfig,
 	AuditEntry,
 	AuthorizeContext,
 	AuthorizeFn,
+	ClientIdentifierFn,
+	ClientIdentityContext,
 	GetHistoryOptions,
 	OrchestratorConfig,
 	OrchestratorStats,
@@ -36,4 +48,5 @@ export type {
 	SearchOptions,
 	SearchPaginatedResult,
 	ServerConfig,
+	TableStats,
 } from './types'

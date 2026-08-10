@@ -7,8 +7,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Database Configuration
-  PG_CONNECTION_STRING: postgresql://postgres:postgres@localhost:5432/postgres
+  # The test helpers connect to postgres://postgres:postgres@localhost:5432 by
+  # default (override with PG_AUDIT_TEST_URL), which is exactly what the service
+  # container below exposes — so no database variable is set here. A
+  # PG_CONNECTION_STRING used to live here that nothing read, which made it look
+  # like CI could be pointed elsewhere.
   PG_HISTORY_S3_ENDPOINT: http://localhost:9000
   PG_HISTORY_S3_ACCESS_KEY_ID: root
   PG_HISTORY_S3_SECRET_ACCESS_KEY: password
@@ -135,9 +138,10 @@ jobs:
     # No postgres or MinIO service: every dashboard page is force-dynamic, so
     # `next build` compiles and typechecks without ever opening a connection.
     # Linting is already covered — the `check` job's `biome check .` sweeps the
-    # whole repo, dashboard/ included. What is missing without this job is the
-    # dashboard's own tsc (it is excluded from the root tsconfig, having its
-    # own) and its build.
+    # whole repo, dashboard/ included — and so are the access-control unit tests
+    # in dashboard/lib/auth.test.ts, which the root `bun test` picks up (they
+    # need no database). What is missing without this job is the dashboard's own
+    # tsc (it is excluded from the root tsconfig, having its own) and its build.
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -189,3 +193,63 @@ jobs:
       - name: Build
         run: bun run build
         working-directory: dashboard
+
+      # The access gate is the only thing between a public URL and an anonymous
+      # revert button, and its unit tests (dashboard/lib/auth.test.ts, run by the
+      # root suite) cover the decision logic but not the wiring. This boots the
+      # production server and checks the wiring itself. No database service is
+      # needed: none of these paths reach one.
+      - name: Verify the dashboard access gate
+        working-directory: dashboard
+        env:
+          NODE_ENV: production
+          PG_HISTORY_TABLES: users
+          PG_HISTORY_JWT_SECRET: ci-jwt-secret-value-long-enough
+          PG_HISTORY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: |
+          set -euo pipefail
+
+          expect() { # expect <label> <actual> <wanted>
+            if [ "$2" != "$3" ]; then
+              echo "::error::$1 — expected $3, got $2"
+              exit 1
+            fi
+            echo "ok: $1 ($2)"
+          }
+
+          start() { # start <port>; inherits env, plus whatever the caller exported
+            bun run start --port "$1" > /tmp/dash-$1.log 2>&1 &
+            echo $! > /tmp/dash-$1.pid
+            # Ready as soon as it answers at all. /login is reachable in every
+            # configuration under test, including the one that 503s the UI, so
+            # readiness never depends on the case being asserted.
+            for _ in $(seq 1 60); do
+              if curl -s -o /dev/null "http://127.0.0.1:$1/login" 2>/dev/null; then
+                return 0
+              fi
+              sleep 1
+            done
+            echo "::error::server on port $1 never came up"; cat /tmp/dash-$1.log; exit 1
+          }
+          stop() { kill "$(cat /tmp/dash-$1.pid)" 2>/dev/null || true; sleep 1; }
+
+          # 1. Production with no password must refuse to serve the UI at all.
+          start 3300
+          expect "no password -> UI refused" \
+            "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3300/tables)" 503
+          stop 3300
+
+          # 2. With a password: pages redirect to the login, the login itself is
+          #    reachable, server actions get a 401 rather than a redirect that
+          #    would send their body to /login, and /api keeps its own auth.
+          export PG_HISTORY_DASHBOARD_PASSWORD=ci-dashboard-password
+          start 3301
+          expect "GET page -> redirect" \
+            "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3301/tables)" 307
+          expect "login reachable" \
+            "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3301/login)" 200
+          expect "server action without session -> 401" \
+            "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3301/tables)" 401
+          expect "api without token -> 401" \
+            "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3301/api/history/users/1)" 401
+          stop 3301

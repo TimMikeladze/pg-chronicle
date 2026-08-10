@@ -1,5 +1,6 @@
 import type { Pool } from 'pg'
 import pkg from 'pg'
+import { dropDatabase, recreateDatabase, testDatabaseUrl } from './database'
 
 const { Pool: PgPool } = pkg
 
@@ -15,96 +16,23 @@ const { Pool: PgPool } = pkg
  */
 
 const TEST_DB_NAME = 'pg_audit_test'
-const BASE_URL =
-	process.env.PG_AUDIT_TEST_URL || 'postgres://postgres:postgres@localhost:5432'
 
 let testPool: Pool | null = null
 
 export async function createTestDatabase(): Promise<void> {
-	// Connect to postgres database to create test db
-	const adminPool = new PgPool({ connectionString: `${BASE_URL}/postgres` })
-
-	try {
-		// Terminate active connections before dropping
-		try {
-			await adminPool.query(
-				`
-				SELECT pg_terminate_backend(pid)
-				FROM pg_stat_activity
-				WHERE datname = $1
-				AND pid <> pg_backend_pid()
-			`,
-				[TEST_DB_NAME],
-			)
-		} catch (error) {
-			// Ignore errors if database doesn't exist or no connections to terminate
-			console.warn(
-				`Warning: Failed to terminate connections to ${TEST_DB_NAME}:`,
-				error instanceof Error ? error.message : String(error),
-			)
-		}
-
-		// Drop if exists
-		try {
-			await adminPool.query(`DROP DATABASE IF EXISTS ${TEST_DB_NAME}`)
-		} catch (error) {
-			throw new Error(
-				`Failed to drop test database ${TEST_DB_NAME}: ${error instanceof Error ? error.message : String(error)}`,
-			)
-		}
-
-		// Create fresh
-		try {
-			await adminPool.query(`CREATE DATABASE ${TEST_DB_NAME}`)
-		} catch (error) {
-			throw new Error(
-				`Failed to create test database ${TEST_DB_NAME}: ${error instanceof Error ? error.message : String(error)}`,
-			)
-		}
-	} finally {
-		await adminPool.end()
-	}
+	await recreateDatabase(TEST_DB_NAME)
 }
 
 export async function dropTestDatabase(): Promise<void> {
-	const adminPool = new PgPool({ connectionString: `${BASE_URL}/postgres` })
-
-	try {
-		// Terminate active connections before dropping
-		try {
-			await adminPool.query(
-				`
-				SELECT pg_terminate_backend(pid)
-				FROM pg_stat_activity
-				WHERE datname = $1
-				AND pid <> pg_backend_pid()
-			`,
-				[TEST_DB_NAME],
-			)
-		} catch (error) {
-			// Ignore errors if database doesn't exist or no connections to terminate
-			console.warn(
-				`Warning: Failed to terminate connections to ${TEST_DB_NAME}:`,
-				error instanceof Error ? error.message : String(error),
-			)
-		}
-
-		try {
-			await adminPool.query(`DROP DATABASE IF EXISTS ${TEST_DB_NAME}`)
-		} catch (error) {
-			throw new Error(
-				`Failed to drop test database ${TEST_DB_NAME}: ${error instanceof Error ? error.message : String(error)}`,
-			)
-		}
-	} finally {
-		await adminPool.end()
-	}
+	await dropDatabase(TEST_DB_NAME)
 }
 
 export async function getTestConnection(): Promise<Pool> {
 	if (!testPool) {
 		try {
-			testPool = new PgPool({ connectionString: `${BASE_URL}/${TEST_DB_NAME}` })
+			testPool = new PgPool({
+				connectionString: testDatabaseUrl(TEST_DB_NAME),
+			})
 		} catch (error) {
 			// Clean up on failure
 			testPool = null

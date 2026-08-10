@@ -74,14 +74,14 @@ describe('Operation validation in search', () => {
 		await expect(
 			history.search({
 				tables: ['users'],
-				// @ts-expect-error intentionally passing invalid operation
-				operation: 'TRUNCATE',
+				// @ts-expect-error intentionally passing an operation that is not audited
+				operation: 'MERGE',
 			}),
 		).rejects.toThrow('Invalid operation')
 	})
 
 	test('accepts valid operations', async () => {
-		for (const op of ['INSERT', 'UPDATE', 'DELETE'] as const) {
+		for (const op of ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'] as const) {
 			const result = await history.search({
 				tables: ['users'],
 				operation: op,

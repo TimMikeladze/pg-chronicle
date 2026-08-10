@@ -38,11 +38,12 @@ function isEqual(a: unknown, b: unknown): boolean {
 /**
  * Field-level diff of one audit entry.
  *
- * The operation drives the interpretation, not the presence of the payloads:
- * an INSERT has only `newData` (every key is an addition), a DELETE has only
- * `oldData` (every key is a removal), and TRUNCATE has neither. Deriving this
- * from null-checks alone would mislabel a DELETE whose row happened to be
- * empty.
+ * Driven by key presence, which the operation already determines: an INSERT
+ * carries only `newData` so every key reads as an addition, a DELETE only
+ * `oldData` so every key reads as a removal, and TRUNCATE carries neither and
+ * yields nothing. An entry with an empty payload therefore produces no rows —
+ * see `onlyExcludedColumnsChanged` for the case where that is meaningful
+ * rather than empty.
  */
 export function diffEntry(entry: AuditEntryWire): FieldChange[] {
 	const before = entry.oldData ?? {}
@@ -69,6 +70,26 @@ export function diffEntry(entry: AuditEntryWire): FieldChange[] {
 /** Diff rows worth showing by default — unchanged columns are noise on wide tables. */
 export function changedFields(changes: FieldChange[]): FieldChange[] {
 	return changes.filter((c) => c.kind !== 'unchanged')
+}
+
+/**
+ * True when an UPDATE recorded a change that the diff cannot show.
+ *
+ * The trigger only writes an UPDATE row when the whole row actually changed,
+ * but it strips `excludeColumns` from both payloads. So an update that touched
+ * nothing but a secret arrives here with every audited column identical — the
+ * entry means "a redacted column changed at this time", and rendering it as an
+ * empty diff or "no columns" reads as a bug instead.
+ */
+export function onlyExcludedColumnsChanged(
+	entry: AuditEntryWire,
+	changes: FieldChange[],
+): boolean {
+	return (
+		entry.operation === 'UPDATE' &&
+		changes.length > 0 &&
+		changes.every((c) => c.kind === 'unchanged')
+	)
 }
 
 /**

@@ -1,86 +1,25 @@
 import type { Pool } from 'pg'
 import pkg from 'pg'
+import {
+	dropDatabase,
+	recreateDatabase,
+	testDatabaseUrl,
+} from '../../helpers/database'
 
 const { Pool: PgPool } = pkg
 
 const TEST_DB = 'pg_audit_archiver_test'
-const BASE_URL = 'postgres://postgres:postgres@localhost:5432'
 
 export async function createTestDatabase(): Promise<void> {
-	// Connect to postgres database to create test db
-	const adminPool = new PgPool({ connectionString: `${BASE_URL}/postgres` })
-
-	try {
-		// Terminate active connections before dropping
-		try {
-			await adminPool.query(
-				`
-				SELECT pg_terminate_backend(pid)
-				FROM pg_stat_activity
-				WHERE datname = $1
-				AND pid <> pg_backend_pid()
-			`,
-				[TEST_DB],
-			)
-		} catch (_error) {
-			// Ignore errors if database doesn't exist or no connections to terminate
-		}
-
-		// Drop if exists
-		try {
-			await adminPool.query(`DROP DATABASE IF EXISTS ${TEST_DB}`)
-		} catch (error) {
-			throw new Error(
-				`Failed to drop test database ${TEST_DB}: ${error instanceof Error ? error.message : String(error)}`,
-			)
-		}
-
-		// Create fresh
-		try {
-			await adminPool.query(`CREATE DATABASE ${TEST_DB}`)
-		} catch (error) {
-			throw new Error(
-				`Failed to create test database ${TEST_DB}: ${error instanceof Error ? error.message : String(error)}`,
-			)
-		}
-	} finally {
-		await adminPool.end()
-	}
+	await recreateDatabase(TEST_DB)
 }
 
 export async function dropTestDatabase(): Promise<void> {
-	const adminPool = new PgPool({ connectionString: `${BASE_URL}/postgres` })
-
-	try {
-		// Terminate active connections before dropping
-		try {
-			await adminPool.query(
-				`
-				SELECT pg_terminate_backend(pid)
-				FROM pg_stat_activity
-				WHERE datname = $1
-				AND pid <> pg_backend_pid()
-			`,
-				[TEST_DB],
-			)
-		} catch (_error) {
-			// Ignore errors if database doesn't exist or no connections to terminate
-		}
-
-		try {
-			await adminPool.query(`DROP DATABASE IF EXISTS ${TEST_DB}`)
-		} catch (error) {
-			throw new Error(
-				`Failed to drop test database ${TEST_DB}: ${error instanceof Error ? error.message : String(error)}`,
-			)
-		}
-	} finally {
-		await adminPool.end()
-	}
+	await dropDatabase(TEST_DB)
 }
 
 export async function getTestConnection(): Promise<Pool> {
-	return new PgPool({ connectionString: `${BASE_URL}/${TEST_DB}` })
+	return new PgPool({ connectionString: testDatabaseUrl(TEST_DB) })
 }
 
 export async function setupTestData(pool: Pool): Promise<void> {
@@ -96,6 +35,9 @@ export async function setupTestData(pool: Pool): Promise<void> {
       changed_at TIMESTAMPTZ NOT NULL,
       old_data JSONB,
       new_data JSONB,
+      db_user TEXT,
+      app_actor TEXT,
+      client_addr INET,
       changed_by TEXT,
       metadata JSONB
     )
@@ -108,8 +50,9 @@ export async function setupTestData(pool: Pool): Promise<void> {
 	for (let i = 0; i < 100; i++) {
 		await pool.query(
 			`
-      INSERT INTO audit_log (table_name, record_id, operation, changed_at, new_data, changed_by)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO audit_log (table_name, record_id, operation, changed_at, new_data, changed_by,
+                             db_user, app_actor, client_addr)
+      VALUES ($1, $2, $3, $4, $5, $6, 'app_role', 'user-42', '203.0.113.7')
     `,
 			[
 				'users',
@@ -125,8 +68,9 @@ export async function setupTestData(pool: Pool): Promise<void> {
 	for (let i = 0; i < 50; i++) {
 		await pool.query(
 			`
-      INSERT INTO audit_log (table_name, record_id, operation, changed_at, new_data, changed_by)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO audit_log (table_name, record_id, operation, changed_at, new_data, changed_by,
+                             db_user, app_actor, client_addr)
+      VALUES ($1, $2, $3, $4, $5, $6, 'app_role', 'user-42', '203.0.113.7')
     `,
 			[
 				'users',

@@ -12,17 +12,6 @@ export interface DashboardConfig {
 	tables: string[]
 	/** True when PG_HISTORY_S3_BUCKET is set; archiver routes exist only then. */
 	archiverEnabled: boolean
-	/**
-	 * Whether `POST /api/archive` is reachable from this dashboard.
-	 *
-	 * When CRON_SECRET is set, that endpoint requires the Authorization header to
-	 * be exactly `Bearer <CRON_SECRET>` — but the `/api/*` JWT middleware runs
-	 * first and rejects anything that isn't a valid token. One header cannot be
-	 * both, so a JWT caller cannot reach the route at all. The dashboard always
-	 * runs with a JWT secret (pg-history/next refuses to start without one), so
-	 * setting CRON_SECRET makes on-demand archival scheduler-only by design.
-	 */
-	archiveTriggerAvailable: boolean
 	/** Identity written into the JWT `sub`, which pg-history logs on every revert. */
 	actor: string
 }
@@ -38,8 +27,6 @@ export function readConfig(): DashboardConfig {
 	return {
 		tables,
 		archiverEnabled,
-		archiveTriggerAvailable:
-			archiverEnabled && !process.env.CRON_SECRET?.trim(),
 		actor: process.env.PG_HISTORY_DASHBOARD_ACTOR?.trim() || 'dashboard',
 	}
 }

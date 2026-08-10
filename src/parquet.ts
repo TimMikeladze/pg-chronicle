@@ -35,6 +35,17 @@ function requireString(value: unknown, field: string): string {
 	return value
 }
 
+/**
+ * Nullable text column. The actor columns (`db_user`, `app_actor`,
+ * `client_addr`) are legitimately NULL — an unset `pg_history.actor`, or a
+ * connection over a local socket — and rows written by an older pg-history omit
+ * them entirely, so `undefined` normalizes to NULL rather than throwing.
+ */
+function optionalString(value: unknown): string | null {
+	if (value == null) return null
+	return typeof value === 'string' ? value : String(value)
+}
+
 export async function writeParquet(
 	records: Array<Record<string, unknown>>,
 	filePath: string,
@@ -82,6 +93,25 @@ export async function writeParquet(
 		{
 			name: 'new_data',
 			data: records.map((r) => toJsonText(r.new_data)),
+			type: 'STRING' as const,
+		},
+		// Attribution. These MUST be archived: once a row is hard-deleted from
+		// audit_log the Parquet file is the only remaining record of the change,
+		// and an audit trail that cannot say who made the change is not an audit
+		// trail. Nullable — see optionalString.
+		{
+			name: 'db_user',
+			data: records.map((r) => optionalString(r.db_user)),
+			type: 'STRING' as const,
+		},
+		{
+			name: 'app_actor',
+			data: records.map((r) => optionalString(r.app_actor)),
+			type: 'STRING' as const,
+		},
+		{
+			name: 'client_addr',
+			data: records.map((r) => optionalString(r.client_addr)),
 			type: 'STRING' as const,
 		},
 	]
