@@ -1,0 +1,23 @@
+{
+	"name": "pg-history-site",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "vite build",
+		"preview": "vite preview"
+	},
+	"dependencies": {
+		"@fontsource/geist-mono": "^5.3.0",
+		"@fontsource/geist-sans": "^5.3.0"
+	},
+	"devDependencies": {
+		"@shikijs/langs": "^3.13.0",
+		"@shikijs/themes": "^3.13.0",
+		"@types/node": "^22.10.2",
+		"marked": "^16.4.0",
+		"shiki": "^3.13.0",
+		"typescript": "^5.9.3",
+		"vite": "^7.1.9"
+	}
+}

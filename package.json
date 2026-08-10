@@ -1,0 +1,135 @@
+{
+	"name": "pg-history",
+	"description": "PostgreSQL audit trails with automated S3 archival. Trigger-based change tracking with search, revert, a REST API and a dashboard.",
+	"version": "1.0.0",
+	"author": {
+		"name": "Tim Mikeladze",
+		"email": "tim.mikeladze@gmail.com"
+	},
+	"type": "module",
+	"files": [
+		"dist"
+	],
+	"module": "./dist/index.js",
+	"main": "./dist/index.cjs",
+	"types": "./dist/index.d.ts",
+	"bin": {
+		"pg-history": "./dist/main.js"
+	},
+	"exports": {
+		".": {
+			"import": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			},
+			"require": {
+				"types": "./dist/index.d.cts",
+				"default": "./dist/index.cjs"
+			}
+		},
+		"./next": {
+			"import": {
+				"types": "./dist/next.d.ts",
+				"default": "./dist/next.js"
+			},
+			"require": {
+				"types": "./dist/next.d.cts",
+				"default": "./dist/next.cjs"
+			}
+		},
+		"./package.json": "./package.json"
+	},
+	"scripts": {
+		"build": "bunup",
+		"dev": "bun run src/main.ts",
+		"lint": "bun biome check . && bun biome format .",
+		"lint:fix": "bun biome check --unsafe --write . && bun biome format --write .",
+		"tsc": "tsc --noEmit",
+		"test": "bun test ./test",
+		"test:watch": "bun test --watch ./test",
+		"test:coverage": "bun test --coverage ./test",
+		"release": "bun run build && bumpp --commit --push --tag && bunx changelogithub && bun publish --access public --no-git-checks",
+		"prepare": "bun simple-git-hooks",
+		"check": "if [ \"$CI\" = \"true\" ]; then bun run lint && bun run tsc && bun run test:coverage; else bun run lint:fix && bun run tsc && bun run test; fi"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.6",
+		"@types/bun": "^1.3.14",
+		"@types/pg": "^8.20.3",
+		"bumpp": "^12.1.1",
+		"bunup": "^0.16.32",
+		"simple-git-hooks": "^2.13.1",
+		"typescript": "^7.0.2"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/TimMikeladze/pg-history.git"
+	},
+	"peerDependencies": {
+		"typescript": ">=4.5.0"
+	},
+	"peerDependenciesMeta": {
+		"typescript": {
+			"optional": true
+		}
+	},
+	"simple-git-hooks": {
+		"pre-commit": "bun run check"
+	},
+	"homepage": "https://github.com/TimMikeladze/pg-history#readme",
+	"bugs": {
+		"url": "https://github.com/TimMikeladze/pg-history/issues"
+	},
+	"license": "MIT",
+	"keywords": [
+		"postgresql",
+		"postgres",
+		"pg",
+		"audit",
+		"audit-log",
+		"audit-logging",
+		"audit-trail",
+		"history",
+		"change-tracking",
+		"change-data-capture",
+		"cdc",
+		"database",
+		"triggers",
+		"database-triggers",
+		"plpgsql",
+		"sql",
+		"jsonb",
+		"versioning",
+		"temporal",
+		"time-travel",
+		"row-history",
+		"revert",
+		"rollback",
+		"undo",
+		"compliance",
+		"gdpr",
+		"soc2",
+		"data-retention",
+		"archival",
+		"s3",
+		"parquet",
+		"rest-api",
+		"dashboard",
+		"nextjs",
+		"hono",
+		"typescript",
+		"bun",
+		"nodejs"
+	],
+	"dependencies": {
+		"@aws-sdk/client-s3": "^3.1101.0",
+		"@hono/node-server": "^2.0.12",
+		"@hono/standard-validator": "^0.3.0",
+		"@smithy/node-http-handler": "^4.9.13",
+		"hono": "^4.12.33",
+		"hono-openapi": "^1.3.1",
+		"hyparquet": "^1.27.1",
+		"hyparquet-writer": "^0.16.5",
+		"pg": "^8.22.0"
+	}
+}

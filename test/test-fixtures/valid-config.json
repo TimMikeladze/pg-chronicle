@@ -1,0 +1,20 @@
+{
+	"database": {
+		"url": "postgres://postgres:postgres@localhost:5432/test"
+	},
+	"s3": {
+		"bucket": "test-bucket",
+		"endpoint": "http://localhost:9000",
+		"region": "us-west-2",
+		"accessKeyId": "test",
+		"secretAccessKey": "test"
+	},
+	"retention": {
+		"default": 90,
+		"tables": {
+			"users": 30
+		}
+	},
+	"gracePeriod": 7,
+	"batchSize": 10000
+}

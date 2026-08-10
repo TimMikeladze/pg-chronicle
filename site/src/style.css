@@ -1,0 +1,1416 @@
+/*
+ * pg-history — marketing site.
+ *
+ * Shares one design system with the dashboard (dashboard/app/globals.css):
+ * the same neutral ramp, the same Geist pairing, the same hairline borders, and
+ * the same four operation hues. A visitor moving from this page into the
+ * dashboard should not perceive a change of product.
+ *
+ * The one rule the palette obeys: color means "an operation happened". Nothing
+ * decorative is allowed to use the four --op-* values.
+ */
+
+:root {
+	color-scheme: light dark;
+
+	--display: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+	--sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+	--mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+	/* Neutral ramp — mirrors the dashboard's :root / .dark exactly. */
+	--bg: light-dark(#ffffff, #0a0a0a);
+	--bg-raised: light-dark(#ffffff, #0f0f0f);
+	--bg-code: light-dark(#fafafa, #0f0f0f);
+	--bg-inset: light-dark(#fafafa, #141414);
+	--border: light-dark(#ebebeb, #1f1f1f);
+	--border-soft: light-dark(#f2f2f2, #171717);
+	--border-strong: light-dark(#d4d4d4, #2e2e2e);
+	--text: light-dark(#171717, #ededed);
+	--text-dim: light-dark(#737373, #8f8f8f);
+	--text-bright: light-dark(#000000, #ffffff);
+
+	--accent: light-dark(#171717, #ffffff);
+	--accent-soft: light-dark(#404040, #d4d4d4);
+	--on-accent: light-dark(#ffffff, #0a0a0a);
+	--accent-wash: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.08));
+
+	/*
+	 * Operation identity — the product's entire color vocabulary, identical to
+	 * the dashboard. Kept in sync so any operation-coloured element on this page
+	 * means exactly what it means inside the app.
+	 */
+	--op-insert: light-dark(#0e9f6e, #3dd68c);
+	--op-update: light-dark(#d97706, #f5a623);
+	--op-delete: light-dark(#e5484d, #ff6166);
+
+	--radius: 8px;
+	--measure: 46rem;
+	--nav-h: 3.5rem;
+
+	/*
+	 * One shell width for every band on the page — nav, hero, pitch, docs and
+	 * footer. They previously ran at 78/82/92rem, so the nav's contents sat
+	 * pinched inside a hero that overhung it on both sides and nothing shared a
+	 * vertical rule. Change it here and the whole page moves together.
+	 */
+	--shell: 88rem;
+	--gutter: 1.5rem;
+
+	/*
+	 * light-dark() only accepts colors, so numeric per-scheme values have to be
+	 * switched with real selectors below. Defaults here are the dark values.
+	 */
+	--rules-opacity: 0.6;
+}
+
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme="dark"]) {
+		--rules-opacity: 1;
+	}
+}
+
+:root[data-theme="light"] {
+	color-scheme: light;
+	--rules-opacity: 1;
+}
+
+:root[data-theme="dark"] {
+	color-scheme: dark;
+	--rules-opacity: 0.6;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	scroll-behavior: smooth;
+	scroll-padding-top: calc(var(--nav-h) + 1.5rem);
+	-webkit-text-size-adjust: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	font-family: var(--sans);
+	font-size: 16px;
+	line-height: 1.7;
+	-webkit-font-smoothing: antialiased;
+}
+
+a {
+	color: var(--accent);
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+	border-radius: 3px;
+}
+
+.skip {
+	position: absolute;
+	left: 1rem;
+	top: -4rem;
+	z-index: 100;
+	padding: 0.6rem 1rem;
+	border-radius: var(--radius);
+	background: var(--accent);
+	color: var(--on-accent);
+	transition: top 0.2s ease;
+}
+
+.skip:focus {
+	top: 1rem;
+	text-decoration: none;
+}
+
+/* ---------- nav ---------- */
+
+.nav {
+	position: sticky;
+	top: 0;
+	z-index: 50;
+	border-bottom: 1px solid transparent;
+	transition:
+		border-color 0.25s ease,
+		background 0.25s ease;
+}
+
+.nav.is-stuck {
+	border-bottom-color: var(--border);
+	background: color-mix(in srgb, var(--bg) 82%, transparent);
+	backdrop-filter: blur(12px) saturate(140%);
+}
+
+.nav-inner {
+	display: flex;
+	align-items: center;
+	gap: 0.85rem;
+	max-width: var(--shell);
+	margin: 0 auto;
+	height: var(--nav-h);
+	padding: 0 var(--gutter);
+}
+
+.brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.55rem;
+	color: var(--text-bright);
+	font-family: var(--display);
+	font-size: 0.95rem;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	/* Never let the wordmark break across two lines in a 3.5rem-tall bar. */
+	white-space: nowrap;
+}
+
+.brand:hover {
+	text-decoration: none;
+}
+
+.brand-mark {
+	width: 1rem;
+	height: 1rem;
+	flex: none;
+}
+
+.nav-links {
+	display: flex;
+	gap: 1.25rem;
+	margin-left: auto;
+	font-size: 0.875rem;
+}
+
+.nav-links a {
+	color: var(--text-dim);
+	transition: color 0.15s ease;
+}
+
+.nav-links a:hover {
+	color: var(--text-bright);
+	text-decoration: none;
+}
+
+.theme-toggle {
+	display: grid;
+	place-items: center;
+	width: 2rem;
+	height: 2rem;
+	padding: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-raised);
+	cursor: pointer;
+	transition: border-color 0.15s ease;
+}
+
+.theme-toggle:hover {
+	border-color: var(--accent);
+}
+
+/* Crescent in dark, full disc in light. */
+.theme-icon {
+	width: 13px;
+	height: 13px;
+	border-radius: 50%;
+	background: var(--accent);
+	box-shadow: inset -4px -2px 0 0 var(--bg-raised);
+	transition: box-shadow 0.25s ease;
+}
+
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme="dark"]) .theme-icon {
+		box-shadow: inset 0 0 0 0 var(--bg-raised);
+	}
+}
+
+:root[data-theme="light"] .theme-icon {
+	box-shadow: inset 0 0 0 0 var(--bg-raised);
+}
+
+/* ---------- hero ---------- */
+
+.hero {
+	position: relative;
+	overflow: hidden;
+	border-bottom: 1px solid var(--border);
+}
+
+/*
+ * The dashboard's grid-field, reused verbatim: hairlines at the layout gutter's
+ * pitch, masked at the edges so nothing sits on a hard line.
+ */
+.hero-rules {
+	position: absolute;
+	inset: 0;
+	background-image:
+		linear-gradient(to right, var(--border) 1px, transparent 1px),
+		linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+	background-size: 32px 32px;
+	mask-image: radial-gradient(
+		ellipse 70% 60% at 50% 40%,
+		#000 0%,
+		transparent 78%
+	);
+	opacity: var(--rules-opacity);
+}
+
+.hero-glow {
+	position: absolute;
+	inset: -30% 0 auto 0;
+	height: 70%;
+	background: radial-gradient(
+		ellipse 55% 100% at 50% 50%,
+		var(--accent-wash),
+		transparent 70%
+	);
+	pointer-events: none;
+}
+
+.hero-inner {
+	position: relative;
+	z-index: 1;
+	max-width: var(--shell);
+	margin: 0 auto;
+	padding: 6.5rem var(--gutter) 0;
+	text-align: center;
+}
+
+.hero-copy {
+	min-width: 0;
+	max-width: 46rem;
+	margin: 0 auto;
+}
+
+.eyebrow {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin: 0 0 1.75rem;
+	padding: 0.3rem 0.85rem 0.3rem 0.6rem;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--bg-raised);
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.75rem;
+	letter-spacing: 0.02em;
+}
+
+.eyebrow-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-wash);
+}
+
+/*
+ * The wordmark carries the page, so it runs larger and tighter than a stock
+ * h1, and fades toward the dim end of the ramp on its lower half — enough to
+ * read as a designed mark rather than default heading text, without
+ * introducing a hue the palette doesn't already have.
+ */
+.hero-title {
+	margin: 0;
+	font-family: var(--display);
+	font-size: clamp(2.75rem, 5.5vw, 4.25rem);
+	font-weight: 600;
+	letter-spacing: -0.055em;
+	line-height: 1;
+	color: var(--text-bright);
+	background: linear-gradient(
+		168deg,
+		var(--text-bright) 30%,
+		color-mix(in srgb, var(--text-bright) 58%, var(--text-dim))
+	);
+	background-clip: text;
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+}
+
+.hero-tagline {
+	margin: 1.25rem auto 2.25rem;
+	max-width: 30rem;
+	font-size: clamp(1.05rem, 2.2vw, 1.3rem);
+	line-height: 1.5;
+	letter-spacing: -0.01em;
+	color: var(--text-dim);
+	text-wrap: balance;
+}
+
+.hero-actions {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 1.5rem;
+}
+
+.install {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	width: 100%;
+	padding: 0.7rem 0.75rem 0.7rem 1rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-code);
+	color: var(--text);
+	font-family: var(--mono);
+	font-size: 0.9rem;
+	cursor: pointer;
+	transition: border-color 0.15s ease;
+}
+
+.install:hover {
+	border-color: var(--accent);
+}
+
+.install .prompt {
+	color: var(--accent);
+	user-select: none;
+}
+
+.install code {
+	margin-right: auto;
+	color: var(--text-bright);
+	text-align: left;
+}
+
+.install .copy-state,
+.code-copy {
+	padding: 0.2rem 0.5rem;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--bg-inset);
+	color: var(--text);
+	font-family: var(--mono);
+	font-size: 0.68rem;
+	text-transform: uppercase;
+	letter-spacing: 0.07em;
+	min-width: 4.1rem;
+	text-align: center;
+	transition:
+		color 0.15s ease,
+		border-color 0.15s ease;
+}
+
+.install:hover .copy-state,
+.code-copy:hover {
+	color: var(--text-bright);
+	border-color: var(--accent);
+}
+
+.install.is-copied .copy-state,
+.code-copy.is-copied {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+
+/*
+ * `align-items: center` here is what pushed the package-manager tabs off the
+ * copy column's left edge while every other element in the hero sat flush —
+ * the group is stretched instead so both children share one left rule.
+ */
+.install-group {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.6rem;
+	width: 100%;
+	max-width: 24rem;
+}
+
+/*
+ * Centred while the hero is a single stacked column; the desktop rule below
+ * pins it to the shared left rule once the copy sits in its own column.
+ */
+.pm-tabs {
+	display: inline-flex;
+	align-self: center;
+	gap: 0.3rem;
+	padding: 0.25rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-raised);
+}
+
+.pm-tab {
+	padding: 0.3rem 0.85rem;
+	border: none;
+	border-radius: calc(var(--radius) - 4px);
+	background: transparent;
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.78rem;
+	cursor: pointer;
+	transition:
+		background 0.15s ease,
+		color 0.15s ease;
+}
+
+.pm-tab:hover {
+	color: var(--text-bright);
+}
+
+.pm-tab.is-active {
+	background: var(--accent);
+	color: var(--on-accent);
+}
+
+.hero-links {
+	display: flex;
+	justify-content: center;
+	gap: 0.6rem;
+}
+
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	padding: 0.7rem 1.5rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-raised);
+	color: var(--text);
+	font-size: 0.9rem;
+	font-weight: 500;
+	transition:
+		border-color 0.15s ease,
+		background 0.15s ease,
+		color 0.15s ease,
+		transform 0.15s ease;
+}
+
+.btn:hover {
+	transform: translateY(-1px);
+}
+
+.btn-icon {
+	width: 16px;
+	height: 16px;
+	flex: none;
+}
+
+.btn:hover {
+	text-decoration: none;
+	border-color: var(--accent);
+	color: var(--text-bright);
+}
+
+.btn-primary {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: var(--on-accent);
+}
+
+.btn-primary:hover {
+	background: var(--accent-soft);
+	border-color: var(--accent-soft);
+	color: var(--on-accent);
+}
+
+/* ---------- hero visual: real dashboard screenshots ---------- */
+
+/*
+ * Shown at every width. Below 60rem it stacks under the copy and runs
+ * full-bleed; above that it moves into the hero's right-hand column.
+ */
+.hero-visual {
+	display: block;
+	margin-top: 3.5rem;
+}
+
+/*
+ * The card must read as a solid object sitting on the grid field, so it takes
+ * an opaque surface rather than the near-white --bg-code, which disappeared
+ * against the light-mode canvas and let the hairlines show through.
+ */
+/*
+ * Hero screenshots.
+ *
+ * Real captures of the dashboard rather than a mocked-up component: the hero's
+ * job is to show what the product actually looks like, and a hand-built fake
+ * drifts from the real UI the moment either changes.
+ *
+ * Each screen ships in both themes and the pair is swapped by media query, so
+ * a light capture never sits on the dark page. Both are in the DOM, which is
+ * what lets the swap happen with no flash and no JavaScript.
+ */
+/*
+ * Column order is deliberate: the tabs and their label sit above the image so
+ * the control precedes what it switches, and the shot itself is last so it can
+ * run to the bottom edge of the hero.
+ */
+.shots {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	margin: 0;
+}
+
+.shot {
+	display: none;
+}
+
+.shot.is-active {
+	display: block;
+}
+
+.shot-img {
+	display: block;
+	width: 100%;
+	height: auto;
+	border: 1px solid var(--border);
+	border-radius: calc(var(--radius) + 0.25rem);
+	background: var(--bg-raised);
+	/*
+	 * Lifted harder than the old inline-column shadow: the shot is now the
+	 * largest object on the page and needs to sit above the grid field rather
+	 * than float ambiguously on it.
+	 */
+	box-shadow: light-dark(
+		0 2rem 4rem -1.5rem rgba(0, 0, 0, 0.3),
+		0 2.5rem 5rem -2rem rgba(0, 0, 0, 0.85)
+	);
+}
+
+/* Theme pairing: exactly one of the two is in flow at any time. */
+.shot-img--dark {
+	display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) .shot-img--light {
+		display: none;
+	}
+
+	:root:not([data-theme="light"]) .shot-img--dark {
+		display: block;
+	}
+}
+
+:root[data-theme="dark"] .shot-img--light {
+	display: none;
+}
+
+:root[data-theme="dark"] .shot-img--dark {
+	display: block;
+}
+
+:root[data-theme="light"] .shot-img--light {
+	display: block;
+}
+
+:root[data-theme="light"] .shot-img--dark {
+	display: none;
+}
+
+/*
+ * Caption sits under the shot: it describes what is above it, and floating the
+ * label alone at the top of the page read as a page heading rather than a
+ * caption. Tabs go on the same line, right-aligned, so the row is one object.
+ */
+.shot-caption {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.75rem 1.5rem;
+	width: 100%;
+	margin-top: 1rem;
+}
+
+.shot-label {
+	margin: 0;
+	color: var(--text-dim);
+	font-size: 0.8rem;
+}
+
+.shot-tabs {
+	display: flex;
+	gap: 0.25rem;
+	padding: 0.25rem;
+	border: 1px solid var(--border);
+	border-radius: calc(var(--radius) + 0.25rem);
+	background: var(--bg-raised);
+}
+
+.shot-tab {
+	padding: 0.3rem 0.6rem;
+	border: 1px solid transparent;
+	border-radius: var(--radius);
+	background: none;
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.75rem;
+	cursor: pointer;
+	transition:
+		color 0.14s ease,
+		border-color 0.14s ease;
+}
+
+.shot-tab:hover {
+	color: var(--text-bright);
+}
+
+.shot-tab.is-active {
+	border-color: var(--border);
+	background: var(--bg-raised);
+	color: var(--text-bright);
+}
+
+/*
+ * Side by side once there's room: copy left, screenshots right. The visual
+ * column is the wider of the two and the whole row is allowed to run past the
+ * text container toward the viewport edge — a 1400px dashboard capture squeezed
+ * into a half of 82rem is a grey smudge, and the hero's job is to show the UI.
+ */
+@media (min-width: 60rem) {
+	/*
+	 * Copy column is wide enough to hold the title at full size and top-aligned
+	 * against the shot: centering it against a 900px-tall capture pushed the
+	 * wordmark into the middle of the viewport under a band of dead space.
+	 */
+	.hero-inner {
+		display: grid;
+		grid-template-columns: minmax(26rem, 30rem) minmax(0, 1fr);
+		align-items: start;
+		gap: 4rem;
+		max-width: var(--shell);
+		padding: 4.5rem var(--gutter);
+		text-align: left;
+	}
+
+	.hero-copy {
+		max-width: none;
+		margin: 0;
+		/* Optical alignment: the eyebrow's centre meets the shot's top edge. */
+		padding-top: 0.75rem;
+	}
+
+	.hero-tagline {
+		margin-left: 0;
+		margin-right: 0;
+		max-width: 28rem;
+	}
+
+	.hero-actions {
+		align-items: flex-start;
+	}
+
+	.hero-links {
+		justify-content: flex-start;
+	}
+
+	/* Every element in the copy column now shares one left rule. */
+	.pm-tabs {
+		align-self: flex-start;
+	}
+
+	.hero-visual {
+		display: block;
+		margin-top: 0;
+	}
+
+	/* Tabs and label line up with the shot's left edge, not its center. */
+	.shots {
+		align-items: flex-start;
+	}
+}
+
+/* staggered entrance */
+@media (prefers-reduced-motion: no-preference) {
+	.eyebrow,
+	.hero-title,
+	.hero-tagline,
+	.hero-actions {
+		animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+	}
+
+	.hero-title {
+		animation-delay: 0.06s;
+	}
+
+	.hero-tagline {
+		animation-delay: 0.12s;
+	}
+
+	.hero-actions {
+		animation-delay: 0.18s;
+	}
+
+	.hero-visual {
+		animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+		animation-delay: 0.24s;
+	}
+}
+
+@keyframes rise {
+	from {
+		opacity: 0;
+		transform: translateY(10px);
+	}
+}
+
+/* ---------- pitch: the three guarantees + the whole integration ---------- */
+
+/*
+ * Between the hero and the docs dump. A visitor arriving from a link needs one
+ * screen answering "what does this give me" and "what does using it look like"
+ * before a fourteen-entry contents grid is a reasonable thing to show them.
+ */
+.pitch {
+	border-bottom: 1px solid var(--border);
+	background: var(--bg-inset);
+}
+
+.pitch-inner {
+	display: grid;
+	gap: 3rem;
+	max-width: var(--shell);
+	margin: 0 auto;
+	padding: 4.5rem 1.5rem;
+}
+
+.pillars {
+	display: grid;
+	gap: 2.5rem;
+}
+
+.pillar-num {
+	display: block;
+	margin-bottom: 0.7rem;
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.7rem;
+	letter-spacing: 0.1em;
+}
+
+.pillar-title {
+	margin: 0 0 0.5rem;
+	color: var(--text-bright);
+	font-family: var(--display);
+	font-size: 1.05rem;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	line-height: 1.3;
+}
+
+.pillar-body {
+	margin: 0;
+	color: var(--text-dim);
+	font-size: 0.9rem;
+	line-height: 1.6;
+	text-wrap: pretty;
+}
+
+.pillar-body code {
+	padding: 0.1em 0.35em;
+	border-radius: 4px;
+	background: var(--accent-wash);
+	color: var(--text);
+	font-family: var(--mono);
+	font-size: 0.85em;
+}
+
+/* Same chrome as a docs code block, so the two read as one system. */
+.setup {
+	margin: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-code);
+	overflow: hidden;
+}
+
+.setup-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.55rem 0.9rem;
+	border-bottom: 1px solid var(--border-soft);
+	background: var(--bg-raised);
+}
+
+.setup-more {
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.72rem;
+	white-space: nowrap;
+	transition: color 0.15s ease;
+}
+
+.setup-more:hover {
+	color: var(--text-bright);
+	text-decoration: none;
+}
+
+.setup pre.shiki {
+	margin: 0;
+	padding: 1.25rem 1.35rem;
+	background: transparent;
+	overflow-x: auto;
+	font-size: 0.85rem;
+	line-height: 1.75;
+	tab-size: 2;
+}
+
+.setup pre.shiki code {
+	display: block;
+	width: fit-content;
+	min-width: 100%;
+	font-family: var(--mono);
+}
+
+@media (min-width: 48rem) {
+	.pillars {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 2.5rem;
+	}
+}
+
+/* Guarantees left, the code that buys them right. */
+@media (min-width: 72rem) {
+	.pitch-inner {
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+		align-items: start;
+		gap: 4rem;
+		padding: 5rem 1.5rem;
+	}
+
+	.pillars {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 2.25rem;
+	}
+}
+
+/* ---------- deploy ---------- */
+
+/*
+ * The one-click target, sat between the pitch and the docs. The card carries
+ * what actually gets deployed rather than leaving it to the docs below.
+ */
+.deploy {
+	border-bottom: 1px solid var(--border);
+}
+
+.deploy-inner {
+	display: grid;
+	gap: 2.5rem;
+	max-width: var(--shell);
+	margin: 0 auto;
+	padding: 4rem 1.5rem;
+}
+
+.deploy-head {
+	margin: 0 0 0.5rem;
+	color: var(--text-bright);
+	font-family: var(--display);
+	font-size: 1.35rem;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+}
+
+.deploy-sub {
+	margin: 0;
+	max-width: 34rem;
+	color: var(--text-dim);
+	font-size: 0.9rem;
+	line-height: 1.6;
+	text-wrap: pretty;
+}
+
+.deploy-cards {
+	display: grid;
+	gap: 1rem;
+}
+
+.deploy-card {
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+	padding: 1.4rem 1.5rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-raised);
+	color: inherit;
+	transition:
+		border-color 0.15s ease,
+		transform 0.15s ease;
+}
+
+.deploy-card:hover {
+	border-color: var(--accent);
+	text-decoration: none;
+	transform: translateY(-2px);
+}
+
+.deploy-card-head {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+}
+
+.deploy-icon {
+	width: 1.05rem;
+	height: 1.05rem;
+	flex: none;
+	color: var(--text-bright);
+}
+
+.deploy-name {
+	color: var(--text-bright);
+	font-family: var(--display);
+	font-size: 1rem;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.deploy-blurb {
+	color: var(--text-dim);
+	font-size: 0.875rem;
+	line-height: 1.6;
+	text-wrap: pretty;
+}
+
+.deploy-blurb code {
+	padding: 0.1em 0.35em;
+	border-radius: 4px;
+	background: var(--accent-wash);
+	color: var(--text);
+	font-family: var(--mono);
+	font-size: 0.85em;
+}
+
+.deploy-cta {
+	margin-top: auto;
+	padding-top: 0.25rem;
+	color: var(--text-bright);
+	font-family: var(--mono);
+	font-size: 0.75rem;
+}
+
+/*
+ * auto-fit, not a fixed column count: one target fills the column instead of
+ * sitting in the left half of an empty grid, and a second one would pair up.
+ */
+@media (min-width: 48rem) {
+	.deploy-cards {
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+	}
+}
+
+@media (min-width: 72rem) {
+	.deploy-inner {
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+		align-items: start;
+		gap: 4rem;
+	}
+}
+
+/* ---------- layout ---------- */
+
+/*
+ * The docs band keeps a reading width rather than the full shell: the prose is
+ * capped at --measure, so stretching this container to 88rem only opened a
+ * dead gutter between the text and the rail. It still starts on the shell's
+ * left rule — `margin: 0 auto` would centre the narrower block and break the
+ * alignment with the nav and hero above.
+ */
+.layout {
+	max-width: var(--shell);
+	margin: 0 auto;
+	padding: 0 var(--gutter);
+}
+
+.rail {
+	display: none;
+}
+
+@media (min-width: 72rem) {
+	/*
+	 * The prose track is sized to the measure, not 1fr — the text stops at
+	 * --measure regardless, so a fractional track just pushed the rail to the
+	 * far edge of the shell with an empty band between the two. `justify-content`
+	 * keeps the pair on the shell's left rule.
+	 */
+	.layout {
+		display: grid;
+		grid-template-columns: minmax(0, var(--measure)) 13rem;
+		justify-content: start;
+		gap: 3.5rem;
+	}
+
+	.rail {
+		display: block;
+		position: sticky;
+		top: calc(var(--nav-h) + 2.5rem);
+		align-self: start;
+		max-height: calc(100vh - var(--nav-h) - 4rem);
+		overflow-y: auto;
+		margin-top: 4rem;
+		padding-left: 1.1rem;
+		border-left: 1px solid var(--border);
+	}
+}
+
+.rail-head {
+	margin: 0 0 0.75rem;
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 11px;
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+}
+
+.rail ul {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.rail a {
+	display: block;
+	padding: 0.28rem 0;
+	color: var(--text-dim);
+	font-size: 0.82rem;
+	line-height: 1.4;
+	transition: color 0.15s ease;
+}
+
+.rail a:hover {
+	color: var(--text-bright);
+	text-decoration: none;
+}
+
+.rail a.is-active {
+	color: var(--accent);
+}
+
+/* ---------- prose ---------- */
+
+.prose {
+	max-width: var(--measure);
+	padding: 4rem 0 6rem;
+	overflow-wrap: break-word;
+}
+
+.prose h2,
+.prose h3,
+.prose h4 {
+	position: relative;
+	color: var(--text-bright);
+	letter-spacing: -0.025em;
+	line-height: 1.25;
+}
+
+.prose h2 {
+	margin: 4.5rem 0 1.25rem;
+	padding-top: 2.5rem;
+	border-top: 1px solid var(--border-soft);
+	font-size: 1.6rem;
+	font-weight: 600;
+}
+
+.prose > h2:first-child {
+	margin-top: 0;
+	padding-top: 0;
+	border-top: none;
+}
+
+.prose h3 {
+	margin: 2.75rem 0 0.9rem;
+	font-size: 1.15rem;
+	font-weight: 600;
+}
+
+.prose h4 {
+	margin: 2rem 0 0.75rem;
+	font-size: 0.95rem;
+	font-weight: 600;
+}
+
+.anchor {
+	position: absolute;
+	left: -1.25rem;
+	color: var(--border);
+	font-weight: 400;
+	opacity: 0;
+	transition:
+		opacity 0.15s ease,
+		color 0.15s ease;
+}
+
+.prose h2:hover .anchor,
+.prose h3:hover .anchor,
+.prose h4:hover .anchor {
+	opacity: 1;
+}
+
+.anchor:hover {
+	color: var(--accent);
+	text-decoration: none;
+}
+
+.prose p {
+	margin: 1.15rem 0;
+}
+
+.prose ul,
+.prose ol {
+	margin: 1.15rem 0;
+	padding-left: 1.35rem;
+}
+
+.prose li {
+	margin: 0.4rem 0;
+}
+
+.prose li::marker {
+	color: var(--accent);
+}
+
+.prose blockquote {
+	margin: 1.5rem 0;
+	padding: 0.25rem 0 0.25rem 1.15rem;
+	border-left: 2px solid var(--accent);
+	color: var(--text-dim);
+}
+
+.prose hr {
+	margin: 3rem 0;
+	border: none;
+	border-top: 1px solid var(--border-soft);
+}
+
+.prose img {
+	max-width: 100%;
+	vertical-align: middle;
+}
+
+.prose strong {
+	color: var(--text-bright);
+	font-weight: 600;
+}
+
+.prose :not(pre) > code {
+	padding: 0.12em 0.38em;
+	border: 1px solid var(--border-soft);
+	border-radius: 5px;
+	background: var(--bg-inset);
+	color: var(--text-bright);
+	font-family: var(--mono);
+	font-size: 0.84em;
+}
+
+/* ---------- code blocks ---------- */
+
+.code-block {
+	margin: 1.75rem 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-code);
+	overflow: hidden;
+}
+
+.code-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.45rem 0.6rem 0.45rem 0.9rem;
+	border-bottom: 1px solid var(--border-soft);
+	background: var(--bg-raised);
+}
+
+.code-lang {
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 11px;
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+}
+
+.code-copy {
+	cursor: pointer;
+}
+
+.code-copy:hover {
+	color: var(--text-bright);
+	border-color: var(--accent);
+}
+
+.code-block pre.shiki {
+	margin: 0;
+	padding: 1.1rem 1.25rem;
+	background: transparent;
+	overflow-x: auto;
+	font-size: 0.85rem;
+	line-height: 1.7;
+	tab-size: 2;
+}
+
+.code-block pre.shiki code {
+	display: block;
+	width: fit-content;
+	min-width: 100%;
+	font-family: var(--mono);
+}
+
+.shiki,
+.shiki span {
+	color: light-dark(var(--shiki-light), var(--shiki-dark));
+}
+
+/* ---------- tables: ledger rows ---------- */
+
+.table-wrap {
+	margin: 1.75rem 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	overflow-x: auto;
+}
+
+.prose table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.88rem;
+}
+
+.prose th,
+.prose td {
+	padding: 0.6rem 0.9rem;
+	text-align: left;
+	border-bottom: 1px solid var(--border-soft);
+	vertical-align: top;
+}
+
+.prose thead th {
+	background: var(--bg-raised);
+	color: var(--text-dim);
+	font-family: var(--mono);
+	font-size: 0.68rem;
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: 0.09em;
+	white-space: nowrap;
+}
+
+.prose tbody tr {
+	transition: background 0.12s ease;
+}
+
+.prose tbody tr:hover {
+	background: var(--accent-wash);
+}
+
+.prose tbody tr:last-child td {
+	border-bottom: none;
+}
+
+/*
+ * Code samples and API tables run wider than comfortable prose, so on roomy
+ * screens they break out past the text measure. Declared after the margin
+ * shorthands above so it wins.
+ */
+@media (min-width: 60rem) {
+	.code-block,
+	.table-wrap {
+		margin-inline: -3rem;
+	}
+}
+
+/*
+ * Right-hand breakout only, and never past the gap: the rail track begins
+ * 3.5rem after the prose, so a wider pull put the block underneath it.
+ */
+@media (min-width: 72rem) {
+	.code-block,
+	.table-wrap {
+		margin-inline: 0 -2rem;
+	}
+}
+
+/* ---------- footer ---------- */
+
+.footer {
+	border-top: 1px solid var(--border);
+	background: var(--bg-raised);
+}
+
+.footer-inner {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	max-width: var(--shell);
+	margin: 0 auto;
+	padding: 2.25rem 1.5rem 2.5rem;
+	color: var(--text-dim);
+	font-size: 0.85rem;
+}
+
+.footer-links {
+	display: flex;
+	gap: 1.25rem;
+}
+
+.footer-links a {
+	color: var(--text-dim);
+}
+
+.footer-links a:hover {
+	color: var(--text-bright);
+	text-decoration: none;
+}
+
+/* ---------- small screens ---------- */
+
+@media (max-width: 40rem) {
+	.nav-inner {
+		padding: 0 1rem;
+		gap: 0.6rem;
+	}
+
+	.nav-links {
+		gap: 0.9rem;
+		font-size: 0.82rem;
+	}
+
+	/* The bar can't hold four links beside the wordmark; these two are the
+	 * least-used and both are reachable from the docs and the footer. */
+	.nav-links a[href="/llms.txt"],
+	.nav-links a[href$="/package/pg-history"] {
+		display: none;
+	}
+
+	.hero-inner {
+		padding: 4rem 1.25rem 3.5rem;
+	}
+
+	.install {
+		font-size: 0.8rem;
+	}
+
+	.prose {
+		padding: 2.5rem 0 4rem;
+	}
+
+	.anchor {
+		display: none;
+	}
+}
