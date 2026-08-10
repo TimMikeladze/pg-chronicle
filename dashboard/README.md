@@ -9,13 +9,28 @@ It is a **single deployment**: the same app mounts the real pg-history API at
 ```bash
 cp .env.example .env.local   # fill in DATABASE_URL, TABLES, JWT_SECRET
 bun install
+ln -sfn ../.. node_modules/pg-history   # develop against the repo, not npm
 bun run dev                  # builds the parent package, then starts Next
 ```
 
-Open <http://localhost:3000>. `dev`, `build`, and `tsc` each build the root
-`pg-history` package first, because the dashboard consumes it through its
-published `exports` map (`pg-history`, `pg-history/next`) via a `file:..` link
-— without `dist/`, even the typecheck cannot resolve `pg-history/next`.
+Open <http://localhost:3000>.
+
+## How it resolves `pg-history`
+
+Two ways, and the difference matters when you change something here.
+
+**In this repo**, `node_modules/pg-history` is a symlink to the repo root, so
+the app consumes the library you are editing through its own `exports` map
+(`pg-history`, `pg-history/next`). Those entry points resolve to `dist/`, which
+is gitignored — which is why `dev`, `build` and `tsc` each build the root
+package first. `bun install` replaces the symlink with the npm package, so
+re-run the `ln -sfn` above after installing (CI does exactly this).
+
+**Deployed on its own**, `pg-history` is an ordinary npm dependency and this
+directory is self-contained: that is what makes the README's one-click Vercel
+button work, since the clone flow builds only this folder. `next.config.ts`
+picks the tracing root by looking for the parent package, and `vercel.json`
+registers the daily archival cron.
 
 CI runs this app as its own job (`dashboard` in `.github/workflows/ci.yml`):
 typecheck plus a production build, with no database service, since every page

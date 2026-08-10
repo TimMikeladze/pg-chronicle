@@ -2,6 +2,6 @@
 	"private": true,
 	"dependencies": {
 		"pg": "^8.18.0",
-		"pg-history": "latest"
+		"pg-history": "^1.0.0"
 	}
 }

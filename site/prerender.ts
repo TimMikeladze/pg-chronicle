@@ -41,37 +41,46 @@ const REPO = 'https://github.com/TimMikeladze/pg-history'
 const NPM = 'https://www.npmjs.com/package/pg-history'
 
 /**
- * One-click deploys. The two targets are not the same app: Fly runs the
- * long-lived server from the repo's Dockerfile (REST API, dashboard,
- * background archival), Vercel deploys `examples/next` — the serverless
- * route handler whose archival is driven by cron instead.
+ * One-click deploy. The button clones `dashboard/` on its own — the UI plus
+ * the REST API it is built on, with archival driven by Vercel Cron.
+ *
+ * Every listed variable is a required field in the clone form, so only the
+ * ones with a sensible non-secret default are prefilled through `envDefaults`;
+ * the connection string, the table list and the JWT secret are left to the
+ * user. Keep this list in step with the README's Deployment section.
  */
+const DEPLOY_ENV_DEFAULTS = {
+	PG_HISTORY_JWT_ALG: 'HS256',
+	PG_HISTORY_POOL_MAX: '3',
+	PG_HISTORY_STATEMENT_TIMEOUT_MS: '30000',
+	PG_HISTORY_DASHBOARD_ACTOR: 'dashboard',
+	PG_HISTORY_RETENTION_DAYS: '90',
+	PG_HISTORY_GRACE_PERIOD_DAYS: '7',
+	PG_HISTORY_BATCH_SIZE: '10000',
+} as const
+
 const VERCEL_DEPLOY = `https://vercel.com/new/clone?${new URLSearchParams({
-	'repository-url': `${REPO}/tree/main/examples/next`,
-	'project-name': 'pg-history',
-	'repository-name': 'pg-history',
-	env: 'PG_HISTORY_DATABASE_URL,PG_HISTORY_TABLES,PG_HISTORY_JWT_SECRET',
+	'repository-url': `${REPO}/tree/main/dashboard`,
+	'project-name': 'pg-history-dashboard',
+	'repository-name': 'pg-history-dashboard',
+	env: [
+		'PG_HISTORY_DATABASE_URL',
+		'PG_HISTORY_TABLES',
+		'PG_HISTORY_JWT_SECRET',
+		...Object.keys(DEPLOY_ENV_DEFAULTS),
+	].join(','),
+	envDefaults: JSON.stringify(DEPLOY_ENV_DEFAULTS),
 	envDescription:
-		'Postgres connection string, comma-separated tables to audit, and a JWT signing secret',
+		'Only the first three need a value: a Postgres connection string, the tables to audit, and a JWT signing secret. The rest arrive prefilled with the library defaults.',
 	envLink: `${REPO}#environment-variables`,
 }).toString()}`
 
-const FLY_DEPLOY = `https://fly.io/launch?repo=${REPO}`
-
 const DEPLOY_TARGETS = [
-	{
-		href: FLY_DEPLOY,
-		name: 'Fly.io',
-		blurb:
-			'The full server from the repo’s <code>Dockerfile</code> — REST API, dashboard and background archival in one long-lived process.',
-		// Fly's balloon mark, single path, inherits currentColor like the rest.
-		icon: '<path fill="currentColor" d="M8 1.2a4.6 4.6 0 0 0-4.6 4.6c0 2.5 2.2 5.3 4.2 7.4a.55.55 0 0 0 .8 0c2-2.1 4.2-4.9 4.2-7.4A4.6 4.6 0 0 0 8 1.2Zm0 2.6a2 2 0 1 1 0 4 2 2 0 0 1 0-4ZM4.6 14.2h6.8a.6.6 0 0 1 0 1.2H4.6a.6.6 0 0 1 0-1.2Z"/>',
-	},
 	{
 		href: VERCEL_DEPLOY,
 		name: 'Vercel',
 		blurb:
-			'The serverless route handler from <code>examples/next</code>, with archival driven by Vercel Cron instead of a background loop.',
+			'The dashboard and the REST API it runs on, as one project — archival on Vercel Cron, and seven of the ten environment variables already filled in.',
 		icon: '<path fill="currentColor" d="M8 1.5 15 14H1L8 1.5Z"/>',
 	},
 ] as const
@@ -194,7 +203,7 @@ function summarise(text: string) {
 	if (!plain) return ''
 
 	// Split only where a terminator is followed by a capital, so "Node.js" and
-	// "Fly.io" survive intact.
+	// "vercel.json" survive intact.
 	const sentences = plain.split(/(?<=[.!?])\s+(?=[A-Z])/)
 	let out = ''
 	for (const sentence of sentences) {
@@ -453,7 +462,7 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 			<div class="deploy-inner">
 				<div class="deploy-intro">
 					<h2 class="deploy-head" id="deploy-head">Deploy it in one click</h2>
-					<p class="deploy-sub">Both targets are in the repo already. Point either at a Postgres URL and the audit trail is live.</p>
+					<p class="deploy-sub">The dashboard is in the repo already. Point it at a Postgres URL and the audit trail is live, browsable and revertible.</p>
 				</div>
 				<div class="deploy-cards">
 					${DEPLOY_TARGETS.map(

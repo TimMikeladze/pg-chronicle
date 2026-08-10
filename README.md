@@ -5,8 +5,7 @@ PostgreSQL audit trails with automated S3 archival.
 [![npm version](https://img.shields.io/npm/v/pg-history.svg)](https://www.npmjs.com/package/pg-history)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-[![Deploy to Fly.io](https://fly.io/static/images/deploy.svg)](https://fly.io/launch?repo=https://github.com/TimMikeladze/pg-history)
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fexamples%2Fnext&project-name=pg-history&repository-name=pg-history&env=PG_HISTORY_DATABASE_URL,PG_HISTORY_TABLES,PG_HISTORY_JWT_SECRET&envDescription=Postgres%20connection%20string%2C%20comma-separated%20tables%20to%20audit%2C%20and%20a%20JWT%20signing%20secret&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fdashboard&project-name=pg-history-dashboard&repository-name=pg-history-dashboard&env=PG_HISTORY_DATABASE_URL%2CPG_HISTORY_TABLES%2CPG_HISTORY_JWT_SECRET%2CPG_HISTORY_JWT_ALG%2CPG_HISTORY_POOL_MAX%2CPG_HISTORY_STATEMENT_TIMEOUT_MS%2CPG_HISTORY_DASHBOARD_ACTOR%2CPG_HISTORY_RETENTION_DAYS%2CPG_HISTORY_GRACE_PERIOD_DAYS%2CPG_HISTORY_BATCH_SIZE&envDefaults=%7B%22PG_HISTORY_JWT_ALG%22%3A%22HS256%22%2C%22PG_HISTORY_POOL_MAX%22%3A%223%22%2C%22PG_HISTORY_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_HISTORY_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_HISTORY_RETENTION_DAYS%22%3A%2290%22%2C%22PG_HISTORY_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_HISTORY_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+three+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+and+a+JWT+signing+secret.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
 
 ## Table of Contents
 
@@ -83,12 +82,11 @@ new PgHistory({ pool, tables: ['users'], logger: pino() })
 
 ### Deploy in one click
 
-Nothing above needs a server — the triggers live in PostgreSQL. These deploy the parts that do: the REST API, the dashboard and archival. Full details in [Deployment](#deployment).
+Nothing above needs a server — the triggers live in PostgreSQL. This deploys the parts that do: the REST API, the dashboard and cron archival, as one Vercel project. Full details in [Deployment](#deployment).
 
-[![Deploy to Fly.io](https://fly.io/static/images/deploy.svg)](https://fly.io/launch?repo=https://github.com/TimMikeladze/pg-history)
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fexamples%2Fnext&project-name=pg-history&repository-name=pg-history&env=PG_HISTORY_DATABASE_URL,PG_HISTORY_TABLES,PG_HISTORY_JWT_SECRET&envDescription=Postgres%20connection%20string%2C%20comma-separated%20tables%20to%20audit%2C%20and%20a%20JWT%20signing%20secret&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fdashboard&project-name=pg-history-dashboard&repository-name=pg-history-dashboard&env=PG_HISTORY_DATABASE_URL%2CPG_HISTORY_TABLES%2CPG_HISTORY_JWT_SECRET%2CPG_HISTORY_JWT_ALG%2CPG_HISTORY_POOL_MAX%2CPG_HISTORY_STATEMENT_TIMEOUT_MS%2CPG_HISTORY_DASHBOARD_ACTOR%2CPG_HISTORY_RETENTION_DAYS%2CPG_HISTORY_GRACE_PERIOD_DAYS%2CPG_HISTORY_BATCH_SIZE&envDefaults=%7B%22PG_HISTORY_JWT_ALG%22%3A%22HS256%22%2C%22PG_HISTORY_POOL_MAX%22%3A%223%22%2C%22PG_HISTORY_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_HISTORY_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_HISTORY_RETENTION_DAYS%22%3A%2290%22%2C%22PG_HISTORY_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_HISTORY_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+three+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+and+a+JWT+signing+secret.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
 
-**Fly.io** runs the long-lived server from the repo's `Dockerfile` — background archival included. **Vercel** deploys [`examples/next`](./examples/next), the serverless route handler whose archival runs on cron.
+The button clones [`dashboard/`](./dashboard) — the UI *and* the REST API it is built on, mounted at `/api`. Ten environment variables come up in the clone form and seven are already filled in; only `PG_HISTORY_DATABASE_URL`, `PG_HISTORY_TABLES` and `PG_HISTORY_JWT_SECRET` need you.
 
 ## Installation
 
@@ -445,7 +443,7 @@ Reads return the `PaginatedResult` shape (`{data, nextCursor, hasMore}`); revert
 { "status": "ok" }
 ```
 
-`status` flips to `"degraded"` when the archiver has failed. If the database is unreachable, `/health` returns HTTP `503` with `{ "status": "error" }` — so platform health checks (e.g. Fly) fail over instead of routing traffic to an instance whose queries all 500.
+`status` flips to `"degraded"` when the archiver has failed. If the database is unreachable, `/health` returns HTTP `503` with `{ "status": "error" }` — so platform health checks (Kubernetes, a load balancer) fail over instead of routing traffic to an instance whose queries all 500.
 
 `GET /api/health/detailed` (auth-gated) exposes operational state:
 
@@ -512,34 +510,29 @@ Two behaviours worth knowing: archived history disappears from reads (both `getH
 
 ## Deployment
 
-The two one-click buttons below deploy different things. **Fly.io** runs the full long-lived server (REST API, dashboard, background archival) from the repo's `Dockerfile`. **Vercel** deploys [`examples/next`](./examples/next) — the serverless route handler with cron archival, no background process.
+Click the button below to get the dashboard and the REST API as one Vercel project, wire the `pg-history/next` route handler into an app you already have, or run the container anywhere.
 
-### Fly.io
+### One click: the dashboard on Vercel
 
-[![Deploy to Fly.io](https://fly.io/static/images/deploy.svg)](https://fly.io/launch?repo=https://github.com/TimMikeladze/pg-history)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fdashboard&project-name=pg-history-dashboard&repository-name=pg-history-dashboard&env=PG_HISTORY_DATABASE_URL%2CPG_HISTORY_TABLES%2CPG_HISTORY_JWT_SECRET%2CPG_HISTORY_JWT_ALG%2CPG_HISTORY_POOL_MAX%2CPG_HISTORY_STATEMENT_TIMEOUT_MS%2CPG_HISTORY_DASHBOARD_ACTOR%2CPG_HISTORY_RETENTION_DAYS%2CPG_HISTORY_GRACE_PERIOD_DAYS%2CPG_HISTORY_BATCH_SIZE&envDefaults=%7B%22PG_HISTORY_JWT_ALG%22%3A%22HS256%22%2C%22PG_HISTORY_POOL_MAX%22%3A%223%22%2C%22PG_HISTORY_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_HISTORY_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_HISTORY_RETENTION_DAYS%22%3A%2290%22%2C%22PG_HISTORY_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_HISTORY_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+three+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+and+a+JWT+signing+secret.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
 
-A `Dockerfile` and `fly.toml` are included. The server runs as a long-lived process with background archival.
+The button clones [`dashboard/`](./dashboard) on its own — the [Dashboard](#dashboard) UI and the REST API it runs on, in one project, with `dashboard/vercel.json` registering the archival cron. The clone consumes `pg-history` from npm, so nothing else in this repo has to build for it to deploy — Vercel's Root Directory cannot reach a parent directory, which is what makes the published package the dependency here.
 
-```bash
-fly secrets set PG_HISTORY_DATABASE_URL=postgres://...
-fly secrets set PG_HISTORY_JWT_SECRET=your-secret
-fly secrets set PG_HISTORY_S3_BUCKET=audit-archives
-fly secrets set PG_HISTORY_S3_ENDPOINT=https://...
-fly secrets set PG_HISTORY_S3_ACCESS_KEY_ID=...
-fly secrets set PG_HISTORY_S3_SECRET_ACCESS_KEY=...
-fly deploy
-```
+**What you fill in.** Three variables:
 
-The `fly.toml` is configured with:
-- `min_machines_running = 1` — ensures archival always runs
-- `kill_timeout = 30s` — gives in-flight archival time to finish on deploys
-- `PORT = 8080` — matches Fly's internal port expectation
+| Variable | Value |
+|----------|-------|
+| `PG_HISTORY_DATABASE_URL` | Postgres connection string. Point it at a pooled endpoint (Neon, Supabase, PgBouncer) — every invocation opens its own pool |
+| `PG_HISTORY_TABLES` | Comma-separated tables to audit, e.g. `users,orders`. They must already exist: the app installs triggers on them at first request |
+| `PG_HISTORY_JWT_SECRET` | Long random string. The dashboard signs its own short-lived tokens with it and it never reaches the browser |
 
-Archival runs immediately on startup and then on a periodic interval (default: every hour, configurable via `PG_HISTORY_ARCHIVAL_INTERVAL_MS`).
+**What arrives prefilled**, straight from the library's defaults, so the form is a click-through: `PG_HISTORY_JWT_ALG=HS256`, `PG_HISTORY_POOL_MAX=3`, `PG_HISTORY_STATEMENT_TIMEOUT_MS=30000`, `PG_HISTORY_DASHBOARD_ACTOR=dashboard`, `PG_HISTORY_RETENTION_DAYS=90`, `PG_HISTORY_GRACE_PERIOD_DAYS=7`, `PG_HISTORY_BATCH_SIZE=10000`. Defaults are only ever passed for non-secret values — the clone URL ends up in browser history, which is why the three above are the ones left blank.
+
+**After the first deploy**, add the archiver's own variables in the project settings — `PG_HISTORY_S3_BUCKET` (this is the switch: without it there is no `/api/archive` and no archival UI), the S3 credentials, and `CRON_SECRET`. Until `CRON_SECRET` is set the nightly cron gets a `401` from the JWT middleware; until the bucket is set it gets a `404`. Both are inert, not broken — see [Cron Archival](#cron-archival-vercel-cron).
+
+The dashboard has blanket access to every audited row by design. Put it behind SSO or a network boundary before pointing it at production — see [Authentication is not authorization](#it-never-issues-a-token-to-the-browser).
 
 ### Next.js (Serverless)
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fexamples%2Fnext&project-name=pg-history&repository-name=pg-history&env=PG_HISTORY_DATABASE_URL,PG_HISTORY_TABLES,PG_HISTORY_JWT_SECRET&envDescription=Postgres%20connection%20string%2C%20comma-separated%20tables%20to%20audit%2C%20and%20a%20JWT%20signing%20secret&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
 
 Auditing itself is runtime-independent — the triggers live in PostgreSQL. The `pg-history/next` entry point is a Next.js App Router route handler and runs anywhere Next.js runs; only the *cron scheduling* below is Vercel-specific.
 
@@ -588,18 +581,20 @@ The `pg-history/next` entry point automatically enables `serverless: true`, whic
 
 #### Cron Archival (Vercel Cron)
 
-Serverless has no persistent process, so archival needs an external trigger. Add `vercel.json` next to the Option B route handler above, plus the S3 and `CRON_SECRET` variables from [Environment Variables](#environment-variables). Working example: [`examples/next/`](./examples/next).
+Serverless has no persistent process, so archival needs an external trigger. Add `vercel.json` next to the Option B route handler above, plus the S3 and `CRON_SECRET` variables from [Environment Variables](#environment-variables). Working example: [`examples/next/`](./examples/next). The one-click dashboard already ships this file.
 
 ```json
 {
   "crons": [
     {
       "path": "/api/archive",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }
 ```
+
+Daily is the one schedule every plan accepts — Hobby rejects anything more frequent at build time. On Pro, drop to `0 */6 * * *` or hourly.
 
 Vercel Cron calls `POST /api/archive` on schedule with `Authorization: Bearer <CRON_SECRET>` injected automatically; the endpoint verifies it, then runs archive → soft delete → hard delete and returns stats.
 
@@ -620,6 +615,10 @@ If archival takes longer than the function timeout, it will be interrupted. The 
 | Connection pooling | Each invocation may create a pool | Use an external pooler (PgBouncer, Neon, Supabase, RDS Proxy). Set `PG_HISTORY_POOL_MAX` low (2-3). |
 | Cold starts | `setup()` runs on every cold instance | Already cheap: when the schema exists it short-circuits after one catalog probe (~5ms). Cache the promise at module level and call it freely. |
 | Rate limiting | In-memory rate limiter resets per invocation | Use platform-level rate limiting (API Gateway, Vercel Firewall, Cloudflare). |
+
+### Long-lived server (Docker)
+
+Anywhere that runs a container, the repo's `Dockerfile` builds the standalone server described in [Server & REST API](#server--rest-api) — same REST API, but with a background archival loop instead of cron. It runs immediately on startup and then on an interval (`PG_HISTORY_ARCHIVAL_INTERVAL_MS`, default hourly), so give the container a 30s termination grace period and keep at least one instance alive or archival never runs. Configuration is the same environment variables, passed as secrets.
 
 ### Other Platforms
 

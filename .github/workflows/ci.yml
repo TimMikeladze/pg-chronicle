@@ -163,12 +163,17 @@ jobs:
         run: bun install --frozen-lockfile
         working-directory: dashboard
 
-      # The dashboard used to depend on the library via `file:..`, which makes
-      # bun deep-copy the whole parent tree (161M of node_modules included) on
-      # every install — slow, and the copy routinely landed without the parent's
-      # package.json, leaving `pg-history/next` unresolvable.
+      # The dashboard declares `pg-history` as a published npm dependency so it
+      # can be deployed on its own — the README's one-click Vercel button clones
+      # only that directory, and Vercel's Root Directory setting cannot reach a
+      # parent. Here we want the opposite: CI must test the library in this
+      # commit, not the last release, so the symlink below replaces the npm copy
+      # that `bun install` just placed.
       #
-      # A symlink is what `file:..` was only pretending to be. It is needed at
+      # A symlink, not `file:..`: that makes bun deep-copy the whole parent tree
+      # (161M of node_modules included) on every install — slow, and the copy
+      # routinely landed without the parent's package.json, leaving
+      # `pg-history/next` unresolvable. The link is needed at
       # *runtime*, not just for types: `pg-history` is marked external in
       # next.config.ts, and Next's "collect page data" step actually executes the
       # route modules in Node, so the package must be resolvable on disk.

@@ -901,9 +901,8 @@ a:hover {
 /* ---------- deploy ---------- */
 
 /*
- * Two one-click targets, sat between the pitch and the docs. They deploy
- * different things — the long-lived server versus the serverless handler — so
- * each card carries the distinction rather than leaving it to the docs below.
+ * The one-click target, sat between the pitch and the docs. The card carries
+ * what actually gets deployed rather than leaving it to the docs below.
  */
 .deploy {
 	border-bottom: 1px solid var(--border);
@@ -1005,9 +1004,13 @@ a:hover {
 	font-size: 0.75rem;
 }
 
+/*
+ * auto-fit, not a fixed column count: one target fills the column instead of
+ * sitting in the left half of an empty grid, and a second one would pair up.
+ */
 @media (min-width: 48rem) {
 	.deploy-cards {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
 	}
 }
 
