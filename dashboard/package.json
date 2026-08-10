@@ -8,6 +8,7 @@
 		"prebuild": "bun run build:lib",
 		"build": "next build",
 		"start": "next start",
+		"test": "bun test ./lib",
 		"pretsc": "bun run build:lib",
 		"tsc": "tsc --noEmit",
 		"build:lib": "[ -f ../package.json ] || exit 0; cd .. && bun run build"

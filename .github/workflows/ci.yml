@@ -135,13 +135,29 @@ jobs:
   dashboard:
     name: Dashboard
     runs-on: ubuntu-latest
-    # No postgres or MinIO service: every dashboard page is force-dynamic, so
-    # `next build` compiles and typechecks without ever opening a connection.
-    # Linting is already covered — the `check` job's `biome check .` sweeps the
-    # whole repo, dashboard/ included — and so are the access-control unit tests
-    # in dashboard/lib/auth.test.ts, which the root `bun test` picks up (they
-    # need no database). What is missing without this job is the dashboard's own
-    # tsc (it is excluded from the root tsconfig, having its own) and its build.
+    services:
+      # Needed only by the access-gate step below: `pg-history/next` opens a
+      # pool on first request, so without a database every /api call fails to
+      # initialise and answers 500 — which would hide whether the JWT check
+      # (the thing under test) actually runs.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    # No MinIO: nothing here touches S3. Linting is already covered — the Test
+    # job's repo-wide `biome check .` sweeps dashboard/ too. What this job adds
+    # is the dashboard's own tsc (it has its own tsconfig, excluded from the
+    # root one), its unit tests (they need dashboard dependencies the Test job
+    # does not install), its build, and the access gate end to end.
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -196,6 +212,13 @@ jobs:
         run: bun run tsc
         working-directory: dashboard
 
+      # Access-control and diff logic. They live here rather than in the root
+      # suite because they import the dashboard's own dependencies, which the
+      # Test job has no reason to install.
+      - name: Unit tests
+        run: bun run test
+        working-directory: dashboard
+
       # `prebuild` builds the parent package first, so this also proves the
       # dist/ the dashboard imports is the one the library currently produces.
       - name: Build
@@ -214,6 +237,10 @@ jobs:
           PG_HISTORY_TABLES: users
           PG_HISTORY_JWT_SECRET: ci-jwt-secret-value-long-enough
           PG_HISTORY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+          # The job-wide S3 variables would switch the archiver on, and it
+          # extends an audit_log this throwaway database does not have. The gate
+          # is what is under test here, not archival.
+          PG_HISTORY_S3_BUCKET: ''
         run: |
           set -euo pipefail
 
