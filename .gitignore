@@ -24,3 +24,5 @@ yarn-error.log*
 
 # Bun is the package manager here; npm lockfiles must not come back.
 package-lock.json
+
+examples/node/package-lock.json

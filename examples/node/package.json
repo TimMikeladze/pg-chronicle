@@ -1,0 +1,14 @@
+{
+	"name": "pg-history-node-example",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"description": "Runs the built package under plain Node.js to verify the bunup build output.",
+	"scripts": {
+		"start": "node smoke.mjs"
+	},
+	"dependencies": {
+		"pg": "^8.22.0",
+		"pg-history": "file:../.."
+	}
+}

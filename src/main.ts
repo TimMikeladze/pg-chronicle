@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Bun entrypoint — run with: bun run src/main.ts
  *

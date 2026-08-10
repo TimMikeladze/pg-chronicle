@@ -67,6 +67,68 @@ jobs:
       - name: Build
         run: bun run build
 
+  node-consumer:
+    name: Node ${{ matrix.node }} consumer
+    runs-on: ubuntu-latest
+    # The library is built with Bun (bunup) but published for Node consumers.
+    # This job installs the built package into a plain Node project and exercises
+    # every published entrypoint under `node`, so a Bun-only regression in the
+    # build output (missing CJS, missing shebang, broken exports map) fails here
+    # instead of in a user's app.
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest maintained LTS through current.
+        node: [20, 22, 24]
+    services:
+      postgres:
+            image: postgres:16-alpine
+            env:
+              POSTGRES_USER: postgres
+              POSTGRES_PASSWORD: postgres
+              POSTGRES_DB: postgres
+            options: >-
+                  --health-cmd pg_isready
+                  --health-interval 10s
+                  --health-timeout 5s
+                  --health-retries 5
+            ports:
+                  - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install library dependencies
+        run: bun install --frozen-lockfile
+
+      # dist/ is gitignored, so the example has nothing to consume until this runs.
+      - name: Build library
+        run: bun run build
+
+      # npm, not bun: the point is that a Node/npm user can consume the output.
+      # `file:../..` symlinks the repo root, so this resolves through the real
+      # exports map and the dist/ just built above.
+      - name: Install example dependencies
+        run: npm install
+        working-directory: examples/node
+
+      - name: Run Node consumer smoke test
+        run: npm start
+        working-directory: examples/node
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
   dashboard:
     name: Dashboard
     runs-on: ubuntu-latest

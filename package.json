@@ -31,8 +31,13 @@
 			"import": {
 				"types": "./dist/next.d.ts",
 				"default": "./dist/next.js"
+			},
+			"require": {
+				"types": "./dist/next.d.cts",
+				"default": "./dist/next.cjs"
 			}
-		}
+		},
+		"./package.json": "./package.json"
 	},
 	"scripts": {
 		"build": "bunup",
