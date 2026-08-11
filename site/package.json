@@ -13,10 +13,12 @@
 		"@fontsource/geist-sans": "^5.3.0"
 	},
 	"devDependencies": {
+		"@resvg/resvg-wasm": "^2.6.2",
 		"@shikijs/langs": "^3.13.0",
 		"@shikijs/themes": "^3.13.0",
 		"@types/node": "^22.10.2",
 		"marked": "^16.4.0",
+		"satori": "^0.29.0",
 		"shiki": "^3.13.0",
 		"typescript": "^5.9.3",
 		"vite": "^7.1.9"

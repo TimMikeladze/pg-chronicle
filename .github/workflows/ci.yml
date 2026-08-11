@@ -70,6 +70,43 @@ jobs:
       - name: Build
         run: bun run build
 
+  site:
+    name: Site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        working-directory: site
+        run: bun install --frozen-lockfile
+
+      # Runs what Vercel runs (see vercel.json), so a site that cannot build
+      # fails here instead of on the deploy.
+      - name: Build
+        working-directory: site
+        run: bun run build
+
+      # The social card is generated during that build, from the README. It is
+      # the one output nothing else would notice breaking: the page would still
+      # deploy, and shares would silently fall back to a bare link. LinkedIn and
+      # X also drop cards whose file disagrees with the dimensions index.html
+      # declares, so the size is asserted rather than just the file's existence.
+      - name: Check the social card
+        working-directory: site
+        run: |
+          size=$(file -b dist/og.png)
+          echo "$size"
+          case "$size" in
+            "PNG image data, 1200 x 630"*) ;;
+            *) echo "::error::dist/og.png is not a 1200x630 PNG"; exit 1 ;;
+          esac
+
   node-consumer:
     name: Node ${{ matrix.node }} consumer
     runs-on: ubuntu-latest
