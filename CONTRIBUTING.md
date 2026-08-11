@@ -35,6 +35,8 @@ Its social card — what LinkedIn, X and Slack show when the link is shared — 
 
 The card is drawn by [Satori](https://github.com/vercel/satori) and rasterised by resvg rather than screenshotted from a browser, because the deploy has no browser. Satori implements a subset of CSS — flexbox only, no inline text flow — so mixed-format prose has to be built out of explicit rows.
 
+The dashboard screenshots the hero and the card use are captures of the real dashboard, seeded and taken by scripts in `site/shots/` — see [its README](site/shots/README.md) for how to regenerate them.
+
 Both platforms cache a card per URL, so a freshly deployed image only shows up in new shares until the cache is cleared through [LinkedIn's Post Inspector](https://www.linkedin.com/post-inspector/) or [X's Card Validator](https://cards-dev.twitter.com/validator).
 
 ## Commit Message Conventions

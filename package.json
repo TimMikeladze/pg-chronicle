@@ -58,6 +58,7 @@
 		"@types/pg": "^8.20.3",
 		"bumpp": "^12.1.1",
 		"bunup": "^0.16.32",
+		"puppeteer-core": "^25.4.0",
 		"simple-git-hooks": "^2.13.1",
 		"typescript": "^7.0.2"
 	},

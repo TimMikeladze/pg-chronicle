@@ -15,23 +15,28 @@ import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
  * from the running dashboard (see site/shots/README.md), in both themes — the
  * page shows whichever matches the visitor's, so a light screenshot never
  * lands on a dark page.
+ *
+ * Timeline leads because it is the one screen that shows what the library
+ * actually does: a row's changes, what each one set and unset, who made it,
+ * and the button that puts it back. Explore and Tables show reach, which only
+ * means something once that has landed.
  */
 const SHOTS = [
 	{
-		label: 'Explore',
-		alt: 'The pg-history dashboard exploring audit entries, with a query console showing which search engine and index a query will use.',
-		light: '/shots/explore-light.png',
-		dark: '/shots/explore-dark.png',
-	},
-	{
 		label: 'Timeline',
-		alt: 'One record’s change timeline, each entry colour-coded by operation with a before and after diff.',
+		alt: 'One record’s change timeline in the pg-history dashboard: each entry names the columns it changed, its actor and how long ago, and expands into a before/after diff with a revert button.',
 		light: '/shots/timeline-light.png',
 		dark: '/shots/timeline-dark.png',
 	},
 	{
+		label: 'Explore',
+		alt: 'Audit entries across every tracked table, colour-coded by operation, each with the columns it changed and the actor responsible.',
+		light: '/shots/explore-light.png',
+		dark: '/shots/explore-dark.png',
+	},
+	{
 		label: 'Tables',
-		alt: 'Every audited table with its last change, the operation that made it and the actor responsible.',
+		alt: 'Every audited table with its last change, the operation that made it, the actor responsible and its archival backlog.',
 		light: '/shots/tables-light.png',
 		dark: '/shots/tables-dark.png',
 	},

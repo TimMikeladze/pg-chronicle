@@ -24,8 +24,12 @@ import satori from 'satori'
 export const CARD_WIDTH = 1200
 export const CARD_HEIGHT = 630
 
-/** The dashboard screens the card can show, from the same set as the hero. */
-const SHOT = 'public/shots/explore-dark.png'
+/**
+ * The screen the card shows, from the same set as the hero — the record
+ * timeline, because a before/after diff with an actor against it says what the
+ * library does in the half-second a feed gets looked at.
+ */
+const SHOT = 'public/shots/timeline-dark.png'
 
 /**
  * The card's own copy. Sized to survive a halving: a card is about 550px wide
@@ -159,10 +163,10 @@ function card(tagline: string, shot: string): Node {
 			{
 				style: {
 					position: 'absolute',
-					top: 88,
+					top: 104,
 					left: 660,
 					width: 700,
-					height: 542,
+					height: 526,
 					display: 'flex',
 					overflow: 'hidden',
 					borderTop: `1px solid ${BORDER}`,
@@ -171,9 +175,17 @@ function card(tagline: string, shot: string): Node {
 					background: BG,
 				},
 			},
-			// The capture is 1400x900 in CSS pixels; 940 wide shows its left
-			// two thirds, which is where the rows are.
-			el('img', { src: shot, width: 940, height: 604 }),
+			// The capture is 1400x900 in CSS pixels. Only 540 of this window's
+			// 700px sit on the canvas — the rest hangs off the right edge — so
+			// the scale is set by what has to survive that crop: both columns
+			// of the before/after diff, which is the whole reason this screen
+			// is the one on the card.
+			el('img', {
+				src: shot,
+				width: 850,
+				height: 546,
+				style: { marginLeft: -6 },
+			}),
 		),
 		// Keeps the copy readable where the window would otherwise crowd it.
 		el('div', {
