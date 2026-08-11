@@ -5,6 +5,17 @@ PostgreSQL audit trails with automated S3 archival.
 [![npm version](https://img.shields.io/npm/v/pg-history.svg)](https://www.npmjs.com/package/pg-history)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+```bash
+bun add pg-history
+```
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TimMikeladze/pg-history/main/site/public/shots/timeline-dark.png">
+  <img alt="The pg-history dashboard showing one row's full change timeline: each entry's before/after diff, the actor and IP behind it, and a revert button." src="https://raw.githubusercontent.com/TimMikeladze/pg-history/main/site/public/shots/timeline-light.png">
+</picture>
+
+*One record's timeline in the bundled [dashboard](#dashboard) — what each change set, who made it, and a revert for any entry. Screens are real captures, not mockups.*
+
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fdashboard&project-name=pg-history-dashboard&repository-name=pg-history-dashboard&env=PG_HISTORY_DATABASE_URL%2CPG_HISTORY_TABLES%2CPG_HISTORY_JWT_SECRET%2CPG_HISTORY_DASHBOARD_PASSWORD%2CPG_HISTORY_JWT_ALG%2CPG_HISTORY_POOL_MAX%2CPG_HISTORY_STATEMENT_TIMEOUT_MS%2CPG_HISTORY_DASHBOARD_ACTOR%2CPG_HISTORY_RETENTION_DAYS%2CPG_HISTORY_GRACE_PERIOD_DAYS%2CPG_HISTORY_BATCH_SIZE&envDefaults=%7B%22PG_HISTORY_JWT_ALG%22%3A%22HS256%22%2C%22PG_HISTORY_POOL_MAX%22%3A%223%22%2C%22PG_HISTORY_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_HISTORY_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_HISTORY_RETENTION_DAYS%22%3A%2290%22%2C%22PG_HISTORY_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_HISTORY_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+four+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+a+JWT+signing+secret%2C+and+a+password+for+the+dashboard+UI+%28it+can+read+and+revert+every+audited+record%29.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
 
 **The short version.** `setup()` installs a trigger on each table you name. From then on PostgreSQL does the auditing itself: every `INSERT`, `UPDATE` and `DELETE` writes a JSONB before/after snapshot — plus who made the change and when — into an `audit_log` table, in the *same transaction* as the change. Both commit or neither does, so no write slips through unrecorded.
@@ -554,6 +565,22 @@ It reads the same environment variables the server does — `PG_HISTORY_TABLES` 
 | `/api/*` | The pg-history REST API itself — for cron, scripts and other services |
 | `/health` | Public liveness probe, added by the dashboard because the catch-all only serves `/api/**` |
 | `/login` | The password gate |
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TimMikeladze/pg-history/main/site/public/shots/explore-dark.png">
+  <img alt="The Explore screen: a JSONB containment query across four audited tables, with operation and date-range filters and a result row per change." src="https://raw.githubusercontent.com/TimMikeladze/pg-history/main/site/public/shots/explore-light.png">
+</picture>
+
+*`/search` — one query across every audited table, colour-coded by operation, with the changed columns on each row.*
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TimMikeladze/pg-history/main/site/public/shots/tables-dark.png">
+  <img alt="The Tables screen: every audited table with its last change, the actor behind it, and its pending archive and purge counts." src="https://raw.githubusercontent.com/TimMikeladze/pg-history/main/site/public/shots/tables-light.png">
+</picture>
+
+*`/tables` — what is audited, when each table last changed, and how much history is queued for archival.*
+
+Every shot above is a real capture of this repo's dashboard against a seeded database; [`site/shots/README.md`](./site/shots/README.md) documents how to regenerate them.
 
 ### Access control
 

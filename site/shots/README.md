@@ -1,7 +1,9 @@
 # Dashboard screenshots
 
 `site/public/shots/*.png` are real captures of the dashboard in this repo, not
-mockups — the landing page hero shows them, and the social card crops one. Each
+mockups — the landing page hero shows them, the social card crops one, and the
+root [`README.md`](../../README.md) embeds them over raw.githubusercontent.com
+(so renaming or deleting one breaks the README and the npm page too). Each
 screen exists in both themes because the page shows whichever matches the
 visitor's, so a light screenshot never lands on a dark page.
 
