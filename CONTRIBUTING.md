@@ -27,6 +27,14 @@ Thank you for your interest in contributing to our project! This guide will help
 7. Push your branch to your fork
 8. Open a pull request
 
+## The Landing Page
+
+`site/` renders <https://pg-history.dev> from `README.md` at build time — `bun run dev` and `bun run build` from inside `site/`.
+
+Its social card (`site/public/og.png`, what LinkedIn, X and Slack show when the link is shared) is a committed artifact, not a build output: it is rendered by a headless Chrome, which the deploy does not have. Regenerate it with `bun run og` from `site/` after changing the README tagline, the card copy in `site/og/build-og.ts`, or the dashboard screenshots in `site/public/shots/`, and commit the PNG alongside.
+
+Both platforms cache a card per URL, so a freshly deployed image only shows up in new shares until the cache is cleared through [LinkedIn's Post Inspector](https://www.linkedin.com/post-inspector/) or [X's Card Validator](https://cards-dev.twitter.com/validator).
+
 ## Commit Message Conventions
 
 We follow [Conventional Commits](https://www.conventionalcommits.org/) for clear and structured commit messages:

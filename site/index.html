@@ -5,10 +5,35 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>pg-history</title>
 		<meta name="description" content="" />
+		<link rel="canonical" href="https://pg-history.dev/" />
+
+		<!--
+		  Title and description are filled in from the README at build time (see
+		  vite.config.ts); everything below is constant.
+
+		  The card image is site/public/og.png, regenerated with `bun run og`.
+		  It must stay 1200x630 and absolute: LinkedIn ignores relative URLs, and
+		  both it and X drop cards whose declared dimensions do not match.
+		-->
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="pg-history" />
+		<meta property="og:url" content="https://pg-history.dev/" />
 		<meta property="og:title" content="pg-history" />
 		<meta property="og:description" content="" />
-		<meta property="og:type" content="website" />
-		<meta name="twitter:card" content="summary" />
+		<meta property="og:image" content="https://pg-history.dev/og.png" />
+		<meta property="og:image:type" content="image/png" />
+		<meta property="og:image:width" content="1200" />
+		<meta property="og:image:height" content="630" />
+		<meta
+			property="og:image:alt"
+			content="pg-history — PostgreSQL audit trails with automated S3 archival, beside the dashboard's Explore screen listing audited INSERT and UPDATE entries."
+		/>
+
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:site" content="@linesofcode" />
+		<meta name="twitter:creator" content="@linesofcode" />
+		<meta name="twitter:image" content="https://pg-history.dev/og.png" />
+
 		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 		<script>
 			// Apply the saved theme before first paint so there is no flash.
