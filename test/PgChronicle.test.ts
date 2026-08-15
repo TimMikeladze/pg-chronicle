@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { silentLogger } from '../src/logger'
-import { PgHistory } from '../src/PgHistory'
+import { PgChronicle } from '../src/PgChronicle'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()
 
-describe('PgHistory', () => {
+describe('PgChronicle', () => {
 	test('should initialize with tables config', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({
+		const audit = new PgChronicle({
 			pool,
 			tables: ['users', 'orders'],
 		})
@@ -17,7 +17,7 @@ describe('PgHistory', () => {
 	})
 
 	test('should initialize with connection string', () => {
-		const audit = new PgHistory({
+		const audit = new PgChronicle({
 			connection: 'postgres://localhost:5432/test',
 			tables: ['users'],
 		})
@@ -33,7 +33,7 @@ describe('PgHistory', () => {
 describe('Review Fix #16: primaryKeyCache invalidation', () => {
 	test('invalidatePrimaryKeyCache is exposed and works', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({
+		const audit = new PgChronicle({
 			pool,
 			tables: ['users'],
 			logger: silentLogger,
@@ -48,7 +48,7 @@ describe('Review Fix #16: primaryKeyCache invalidation', () => {
 
 	test('invalidateSoftDeleteColumnCache is exposed and works', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({
+		const audit = new PgChronicle({
 			pool,
 			tables: ['users'],
 			logger: silentLogger,

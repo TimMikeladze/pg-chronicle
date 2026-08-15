@@ -37,8 +37,8 @@ function requireString(value: unknown, field: string): string {
 
 /**
  * Nullable text column. The actor columns (`db_user`, `app_actor`,
- * `client_addr`) are legitimately NULL — an unset `pg_history.actor`, or a
- * connection over a local socket — and rows written by an older pg-history omit
+ * `client_addr`) are legitimately NULL — an unset `pg_chronicle.actor`, or a
+ * connection over a local socket — and rows written by an older pg-chronicle omit
  * them entirely, so `undefined` normalizes to NULL rather than throwing.
  */
 function optionalString(value: unknown): string | null {

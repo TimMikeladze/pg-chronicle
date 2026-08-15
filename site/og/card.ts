@@ -41,7 +41,7 @@ const SHOT = 'public/shots/timeline-dark.png'
  * Whoever clicks through meets the same three again in the table rows.
  */
 const EYEBROW = 'POSTGRESQL · APPEND-ONLY AUDIT LOG'
-const INSTALL = 'bun add pg-history'
+const INSTALL = 'bun add pg-chronicle'
 const OP_INSERT = '#3dd68c'
 const OP_UPDATE = '#f5a623'
 const OP_DELETE = '#ff6166'
@@ -237,7 +237,7 @@ function card(tagline: string, shot: string): Node {
 							color: '#ffffff',
 						},
 					},
-					'pg-history',
+					'pg-chronicle',
 				),
 			),
 			el(

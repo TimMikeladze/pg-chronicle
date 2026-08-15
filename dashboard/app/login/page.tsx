@@ -6,7 +6,7 @@ import { anonymousAccessAllowed, dashboardPassword } from '@/lib/auth'
 export const dynamic = 'force-dynamic'
 
 export const metadata = {
-	title: 'Sign in · pg-history',
+	title: 'Sign in · pg-chronicle',
 }
 
 export default async function LoginPage({
@@ -44,12 +44,12 @@ export default async function LoginPage({
 							: 'The dashboard is refusing to serve pages until one is set.'}
 					</p>
 					<pre className="bg-inset overflow-x-auto rounded-lg border p-4 font-mono text-xs leading-relaxed">
-						{'PG_HISTORY_DASHBOARD_PASSWORD=a-long-random-string'}
+						{'PG_CHRONICLE_DASHBOARD_PASSWORD=a-long-random-string'}
 					</pre>
 					<p className="text-muted-foreground text-[13px] leading-relaxed">
 						Already behind an SSO or access proxy? Set{' '}
 						<code className="text-foreground font-mono text-xs">
-							PG_HISTORY_DASHBOARD_ALLOW_ANONYMOUS=true
+							PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS=true
 						</code>{' '}
 						instead to acknowledge that something else authenticates these
 						requests.

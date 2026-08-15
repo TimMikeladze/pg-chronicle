@@ -19,9 +19,9 @@ import {
 } from './auth'
 
 const ENV_KEYS = [
-	'PG_HISTORY_DASHBOARD_PASSWORD',
-	'PG_HISTORY_DASHBOARD_ALLOW_ANONYMOUS',
-	'PG_HISTORY_DASHBOARD_SESSION_TTL_HOURS',
+	'PG_CHRONICLE_DASHBOARD_PASSWORD',
+	'PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS',
+	'PG_CHRONICLE_DASHBOARD_SESSION_TTL_HOURS',
 	'NODE_ENV',
 ] as const
 
@@ -81,28 +81,28 @@ describe('which paths bypass the gate', () => {
 describe('fail-closed in production', () => {
 	test('no password in production is not allowed', () => {
 		setEnv('NODE_ENV', 'production')
-		setEnv('PG_HISTORY_DASHBOARD_ALLOW_ANONYMOUS', undefined)
+		setEnv('PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS', undefined)
 		expect(anonymousAccessAllowed()).toBe(false)
 	})
 
 	test('development stays open', () => {
 		setEnv('NODE_ENV', 'development')
-		setEnv('PG_HISTORY_DASHBOARD_ALLOW_ANONYMOUS', undefined)
+		setEnv('PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS', undefined)
 		expect(anonymousAccessAllowed()).toBe(true)
 	})
 
 	test('the opt-out must be exactly "true"', () => {
 		setEnv('NODE_ENV', 'production')
 		for (const value of ['1', 'yes', 'TRUE', '']) {
-			setEnv('PG_HISTORY_DASHBOARD_ALLOW_ANONYMOUS', value)
+			setEnv('PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS', value)
 			expect(anonymousAccessAllowed()).toBe(false)
 		}
-		setEnv('PG_HISTORY_DASHBOARD_ALLOW_ANONYMOUS', 'true')
+		setEnv('PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS', 'true')
 		expect(anonymousAccessAllowed()).toBe(true)
 	})
 
 	test('a whitespace-only password does not count as configured', () => {
-		setEnv('PG_HISTORY_DASHBOARD_PASSWORD', '   ')
+		setEnv('PG_CHRONICLE_DASHBOARD_PASSWORD', '   ')
 		expect(dashboardPassword()).toBeUndefined()
 	})
 })
@@ -120,24 +120,24 @@ describe('password comparison', () => {
 
 describe('sessions', () => {
 	test('a token minted for the password validates', async () => {
-		setEnv('PG_HISTORY_DASHBOARD_PASSWORD', 'correct horse')
+		setEnv('PG_CHRONICLE_DASHBOARD_PASSWORD', 'correct horse')
 		const { token } = await createSessionToken('correct horse')
 		expect(await sessionIsValid(token)).toBe(true)
 	})
 
 	test('rotating the password invalidates existing sessions', async () => {
-		setEnv('PG_HISTORY_DASHBOARD_PASSWORD', 'old password')
+		setEnv('PG_CHRONICLE_DASHBOARD_PASSWORD', 'old password')
 		const { token } = await createSessionToken('old password')
 		expect(await sessionIsValid(token)).toBe(true)
 
 		// The signing key is derived from the password, so this is the whole
 		// revocation story — there is no session store to clear.
-		setEnv('PG_HISTORY_DASHBOARD_PASSWORD', 'new password')
+		setEnv('PG_CHRONICLE_DASHBOARD_PASSWORD', 'new password')
 		expect(await sessionIsValid(token)).toBe(false)
 	})
 
 	test('garbage and absent cookies are rejected', async () => {
-		setEnv('PG_HISTORY_DASHBOARD_PASSWORD', 'correct horse')
+		setEnv('PG_CHRONICLE_DASHBOARD_PASSWORD', 'correct horse')
 		expect(await sessionIsValid(undefined)).toBe(false)
 		expect(await sessionIsValid('')).toBe(false)
 		expect(await sessionIsValid('not-a-jwt')).toBe(false)
@@ -148,24 +148,24 @@ describe('sessions', () => {
 
 	test('no session is valid when no password is configured', async () => {
 		const { token } = await createSessionToken('whatever')
-		setEnv('PG_HISTORY_DASHBOARD_PASSWORD', undefined)
+		setEnv('PG_CHRONICLE_DASHBOARD_PASSWORD', undefined)
 		expect(await sessionIsValid(token)).toBe(false)
 	})
 
 	test('an expired token is rejected', async () => {
-		setEnv('PG_HISTORY_DASHBOARD_PASSWORD', 'correct horse')
+		setEnv('PG_CHRONICLE_DASHBOARD_PASSWORD', 'correct horse')
 		// jose rejects on `exp`; a TTL floor of 1 hour means we cannot mint an
 		// already-expired token through the public API, so assert the TTL that
 		// lands in the cookie instead.
-		setEnv('PG_HISTORY_DASHBOARD_SESSION_TTL_HOURS', '3')
+		setEnv('PG_CHRONICLE_DASHBOARD_SESSION_TTL_HOURS', '3')
 		const { maxAge } = await createSessionToken('correct horse')
 		expect(maxAge).toBe(3 * 3600)
 	})
 
 	test('a nonsense TTL falls back to the default rather than 0', async () => {
-		setEnv('PG_HISTORY_DASHBOARD_PASSWORD', 'correct horse')
+		setEnv('PG_CHRONICLE_DASHBOARD_PASSWORD', 'correct horse')
 		for (const bad of ['0', '-5', 'abc', '']) {
-			setEnv('PG_HISTORY_DASHBOARD_SESSION_TTL_HOURS', bad)
+			setEnv('PG_CHRONICLE_DASHBOARD_SESSION_TTL_HOURS', bad)
 			const { maxAge } = await createSessionToken('correct horse')
 			expect(maxAge).toBe(12 * 3600)
 		}

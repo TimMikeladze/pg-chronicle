@@ -1,7 +1,7 @@
 /**
- * SQL builder helpers for PgHistory audit triggers.
+ * SQL builder helpers for PgChronicle audit triggers.
  *
- * Extracted from PgHistory.ts so the class stays focused on orchestration
+ * Extracted from PgChronicle.ts so the class stays focused on orchestration
  * rather than string templating. All identifiers passed in are assumed to
  * have been validated by the caller (validateIdentifier from validators).
  *
@@ -14,9 +14,9 @@
  *
  *   IMPLICATION: whoever runs setup() becomes the function owner. If that
  *   is a superuser, audit inserts effectively run with superuser privilege.
- *   For least-privilege deployments, create a dedicated `pg_history_writer`
+ *   For least-privilege deployments, create a dedicated `pg_chronicle_writer`
  *   role with INSERT on audit_log, run setup() as that role, OR after
- *   setup() do `ALTER FUNCTION audit_trigger_func_<t>() OWNER TO pg_history_writer`.
+ *   setup() do `ALTER FUNCTION audit_trigger_func_<t>() OWNER TO pg_chronicle_writer`.
  */
 
 export interface BuildTriggerFunctionArgs {
@@ -38,7 +38,7 @@ export interface BuildTriggerFunctionArgs {
 
 /**
  * Build the append-only guard for audit_log. The BEFORE UPDATE OR DELETE trigger
- * rejects mutations unless the session set `pg_history.maintenance = 'on'` (which
+ * rejects mutations unless the session set `pg_chronicle.maintenance = 'on'` (which
  * the archiver does for its own lifecycle operations). Schema is a validated
  * identifier (caller responsibility).
  */
@@ -54,8 +54,8 @@ export function buildAppendOnlyGuardSql(schema: string): {
 CREATE OR REPLACE FUNCTION "${schema}"."${guardFuncName}"()
 RETURNS TRIGGER AS $$
 BEGIN
-	IF current_setting('pg_history.maintenance', true) IS DISTINCT FROM 'on' THEN
-		RAISE EXCEPTION 'audit_log is append-only: % is not permitted outside pg-history maintenance context', TG_OP
+	IF current_setting('pg_chronicle.maintenance', true) IS DISTINCT FROM 'on' THEN
+		RAISE EXCEPTION 'audit_log is append-only: % is not permitted outside pg-chronicle maintenance context', TG_OP
 			USING ERRCODE = 'insufficient_privilege';
 	END IF;
 	IF (TG_OP = 'DELETE') THEN
@@ -75,7 +75,7 @@ SET search_path = pg_catalog, public;
  * Build the JSONB payload expression for OLD or NEW. When excludeColumns is
  * non-empty, columns are stripped via the `-` operator chain so audited
  * history never contains the listed columns. Identifier validation is the
- * caller's responsibility (callers in PgHistory validate via validateColumnName
+ * caller's responsibility (callers in PgChronicle validate via validateColumnName
  * before reaching the builder).
  */
 function jsonbPayload(rowVar: 'NEW' | 'OLD', excludeColumns: string[]): string {
@@ -108,8 +108,8 @@ export function buildTriggerFunctionSql(
 	// Actor / "who" columns recorded on every audit row. These are appended to
 	// each INSERT's column list and VALUES list:
 	//   db_user     — current_user (the role that executed the DML)
-	//   app_actor   — current_setting('pg_history.actor', true): the application
-	//                 end-user, NULL unless the app runs SET LOCAL pg_history.actor
+	//   app_actor   — current_setting('pg_chronicle.actor', true): the application
+	//                 end-user, NULL unless the app runs SET LOCAL pg_chronicle.actor
 	//   client_addr — inet_client_addr(): NULL for local socket connections
 	// current_setting(..., true) uses missing_ok=true so an unset actor yields
 	// NULL instead of raising. Values reference only pg_catalog builtins, so the
@@ -120,7 +120,7 @@ export function buildTriggerFunctionSql(
 	// backend, but '' once the placeholder exists (e.g. a pooled connection that
 	// previously ran SET LOCAL) — both should record as "no actor".
 	const actorVals =
-		"current_user, NULLIF(current_setting('pg_history.actor', true), ''), inet_client_addr()"
+		"current_user, NULLIF(current_setting('pg_chronicle.actor', true), ''), inet_client_addr()"
 
 	if (pkColumns.length === 0) {
 		// No primary key: use md5 hash of the full row as record_id.

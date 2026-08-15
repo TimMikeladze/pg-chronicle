@@ -29,7 +29,7 @@ import { cn } from '@/lib/utils'
 
 const ANY_OPERATION = 'ANY'
 const LIMITS = [25, 50, 100, 250]
-/** PgHistory validates `query` with a 500-character bound. */
+/** PgChronicle validates `query` with a 500-character bound. */
 const QUERY_MAX_LENGTH = 500
 
 /** datetime-local yields "2026-01-01T10:00" with no zone; the API wants ISO-8601. */
@@ -141,7 +141,7 @@ export function SearchExplorer({
 
 	/*
 	 * `query` has two server-side modes, chosen by the same shape test used in
-	 * PgHistory.buildSearchConditions: a value that starts with `{` and ends
+	 * PgChronicle.buildSearchConditions: a value that starts with `{` and ends
 	 * with `}` is parsed as a JSONB containment document and hits the GIN
 	 * index; anything else becomes an ILIKE substring scan over old_data and
 	 * new_data. Mirroring that test exactly matters — validating everything as
@@ -158,7 +158,7 @@ export function SearchExplorer({
 	const queryError = useMemo(() => {
 		const trimmed = query.trim()
 		if (!trimmed) return null
-		// PgHistory bounds the query at 500 characters.
+		// PgChronicle bounds the query at 500 characters.
 		if (trimmed.length > QUERY_MAX_LENGTH) {
 			return `Queries are limited to ${QUERY_MAX_LENGTH} characters (currently ${trimmed.length})`
 		}
@@ -214,7 +214,7 @@ export function SearchExplorer({
 			} else {
 				setError(
 					result.code === 'RATE_LIMITED'
-						? 'Too many searches running at once. pg-history caps concurrent searches so one unindexed scan cannot starve the connection pool. Retry in a moment, or switch to a containment query.'
+						? 'Too many searches running at once. pg-chronicle caps concurrent searches so one unindexed scan cannot starve the connection pool. Retry in a moment, or switch to a containment query.'
 						: result.message,
 				)
 				setResults(null)

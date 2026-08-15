@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import { writeParquet } from '../src/parquet'
 import { setupArchiverSchema } from '../src/schema'
 import { getTestConnection, setupTestDatabase } from './helpers'
@@ -25,7 +25,7 @@ describe('M2: TRUNCATE is audited', () => {
 
 	test('records a TRUNCATE marker entry when the table is truncated', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await pool.query(
@@ -46,7 +46,7 @@ describe('M1: append-only guard', () => {
 
 	test('blocks UPDATE/DELETE on audit_log but allows the maintenance context', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'], appendOnly: true })
+		const audit = new PgChronicle({ pool, tables: ['users'], appendOnly: true })
 		await audit.setup()
 
 		// Normal audit INSERT still works (guard is UPDATE/DELETE only).
@@ -63,11 +63,11 @@ describe('M1: append-only guard', () => {
 			pool.query(`DELETE FROM audit_log WHERE table_name = 'users'`),
 		).rejects.toThrow(/append-only/)
 
-		// The pg-history maintenance context (as the archiver uses) is allowed.
+		// The pg-chronicle maintenance context (as the archiver uses) is allowed.
 		const client = await pool.connect()
 		try {
 			await client.query('BEGIN')
-			await client.query(`SET LOCAL pg_history.maintenance = 'on'`)
+			await client.query(`SET LOCAL pg_chronicle.maintenance = 'on'`)
 			const upd = await client.query(
 				`UPDATE audit_log SET record_id = record_id WHERE table_name = 'users'`,
 			)
@@ -87,7 +87,7 @@ describe('M4: checksum is persisted for pre-purge verification', () => {
 	test('audit_archive_metadata has a checksum_sha256 column', async () => {
 		const pool = await getTestConnection()
 		// audit_log must exist before the archiver schema can extend it.
-		await new PgHistory({ pool, tables: ['users'] }).setup()
+		await new PgChronicle({ pool, tables: ['users'] }).setup()
 		await setupArchiverSchema(pool)
 		const res = await pool.query(
 			`SELECT 1 FROM information_schema.columns
@@ -105,7 +105,7 @@ describe('M5: jsonb integer precision survives archival', () => {
 		// exact JSON strings — including integers beyond 2^53. They must be stored
 		// byte-for-byte, not re-parsed/re-stringified.
 		const bigIntJson = '{"balance":9007199254740993}'
-		const tmpFile = join(tmpdir(), `pg-history-m5-${process.pid}.parquet`)
+		const tmpFile = join(tmpdir(), `pg-chronicle-m5-${process.pid}.parquet`)
 		try {
 			await writeParquet(
 				[

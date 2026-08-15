@@ -13,12 +13,12 @@
  */
 
 import { Client, Pool } from 'pg'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import { Orchestrator } from '../src/orchestrator'
 import { setupArchiverSchema } from '../src/schema'
 import { assert, assertEqual, run } from './_assert'
 
-const DB_NAME = `pg_history_archival_${Date.now()}`
+const DB_NAME = `pg_chronicle_archival_${Date.now()}`
 const ADMIN_URL =
 	process.env.DATABASE_URL ||
 	'postgres://postgres:postgres@localhost:5432/postgres'
@@ -40,7 +40,7 @@ async function main() {
     )
   `)
 
-	const history = new PgHistory({ pool, tables: ['logs'] })
+	const history = new PgChronicle({ pool, tables: ['logs'] })
 	await history.setup()
 
 	// Set up archiver schema (adds archived_at, s3_path, soft_deleted_at columns)
@@ -81,11 +81,12 @@ async function main() {
 		const orchestrator = new Orchestrator(
 			{
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT || 'http://localhost:9000',
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID || 'root',
+				endpoint:
+					process.env.PG_CHRONICLE_S3_ENDPOINT || 'http://localhost:9000',
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID || 'root',
 				secretAccessKey:
-					process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY || 'password',
-				region: process.env.PG_HISTORY_S3_REGION || 'us-west-1',
+					process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY || 'password',
+				region: process.env.PG_CHRONICLE_S3_REGION || 'us-west-1',
 			},
 			{ default: 90 }, // 90 day retention
 			0, // 0 day grace period (for demo — normally 7+)

@@ -7,7 +7,7 @@
  * into a 400 response.
  */
 import { ValidationError } from './errors'
-import { validateCursor, validateIdentifier } from './pg-history-validators'
+import { validateCursor, validateIdentifier } from './pg-chronicle-validators'
 import type { AuditOperation, SearchCursor, SearchOptions } from './types'
 
 // TRUNCATE included: the statement-level trigger writes a marker row for every
@@ -38,7 +38,7 @@ export function parseSearchBody(body: unknown): SearchOptions {
 		throw new ValidationError('tables must contain only non-empty strings')
 	}
 	// Validate each name as a safe identifier at the API boundary.
-	// This is NOT a breaking change: PgHistory already enforces the same
+	// This is NOT a breaking change: PgChronicle already enforces the same
 	// identifier regex on all configured table names at construction time, so
 	// any name that passes the downstream allowlist check will also pass here.
 	// The only practical effect is that injection strings like "users;DROP TABLE"
@@ -159,7 +159,7 @@ export function parseRevertBody(body: unknown): {
 	}
 
 	// Optional: opt into suppressing the revert's own audit entries. Requires the
-	// pg_replication role / SUPERUSER on the DB (see PgHistory.revert). Default
+	// pg_replication role / SUPERUSER on the DB (see PgChronicle.revert). Default
 	// (undefined → false) records the revert, which works on least-privilege roles.
 	if (
 		suppressAuditTriggers !== undefined &&

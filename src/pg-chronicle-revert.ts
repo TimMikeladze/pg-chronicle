@@ -1,11 +1,11 @@
 /**
- * Revert logic extracted from PgHistory.ts.
+ * Revert logic extracted from PgChronicle.ts.
  *
  * Reverts an audit entry by running the inverse DML against the user table.
  * Handles schema drift detection, optional trigger suppression via
  * session_replication_role, and branches on the audited operation.
  *
- * This module is intentionally decoupled from the PgHistory class — it takes
+ * This module is intentionally decoupled from the PgChronicle class — it takes
  * a pool client and the derived identifiers as arguments so it can be unit-
  * tested without the full class.
  */
@@ -14,7 +14,7 @@ import { AuditEntryNotFoundError, RevertError } from './errors'
 import {
 	validateColumnNames,
 	validateIdentifier,
-} from './pg-history-validators'
+} from './pg-chronicle-validators'
 
 export interface RevertArgs {
 	client: PoolClient
@@ -107,7 +107,7 @@ export async function executeRevert(args: RevertArgs): Promise<void> {
 				'TRUNCATE fires a statement-level trigger with no per-row data, so the ' +
 				'audit trail marks that the wipe happened but cannot reconstruct the rows. ' +
 				'Restore from a database backup or from the archived Parquet files ' +
-				'(PgHistoryArchiver.listArchives / readArchive).',
+				'(PgChronicleArchiver.listArchives / readArchive).',
 		)
 	}
 

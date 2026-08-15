@@ -1,9 +1,9 @@
 /**
- * Validation helpers for PgHistory inputs.
+ * Validation helpers for PgChronicle inputs.
  *
  * These are pure functions that throw ValidationError (from ./errors) so
  * callers can translate them into 400 responses at API boundaries.
- * Extracted from PgHistory.ts to keep that file focused on orchestration.
+ * Extracted from PgChronicle.ts to keep that file focused on orchestration.
  */
 import { ValidationError } from './errors'
 

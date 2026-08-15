@@ -4,7 +4,7 @@ import 'server-only'
  * A tiny read-through cache for the read-only search probes the server
  * components use to render feeds.
  *
- * Why this exists: `PgHistory.search()` caps concurrent searches (default 4)
+ * Why this exists: `PgChronicle.search()` caps concurrent searches (default 4)
  * and rejects the excess with 429 — a deliberate DoS guard, since an unindexed
  * ILIKE scan pins a pool connection for seconds. That cap is shared by the
  * whole process, so several dashboard pages rendering at once will starve each

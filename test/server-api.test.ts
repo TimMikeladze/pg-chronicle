@@ -41,7 +41,7 @@ describe('Server API Types', () => {
 		expect(response.error.details).toEqual({ id: '123' })
 	})
 
-	test('server should initialize PgHistory when historyConfig provided', async () => {
+	test('server should initialize PgChronicle when historyConfig provided', async () => {
 		const pool = await getTestConnection()
 		const { app } = await createServer({
 			pool,
@@ -53,7 +53,7 @@ describe('Server API Types', () => {
 			},
 		})
 
-		// Make a request that would fail if PgHistory not initialized
+		// Make a request that would fail if PgChronicle not initialized
 		const res = await app.request('/health')
 		expect(res.status).toBe(200)
 	})
@@ -61,7 +61,7 @@ describe('Server API Types', () => {
 
 describe('GET /api/history/:table/:recordId', () => {
 	test('should return 401 without JWT when secret is set', async () => {
-		process.env.PG_HISTORY_JWT_SECRET = 'test-secret'
+		process.env.PG_CHRONICLE_JWT_SECRET = 'test-secret'
 
 		const pool = await getTestConnection()
 		const { app } = await createServer({
@@ -74,7 +74,7 @@ describe('GET /api/history/:table/:recordId', () => {
 		const res = await app.request('/api/history/users/123')
 		expect(res.status).toBe(401)
 
-		delete process.env.PG_HISTORY_JWT_SECRET
+		delete process.env.PG_CHRONICLE_JWT_SECRET
 	})
 
 	test('should return history for valid table and recordId', async () => {
@@ -88,7 +88,7 @@ describe('GET /api/history/:table/:recordId', () => {
 			)
 		`)
 
-		// Create server (which initializes PgHistory)
+		// Create server (which initializes PgChronicle)
 		const { app } = await createServer({
 			pool,
 			enableHistory: true,
@@ -96,10 +96,10 @@ describe('GET /api/history/:table/:recordId', () => {
 			historyConfig: { tables: ['users'] },
 		})
 
-		// Get the pgHistory instance from the app context to set it up
-		const { PgHistory } = await import('../src/PgHistory')
-		const pgHistory = new PgHistory({ tables: ['users'], pool })
-		await pgHistory.setup()
+		// Get the pgChronicle instance from the app context to set it up
+		const { PgChronicle } = await import('../src/PgChronicle')
+		const pgChronicle = new PgChronicle({ tables: ['users'], pool })
+		await pgChronicle.setup()
 
 		// Insert and update to create history
 		await pool.query(`INSERT INTO users (id, name) VALUES (1, 'Alice')`)
@@ -114,7 +114,7 @@ describe('GET /api/history/:table/:recordId', () => {
 		expect(json).toHaveProperty('nextCursor')
 		expect(json).toHaveProperty('hasMore')
 
-		await pgHistory.teardown()
+		await pgChronicle.teardown()
 	})
 })
 
@@ -130,10 +130,10 @@ describe('POST /api/history/search', () => {
 			`CREATE TABLE IF NOT EXISTS posts (id SERIAL PRIMARY KEY, title TEXT)`,
 		)
 
-		// Then setup PgHistory to install triggers
-		const { PgHistory } = await import('../src/PgHistory')
-		const pgHistory = new PgHistory({ tables: ['users', 'posts'], pool })
-		await pgHistory.setup()
+		// Then setup PgChronicle to install triggers
+		const { PgChronicle } = await import('../src/PgChronicle')
+		const pgChronicle = new PgChronicle({ tables: ['users', 'posts'], pool })
+		await pgChronicle.setup()
 
 		// Now insert data which will be captured by triggers
 		await pool.query(`INSERT INTO users (id, name) VALUES (1, 'Alice')`)
@@ -160,7 +160,7 @@ describe('POST /api/history/search', () => {
 		expect(json.data).toBeArray()
 		expect(json.data.length).toBe(2)
 
-		await pgHistory.teardown()
+		await pgChronicle.teardown()
 	})
 
 	test('should return 400 for empty tables array', async () => {

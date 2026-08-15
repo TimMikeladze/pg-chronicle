@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import type { Pool } from 'pg'
 import { silentLogger } from '../src/logger'
-import { PgHistory } from '../src/PgHistory'
+import { PgChronicle } from '../src/PgChronicle'
 import { createServer } from '../src/server'
 import { cleanDatabase, getTestConnection, setupTestDatabase } from './helpers'
 
@@ -16,14 +16,15 @@ describe('Fix #1 + #9: Next.js handler error recovery', () => {
 
 	afterEach(() => {
 		// Restore env
-		process.env.PG_HISTORY_DATABASE_URL = originalEnv.PG_HISTORY_DATABASE_URL
-		process.env.PG_HISTORY_TABLES = originalEnv.PG_HISTORY_TABLES
+		process.env.PG_CHRONICLE_DATABASE_URL =
+			originalEnv.PG_CHRONICLE_DATABASE_URL
+		process.env.PG_CHRONICLE_TABLES = originalEnv.PG_CHRONICLE_TABLES
 	})
 
 	test('GET returns 500 JSON when init fails (missing env vars)', async () => {
 		// Clear env so getApp() will fail
-		delete process.env.PG_HISTORY_DATABASE_URL
-		delete process.env.PG_HISTORY_TABLES
+		delete process.env.PG_CHRONICLE_DATABASE_URL
+		delete process.env.PG_CHRONICLE_TABLES
 
 		// Dynamic import to get fresh module state
 		const mod = await import('../src/next')
@@ -37,8 +38,8 @@ describe('Fix #1 + #9: Next.js handler error recovery', () => {
 	})
 
 	test('POST returns 500 JSON when init fails (missing env vars)', async () => {
-		delete process.env.PG_HISTORY_DATABASE_URL
-		delete process.env.PG_HISTORY_TABLES
+		delete process.env.PG_CHRONICLE_DATABASE_URL
+		delete process.env.PG_CHRONICLE_TABLES
 
 		const mod = await import('../src/next')
 		const res = await mod.POST(
@@ -51,7 +52,7 @@ describe('Fix #1 + #9: Next.js handler error recovery', () => {
 	})
 
 	test('error response has correct Content-Type header', async () => {
-		delete process.env.PG_HISTORY_DATABASE_URL
+		delete process.env.PG_CHRONICLE_DATABASE_URL
 
 		const mod = await import('../src/next')
 		const res = await mod.GET(new Request('http://localhost/health'))
@@ -61,7 +62,7 @@ describe('Fix #1 + #9: Next.js handler error recovery', () => {
 })
 
 // ─────────────────────────────────────────────────────────
-// Fix #2: PgHistoryArchiver — UTC date boundaries
+// Fix #2: PgChronicleArchiver — UTC date boundaries
 // ─────────────────────────────────────────────────────────
 
 describe('Fix #2: UTC date boundary computation', () => {
@@ -121,7 +122,7 @@ describe('Fix #2: UTC date boundary computation', () => {
 describe('Fix #3: No test:// S3 verification bypass', () => {
 	test('verifyS3File source code does not contain test:// bypass', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicleArchiver.ts', 'utf-8')
 
 		// The test:// bypass should no longer exist in hardDeletePurged or verifyS3File
 		expect(source).not.toContain("startsWith('test://')")
@@ -156,9 +157,9 @@ describe('Fix #4: Archive endpoint authentication warning', () => {
 
 	test('logs error and refuses to register /api/archive when no auth is configured', async () => {
 		const originalCronSecret = process.env.CRON_SECRET
-		const originalSilent = process.env.PG_HISTORY_SILENT_LOGS
+		const originalSilent = process.env.PG_CHRONICLE_SILENT_LOGS
 		delete process.env.CRON_SECRET
-		delete process.env.PG_HISTORY_SILENT_LOGS
+		delete process.env.PG_CHRONICLE_SILENT_LOGS
 
 		const errorSpy = spyOn(console, 'error')
 
@@ -186,7 +187,7 @@ describe('Fix #4: Archive endpoint authentication warning', () => {
 		errorSpy.mockRestore()
 		process.env.CRON_SECRET = originalCronSecret
 		if (originalSilent !== undefined) {
-			process.env.PG_HISTORY_SILENT_LOGS = originalSilent
+			process.env.PG_CHRONICLE_SILENT_LOGS = originalSilent
 		}
 	})
 
@@ -261,18 +262,18 @@ describe('Fix #5: ensurePool race condition', () => {
 			'CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)',
 		)
 
-		const pgHistory = new PgHistory({
+		const pgChronicle = new PgChronicle({
 			connection:
-				process.env.PG_AUDIT_TEST_URL ||
-				'postgres://postgres:postgres@localhost:5432/pg_audit_test',
+				process.env.PG_CHRONICLE_TEST_URL ||
+				'postgres://postgres:postgres@localhost:5432/pg_chronicle_test',
 			tables: ['users'],
 		})
 
 		// Call setup concurrently — both paths will call ensurePool
 		// With the fix, only one pool should be created
 		const results = await Promise.allSettled([
-			pgHistory.setup(),
-			pgHistory.setup(),
+			pgChronicle.setup(),
+			pgChronicle.setup(),
 		])
 
 		// At least one should succeed (the other may succeed or fail with
@@ -282,11 +283,11 @@ describe('Fix #5: ensurePool race condition', () => {
 
 		// Verify the instance works after concurrent setup
 		await pool.query("INSERT INTO users (name) VALUES ('test')")
-		const history = await pgHistory.getHistory('users', '1')
+		const history = await pgChronicle.getHistory('users', '1')
 		expect(history).toBeDefined()
 
-		await pgHistory.teardown()
-		await pgHistory.close()
+		await pgChronicle.teardown()
+		await pgChronicle.close()
 	})
 })
 
@@ -303,10 +304,10 @@ describe('Fix #6: JWT authentication warning', () => {
 	})
 
 	test('warns when API endpoints are unauthenticated', async () => {
-		const originalJwt = process.env.PG_HISTORY_JWT_SECRET
-		const originalSilent = process.env.PG_HISTORY_SILENT_LOGS
-		delete process.env.PG_HISTORY_JWT_SECRET
-		delete process.env.PG_HISTORY_SILENT_LOGS
+		const originalJwt = process.env.PG_CHRONICLE_JWT_SECRET
+		const originalSilent = process.env.PG_CHRONICLE_SILENT_LOGS
+		delete process.env.PG_CHRONICLE_JWT_SECRET
+		delete process.env.PG_CHRONICLE_SILENT_LOGS
 
 		const warnSpy = spyOn(console, 'warn')
 
@@ -331,15 +332,15 @@ describe('Fix #6: JWT authentication warning', () => {
 		).toBe(true)
 
 		warnSpy.mockRestore()
-		process.env.PG_HISTORY_JWT_SECRET = originalJwt
+		process.env.PG_CHRONICLE_JWT_SECRET = originalJwt
 		if (originalSilent !== undefined) {
-			process.env.PG_HISTORY_SILENT_LOGS = originalSilent
+			process.env.PG_CHRONICLE_SILENT_LOGS = originalSilent
 		}
 	})
 
 	test('does not warn when JWT secret is set', async () => {
-		const originalJwt = process.env.PG_HISTORY_JWT_SECRET
-		process.env.PG_HISTORY_JWT_SECRET = 'test-secret'
+		const originalJwt = process.env.PG_CHRONICLE_JWT_SECRET
+		process.env.PG_CHRONICLE_JWT_SECRET = 'test-secret'
 
 		const warnSpy = spyOn(console, 'warn')
 
@@ -364,12 +365,12 @@ describe('Fix #6: JWT authentication warning', () => {
 		).toBe(false)
 
 		warnSpy.mockRestore()
-		process.env.PG_HISTORY_JWT_SECRET = originalJwt
+		process.env.PG_CHRONICLE_JWT_SECRET = originalJwt
 	})
 
 	test('does not warn when history is not enabled', async () => {
-		const originalJwt = process.env.PG_HISTORY_JWT_SECRET
-		delete process.env.PG_HISTORY_JWT_SECRET
+		const originalJwt = process.env.PG_CHRONICLE_JWT_SECRET
+		delete process.env.PG_CHRONICLE_JWT_SECRET
 
 		const warnSpy = spyOn(console, 'warn')
 
@@ -388,7 +389,7 @@ describe('Fix #6: JWT authentication warning', () => {
 		).toBe(false)
 
 		warnSpy.mockRestore()
-		process.env.PG_HISTORY_JWT_SECRET = originalJwt
+		process.env.PG_CHRONICLE_JWT_SECRET = originalJwt
 	})
 })
 
@@ -428,9 +429,9 @@ describe('Fix #11: updateArchivalStats comment is accurate', () => {
 // ─────────────────────────────────────────────────────────
 
 describe('Review Fix #1: ensurePool() retries after failed pool creation', () => {
-	test('PgHistory retries after a failed pool creation', async () => {
+	test('PgChronicle retries after a failed pool creation', async () => {
 		// A known-bad connection string — the DNS lookup will fail.
-		const history = new PgHistory({
+		const history = new PgChronicle({
 			tables: ['users'],
 			connection: 'postgres://x:x@nonexistent.invalid.tld:5432/db',
 			logger: silentLogger,
@@ -464,7 +465,7 @@ describe('Review Fix #1: ensurePool() retries after failed pool creation', () =>
 describe('Review Fix #7: cursor is cast to bigint explicitly', () => {
 	test('getHistory/search use $N::bigint in cursor clauses', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistory.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicle.ts', 'utf-8')
 
 		// Both getHistory and search should cast cursor explicitly
 		expect(source).toContain('id < $3::bigint')
@@ -482,8 +483,8 @@ describe('Review Fix #13: logger interface used throughout', () => {
 	test('src files do not use bare console.log/error/warn', async () => {
 		const fs = await import('node:fs/promises')
 		const files = [
-			'./src/PgHistory.ts',
-			'./src/PgHistoryArchiver.ts',
+			'./src/PgChronicle.ts',
+			'./src/PgChronicleArchiver.ts',
 			'./src/orchestrator.ts',
 			'./src/server.ts',
 		]
@@ -501,7 +502,7 @@ describe('Review Fix #13: logger interface used throughout', () => {
 	})
 
 	test('silentLogger can be injected without breaking behavior', () => {
-		const history = new PgHistory({
+		const history = new PgChronicle({
 			tables: ['dummy'],
 			connection: 'postgres://user:pass@localhost:9999/fake',
 			logger: silentLogger,
@@ -511,22 +512,24 @@ describe('Review Fix #13: logger interface used throughout', () => {
 })
 
 // ─────────────────────────────────────────────────────────
-// Review Fix #28: PgHistory.ts is split into focused modules
+// Review Fix #28: PgChronicle.ts is split into focused modules
 // ─────────────────────────────────────────────────────────
 
-describe('Review Fix #28: PgHistory.ts is split into focused modules', () => {
-	test('PgHistory.ts stays focused (<= 950 lines)', async () => {
+describe('Review Fix #28: PgChronicle.ts is split into focused modules', () => {
+	test('PgChronicle.ts stays focused (<= 960 lines)', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistory.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicle.ts', 'utf-8')
 		const lines = source.split('\n').length
 		// Bumped 800 → 850 → 950 as audit-integrity features landed (actor mapping,
 		// search-concurrency limiter, TRUNCATE trigger, setup advisory lock,
-		// teardown cache invalidation). Still a focused-module guardrail.
-		expect(lines).toBeLessThanOrEqual(950)
+		// teardown cache invalidation). 950 → 960 is cosmetic only: renaming
+		// PgHistory → PgChronicle widened call sites enough for the formatter to
+		// wrap two extra lines. Still a focused-module guardrail.
+		expect(lines).toBeLessThanOrEqual(960)
 	})
 
-	test('pg-history-validators.ts exports pure validation functions', async () => {
-		const mod = await import('../src/pg-history-validators')
+	test('pg-chronicle-validators.ts exports pure validation functions', async () => {
+		const mod = await import('../src/pg-chronicle-validators')
 		expect(typeof mod.validateIdentifier).toBe('function')
 		expect(typeof mod.validateColumnNames).toBe('function')
 		expect(typeof mod.validateStringInput).toBe('function')
@@ -534,13 +537,13 @@ describe('Review Fix #28: PgHistory.ts is split into focused modules', () => {
 		expect(typeof mod.validateCursor).toBe('function')
 	})
 
-	test('pg-history-triggers.ts exports buildTriggerFunctionSql', async () => {
-		const mod = await import('../src/pg-history-triggers')
+	test('pg-chronicle-triggers.ts exports buildTriggerFunctionSql', async () => {
+		const mod = await import('../src/pg-chronicle-triggers')
 		expect(typeof mod.buildTriggerFunctionSql).toBe('function')
 	})
 
-	test('pg-history-revert.ts exports executeRevert', async () => {
-		const mod = await import('../src/pg-history-revert')
+	test('pg-chronicle-revert.ts exports executeRevert', async () => {
+		const mod = await import('../src/pg-chronicle-revert')
 		expect(typeof mod.executeRevert).toBe('function')
 	})
 })
@@ -552,7 +555,7 @@ describe('Review Fix #28: PgHistory.ts is split into focused modules', () => {
 describe('Review Fix #29: stray eslint-disable comment removed', () => {
 	test('usesIlike no longer has a misleading eslint-disable comment', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistory.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicle.ts', 'utf-8')
 
 		// The line declaring usesIlike should not carry the eslint-disable suppression
 		const region = source.slice(source.indexOf('let usesIlike'))

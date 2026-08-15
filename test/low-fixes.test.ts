@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { PgHistory } from '../src'
-import { buildTriggerFunctionSql } from '../src/pg-history-triggers'
+import { PgChronicle } from '../src'
+import { buildTriggerFunctionSql } from '../src/pg-chronicle-triggers'
 import { parseRevertBody } from '../src/validation'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
@@ -49,7 +49,7 @@ describe('L7: close() is idempotent', () => {
 		).options.connectionString
 
 		// Own-connection instance so close() actually ends a pool it created.
-		const audit = new PgHistory({
+		const audit = new PgChronicle({
 			connection: connectionString,
 			tables: ['users'],
 		})

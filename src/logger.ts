@@ -1,7 +1,7 @@
 /**
  * Lightweight logger interface with structured context.
  *
- * PgHistory, PgHistoryArchiver, Orchestrator, and the server accept an
+ * PgChronicle, PgChronicleArchiver, Orchestrator, and the server accept an
  * injectable Logger so consumers can plug in pino/winston/bunyan/etc.
  *
  * The default logger is console-based but can be silenced by passing
@@ -21,13 +21,13 @@ export interface Logger {
 }
 
 /**
- * Default logger that writes to console with a [pg-history] tag.
+ * Default logger that writes to console with a [pg-chronicle] tag.
  * Suitable for CLIs, small services, or local development.
  */
 // Default logger intentionally uses console.* — all other call sites route
 // through this interface so library code never touches console directly.
-// Honors PG_HISTORY_SILENT_LOGS=1 to drop output (used by test suite).
-const isSilent = (): boolean => process.env.PG_HISTORY_SILENT_LOGS === '1'
+// Honors PG_CHRONICLE_SILENT_LOGS=1 to drop output (used by test suite).
+const isSilent = (): boolean => process.env.PG_CHRONICLE_SILENT_LOGS === '1'
 
 export const consoleLogger: Logger = {
 	debug(message, context) {
@@ -63,7 +63,7 @@ function format(
 	message: string,
 	context?: LogContext,
 ): string {
-	const prefix = `[pg-history] [${level}] ${message}`
+	const prefix = `[pg-chronicle] [${level}] ${message}`
 	if (!context || Object.keys(context).length === 0) return prefix
 	try {
 		// Track seen objects so circular references degrade gracefully instead

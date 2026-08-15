@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()
 
-describe('PgHistory.setup', () => {
+describe('PgChronicle.setup', () => {
 	test('should create audit_log table', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 
 		await audit.setup()
 
@@ -23,7 +23,7 @@ describe('PgHistory.setup', () => {
 
 	test('should create partition for each table', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users', 'orders'] })
+		const audit = new PgChronicle({ pool, tables: ['users', 'orders'] })
 
 		await audit.setup()
 
@@ -39,7 +39,7 @@ describe('PgHistory.setup', () => {
 
 	test('should create indexes on audit_log', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 
 		await audit.setup()
 
@@ -63,7 +63,7 @@ describe('PgHistory.setup', () => {
 
 	test('should be idempotent - running setup twice works', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 
 		await audit.setup()
 		await audit.setup() // Should not error
@@ -82,18 +82,18 @@ describe('PgHistory.setup', () => {
 
 		// Test various invalid table names
 		expect(
-			() => new PgHistory({ pool, tables: ['users; DROP TABLE audit_log;'] }),
+			() => new PgChronicle({ pool, tables: ['users; DROP TABLE audit_log;'] }),
 		).toThrow('Invalid table name')
-		expect(() => new PgHistory({ pool, tables: ['users--'] })).toThrow(
+		expect(() => new PgChronicle({ pool, tables: ['users--'] })).toThrow(
 			'Invalid table name',
 		)
-		expect(() => new PgHistory({ pool, tables: ['123users'] })).toThrow(
+		expect(() => new PgChronicle({ pool, tables: ['123users'] })).toThrow(
 			'Invalid table name',
 		)
-		expect(() => new PgHistory({ pool, tables: ['user-name'] })).toThrow(
+		expect(() => new PgChronicle({ pool, tables: ['user-name'] })).toThrow(
 			'Invalid table name',
 		)
-		expect(() => new PgHistory({ pool, tables: ['user name'] })).toThrow(
+		expect(() => new PgChronicle({ pool, tables: ['user name'] })).toThrow(
 			'Invalid table name',
 		)
 	})
@@ -102,11 +102,13 @@ describe('PgHistory.setup', () => {
 		const pool = await getTestConnection()
 
 		// These should not throw
-		expect(() => new PgHistory({ pool, tables: ['users'] })).not.toThrow()
-		expect(() => new PgHistory({ pool, tables: ['_users'] })).not.toThrow()
-		expect(() => new PgHistory({ pool, tables: ['users_table'] })).not.toThrow()
-		expect(() => new PgHistory({ pool, tables: ['users123'] })).not.toThrow()
-		expect(() => new PgHistory({ pool, tables: ['UsErS'] })).not.toThrow()
+		expect(() => new PgChronicle({ pool, tables: ['users'] })).not.toThrow()
+		expect(() => new PgChronicle({ pool, tables: ['_users'] })).not.toThrow()
+		expect(
+			() => new PgChronicle({ pool, tables: ['users_table'] }),
+		).not.toThrow()
+		expect(() => new PgChronicle({ pool, tables: ['users123'] })).not.toThrow()
+		expect(() => new PgChronicle({ pool, tables: ['UsErS'] })).not.toThrow()
 	})
 })
 
@@ -115,10 +117,13 @@ describe('PgHistory.setup', () => {
 // ─────────────────────────────────────────────────────────
 
 describe('Review Fix #22: setupInternal logs per-phase progress', () => {
-	test('PgHistory.ts setup emits phase log messages', async () => {
+	test('PgChronicle.ts setup emits phase log messages', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistory.ts', 'utf-8')
-		const setupSource = await fs.readFile('./src/pg-history-setup.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicle.ts', 'utf-8')
+		const setupSource = await fs.readFile(
+			'./src/pg-chronicle-setup.ts',
+			'utf-8',
+		)
 		const combined = `${source}\n${setupSource}`
 
 		expect(combined).toContain('Setup phase: audit_log parent table')

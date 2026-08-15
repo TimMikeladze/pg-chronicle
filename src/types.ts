@@ -1,7 +1,7 @@
 import type { Pool } from 'pg'
 import type { Logger } from './logger'
 
-export interface PgHistoryConfig {
+export interface PgChronicleConfig {
 	/** List of tables to track history */
 	tables: string[]
 
@@ -42,8 +42,8 @@ export interface PgHistoryConfig {
 	/**
 	 * When true, `setup()` installs a `BEFORE UPDATE OR DELETE` guard trigger on
 	 * `audit_log` that rejects any UPDATE/DELETE unless the session set
-	 * `pg_history.maintenance = 'on'`. This makes the trail append-only for the
-	 * application, blocking accidental or casual tampering. The pg-history
+	 * `pg_chronicle.maintenance = 'on'`. This makes the trail append-only for the
+	 * application, blocking accidental or casual tampering. The pg-chronicle
 	 * archiver sets that flag automatically, so archival still works.
 	 *
 	 * NOTE: this is tamper-RESISTANCE, not cryptographic tamper-evidence — a role
@@ -76,8 +76,8 @@ export interface AuditEntry {
 	/** Database role that performed the change (`current_user` at trigger time). */
 	dbUser: string | null
 	/**
-	 * Application-level actor, read from the `pg_history.actor` session setting.
-	 * NULL unless the application ran `SET LOCAL pg_history.actor = '<id>'`
+	 * Application-level actor, read from the `pg_chronicle.actor` session setting.
+	 * NULL unless the application ran `SET LOCAL pg_chronicle.actor = '<id>'`
 	 * before the DML statement.
 	 */
 	appActor: string | null
@@ -98,7 +98,7 @@ export interface GetHistoryOptions {
 }
 
 /**
- * Opaque cursor for {@link PgHistory.search} pagination.
+ * Opaque cursor for {@link PgChronicle.search} pagination.
  *
  * **Do not mix with `getHistory()` cursors.** `search()` always paginates
  * in descending ID order (`id < cursor`). Reusing an ascending `getHistory()`
@@ -109,7 +109,7 @@ declare const _searchCursorBrand: unique symbol
 export type SearchCursor = string & { readonly [_searchCursorBrand]: true }
 
 /**
- * Paginated result from {@link PgHistory.search}. The `nextCursor` field is
+ * Paginated result from {@link PgChronicle.search}. The `nextCursor` field is
  * typed as {@link SearchCursor} — only pass it back to `search()`, never to
  * `getHistory()`.
  */
@@ -358,13 +358,13 @@ export interface ServerConfig {
 	}
 
 	/**
-	 * Enable the PgHistory REST API. When true, `/api/history` and `/api/search`
+	 * Enable the PgChronicle REST API. When true, `/api/history` and `/api/search`
 	 * endpoints are registered on the Hono app.
 	 */
 	enableHistory?: boolean
 
 	/**
-	 * PgHistory configuration — required when `enableHistory` is true.
+	 * PgChronicle configuration — required when `enableHistory` is true.
 	 * Lists the tables whose audit triggers and history endpoints are activated.
 	 */
 	historyConfig?: {
@@ -380,7 +380,7 @@ export interface ServerConfig {
 
 	/**
 	 * Bearer token secret for the `POST /api/archive` cron endpoint.
-	 * The endpoint is only registered when this value or `PG_HISTORY_JWT_SECRET`
+	 * The endpoint is only registered when this value or `PG_CHRONICLE_JWT_SECRET`
 	 * is set — omitting both disables the route entirely for security.
 	 */
 	archiveCronSecret?: string
@@ -398,7 +398,7 @@ export interface ServerConfig {
 	/**
 	 * Allow the history/revert endpoints to be served without authentication.
 	 * `createServer` FAILS CLOSED: when `enableHistory` is true and no
-	 * `PG_HISTORY_JWT_SECRET` is configured, it throws at startup unless this is
+	 * `PG_CHRONICLE_JWT_SECRET` is configured, it throws at startup unless this is
 	 * explicitly set to `true`. Use only for local development or a fully trusted
 	 * private network. Never enable on a public deployment.
 	 */
@@ -440,8 +440,8 @@ export interface ServerConfig {
 	 * that happens to share the secret. Set these to pin the token to this API.
 	 *
 	 * Both default to unset (claim not checked), which preserves the previous
-	 * behaviour. They can also be supplied via the `PG_HISTORY_JWT_ISSUER` and
-	 * `PG_HISTORY_JWT_AUDIENCE` environment variables; explicit config wins.
+	 * behaviour. They can also be supplied via the `PG_CHRONICLE_JWT_ISSUER` and
+	 * `PG_CHRONICLE_JWT_AUDIENCE` environment variables; explicit config wins.
 	 */
 	jwt?: {
 		/** Required `iss` claim. */

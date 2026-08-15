@@ -32,9 +32,9 @@ export async function middleware(request: NextRequest) {
 		// would publish an anonymous revert button, so refuse and say exactly what
 		// to set.
 		return new NextResponse(
-			'pg-history dashboard is not configured for public access.\n\n' +
-				'Set PG_HISTORY_DASHBOARD_PASSWORD to require a login, or set\n' +
-				'PG_HISTORY_DASHBOARD_ALLOW_ANONYMOUS=true if this deployment is already\n' +
+			'pg-chronicle dashboard is not configured for public access.\n\n' +
+				'Set PG_CHRONICLE_DASHBOARD_PASSWORD to require a login, or set\n' +
+				'PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS=true if this deployment is already\n' +
 				'behind an access proxy that authenticates every request.\n\n' +
 				'Refusing to serve the UI: reaching it grants full audit-history read\n' +
 				'access and the ability to revert records.',

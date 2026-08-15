@@ -1,7 +1,7 @@
-import { getHealth } from '@/lib/pg-history-server'
+import { getHealth } from '@/lib/pg-chronicle-server'
 
 /**
- * pg-history serves its public probe at /health, outside the /api catch-all.
+ * pg-chronicle serves its public probe at /health, outside the /api catch-all.
  * Re-exposing it here keeps platform health checks (Fly, Kubernetes, Vercel)
  * pointed at the same bounded `SELECT 1` the library performs, including its
  * 503 on an unreachable database.

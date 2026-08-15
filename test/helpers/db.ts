@@ -15,7 +15,7 @@ const { Pool: PgPool } = pkg
  * connection pooling or per-test connections.
  */
 
-const TEST_DB_NAME = 'pg_audit_test'
+const TEST_DB_NAME = 'pg_chronicle_test'
 
 let testPool: Pool | null = null
 

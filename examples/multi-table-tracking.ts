@@ -11,10 +11,10 @@
  */
 
 import { Client, Pool } from 'pg'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import { assert, assertEqual, run } from './_assert'
 
-const DB_NAME = `pg_history_multi_table_${Date.now()}`
+const DB_NAME = `pg_chronicle_multi_table_${Date.now()}`
 const ADMIN_URL =
 	process.env.DATABASE_URL ||
 	'postgres://postgres:postgres@localhost:5432/postgres'
@@ -57,7 +57,7 @@ async function main() {
     `)
 
 		// ── Track all three tables ───────────────────────────────
-		const history = new PgHistory({
+		const history = new PgChronicle({
 			pool,
 			tables: ['customers', 'invoices', 'customer_tags'],
 		})

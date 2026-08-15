@@ -43,10 +43,10 @@ describe('Orchestrator Integration', () => {
 		const orchestrator = new Orchestrator(
 			{
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-				region: process.env.PG_HISTORY_S3_REGION,
+				endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_CHRONICLE_S3_REGION,
 			},
 			{ default: 90 },
 			7,
@@ -85,10 +85,10 @@ describe('Orchestrator Integration', () => {
 		const orchestrator = new Orchestrator(
 			{
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-				region: process.env.PG_HISTORY_S3_REGION,
+				endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_CHRONICLE_S3_REGION,
 			},
 			{ default: 90 },
 			7,
@@ -134,10 +134,10 @@ describe('Orchestrator Integration', () => {
 		const orchestrator = new Orchestrator(
 			{
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-				region: process.env.PG_HISTORY_S3_REGION,
+				endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_CHRONICLE_S3_REGION,
 			},
 			{ default: 90 },
 			7,

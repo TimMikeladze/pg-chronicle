@@ -1,32 +1,32 @@
-# pg-history dashboard
+# pg-chronicle dashboard
 
 A Next.js + shadcn/ui dashboard for browsing, searching, and reverting the
-PostgreSQL audit trail, served by the pg-history REST API.
+PostgreSQL audit trail, served by the pg-chronicle REST API.
 
-It is a **single deployment**: the same app mounts the real pg-history API at
+It is a **single deployment**: the same app mounts the real pg-chronicle API at
 `/api` and renders the UI. Nothing else needs to be running.
 
 ```bash
 cp .env.example .env.local   # fill in DATABASE_URL, TABLES, JWT_SECRET, DASHBOARD_PASSWORD
 bun install
-ln -sfn ../.. node_modules/pg-history   # develop against the repo, not npm
+ln -sfn ../.. node_modules/pg-chronicle   # develop against the repo, not npm
 bun run dev                  # builds the parent package, then starts Next
 ```
 
 Open <http://localhost:3000>.
 
-## How it resolves `pg-history`
+## How it resolves `pg-chronicle`
 
 Two ways, and the difference matters when you change something here.
 
-**In this repo**, `node_modules/pg-history` is a symlink to the repo root, so
+**In this repo**, `node_modules/pg-chronicle` is a symlink to the repo root, so
 the app consumes the library you are editing through its own `exports` map
-(`pg-history`, `pg-history/next`). Those entry points resolve to `dist/`, which
+(`pg-chronicle`, `pg-chronicle/next`). Those entry points resolve to `dist/`, which
 is gitignored — which is why `dev`, `build` and `tsc` each build the root
 package first. `bun install` replaces the symlink with the npm package, so
 re-run the `ln -sfn` above after installing (CI does exactly this).
 
-**Deployed on its own**, `pg-history` is an ordinary npm dependency and this
+**Deployed on its own**, `pg-chronicle` is an ordinary npm dependency and this
 directory is self-contained: that is what makes the README's one-click Vercel
 button work, since the clone flow builds only this folder. `next.config.ts`
 picks the tracing root by looking for the parent package, and `vercel.json`
@@ -46,15 +46,15 @@ covered by the root job's repo-wide `biome check .`.
 | `/tables` | Every audited table with its last change, actor and archival backlog |
 | `/tables/[table]` | One table's recent activity |
 | `/history/[table]/[recordId]` | One record's full timeline, oldest/newest ordering, per-entry revert |
-| `/archival` | Archival status, backlog and on-demand runs (only when `PG_HISTORY_S3_BUCKET` is set) |
-| `/api/*` | The pg-history REST API itself — for cron, scripts, and other services |
+| `/archival` | Archival status, backlog and on-demand runs (only when `PG_CHRONICLE_S3_BUCKET` is set) |
+| `/api/*` | The pg-chronicle REST API itself — for cron, scripts, and other services |
 | `/health` | The library's public probe (bounded `SELECT 1`, 503 when the DB is unreachable) |
 | `/openapi` | The API reference, rendered from the OpenAPI document with Scalar |
 | `/openapi.json` | The OpenAPI document itself, fetched with the dashboard's own token (the library JWT-gates it) — point a client generator at this |
 
 ### Search has two modes
 
-`query` is dispatched by shape, exactly as `PgHistory.buildSearchConditions`
+`query` is dispatched by shape, exactly as `PgChronicle.buildSearchConditions`
 does it: a value that starts with `{` and ends with `}` is parsed as a **JSONB
 containment** document and hits the GIN index; anything else is an **ILIKE
 substring scan** over the serialized row. The UI shows which mode is active and
@@ -68,7 +68,7 @@ because recording the revert is the repudiation defense, and suppressing it
 needs SUPERUSER or the `pg_replication` role (PostgreSQL 16+).
 
 Note that the audit row written for a revert is attributed to the **database
-role**. pg-history logs the JWT `sub` on its own log line but never writes it to
+role**. pg-chronicle logs the JWT `sub` on its own log line but never writes it to
 `app_actor`, so the audit trail alone does not say which operator reverted —
 correlate with the server log.
 
@@ -81,13 +81,13 @@ states say so rather than implying the changes never happened.
 ## How it talks to the API
 
 The dashboard never issues a token to the browser. Server components and server
-actions call `lib/pg-history-server.ts`, which mints a 60-second HS256 JWT with
+actions call `lib/pg-chronicle-server.ts`, which mints a 60-second HS256 JWT with
 `jose` and invokes the very same route handlers mounted at `/api` — in-process,
 with a synthetic `Request`. `hono/vercel`'s `handle()` is just `app.fetch(req)`,
 so this is a direct function call: no network hop, no CORS, one connection pool,
 and identical auth, validation, and error semantics to any external caller.
 
-The JWT `sub` carries `PG_HISTORY_DASHBOARD_ACTOR`, which pg-history logs as the
+The JWT `sub` carries `PG_CHRONICLE_DASHBOARD_ACTOR`, which pg-chronicle logs as the
 actor on every revert — that log line is the only record of who used the
 dashboard, so set it to something identifiable.
 
@@ -96,14 +96,14 @@ dashboard, so set it to something identifiable.
 Loading a page here means being able to read every audited record and revert
 any of them, and the app authenticates itself to the API — so the gate has to be
 in front of the pages. `middleware.ts` requires a session cookie, minted by
-exchanging `PG_HISTORY_DASHBOARD_PASSWORD` at `/login`.
+exchanging `PG_CHRONICLE_DASHBOARD_PASSWORD` at `/login`.
 
 - **Production fails closed.** With no password set, the middleware serves a 503
   explaining what to configure instead of rendering the UI.
 - **Development runs open**, so local work needs no ceremony.
-- **`PG_HISTORY_DASHBOARD_ALLOW_ANONYMOUS=true`** is the explicit opt-out for a
+- **`PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS=true`** is the explicit opt-out for a
   deployment already behind an access proxy that authenticates every request.
-- Sessions last `PG_HISTORY_DASHBOARD_SESSION_TTL_HOURS` (default 12). The
+- Sessions last `PG_CHRONICLE_DASHBOARD_SESSION_TTL_HOURS` (default 12). The
   cookie is signed with a key derived from the password, so rotating the
   password invalidates every session. That is also the *only* revocation there
   is: with one shared password there are no individual sessions to revoke, and
@@ -125,7 +125,7 @@ Authentication is not authorization. The password says *someone* may come in; it
 says nothing about which rows they may touch. Past the gate the dashboard's
 self-minted token reaches every record of every configured table. For per-tenant
 scoping, mount the API with an `authorize` hook via `createHandlers` from
-`pg-history/next` instead of re-exporting the default handlers.
+`pg-chronicle/next` instead of re-exporting the default handlers.
 
 ## Two API behaviours worth knowing
 
@@ -154,7 +154,7 @@ label text always keeps full foreground contrast.
 
 ## Notes
 
-- `next.config.ts` marks `pg-history` as a server external. `serverExternalPackages`
+- `next.config.ts` marks `pg-chronicle` as a server external. `serverExternalPackages`
   alone misses it because the `file:..` link resolves outside `node_modules`,
   and webpack would otherwise walk into `hono-openapi` and report a missing
   optional `zod/v4/core`.

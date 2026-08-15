@@ -13,10 +13,11 @@ const { Pool: PgPool } = pkg
 
 /**
  * Base URL WITHOUT a database name — the suffix is appended per database.
- * `PG_AUDIT_TEST_URL` points both suites at a different server.
+ * `PG_CHRONICLE_TEST_URL` points both suites at a different server.
  */
 export const TEST_BASE_URL =
-	process.env.PG_AUDIT_TEST_URL || 'postgres://postgres:postgres@localhost:5432'
+	process.env.PG_CHRONICLE_TEST_URL ||
+	'postgres://postgres:postgres@localhost:5432'
 
 export function testDatabaseUrl(name: string): string {
 	return `${TEST_BASE_URL}/${name}`

@@ -8,7 +8,7 @@ import {
 
 const { Pool: PgPool } = pkg
 
-const TEST_DB = 'pg_audit_archiver_test'
+const TEST_DB = 'pg_chronicle_archiver_test'
 
 export async function createTestDatabase(): Promise<void> {
 	await recreateDatabase(TEST_DB)
@@ -24,8 +24,8 @@ export async function getTestConnection(): Promise<Pool> {
 
 export async function setupTestData(pool: Pool): Promise<void> {
 	// Create audit_log table matching the PRODUCTION schema shape created by
-	// PgHistory.setup() — id is BIGSERIAL so parquet INT64 storage works.
-	// Note: real PgHistory uses partitioning; tests skip that for simplicity.
+	// PgChronicle.setup() — id is BIGSERIAL so parquet INT64 storage works.
+	// Note: real PgChronicle uses partitioning; tests skip that for simplicity.
 	await pool.query(`
     CREATE TABLE IF NOT EXISTS audit_log (
       id BIGSERIAL PRIMARY KEY,

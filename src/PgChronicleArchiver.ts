@@ -22,21 +22,21 @@ import {
 	type Logger,
 } from './logger'
 import { readParquet, writeParquet } from './parquet'
-import { validateIdentifier } from './pg-history-validators'
+import { validateIdentifier } from './pg-chronicle-validators'
 import { setupArchiverSchema } from './schema'
 import type { ArchiverConfig } from './types'
 
 // Authorizes audit_log UPDATE/DELETE within the current transaction past the
-// optional append-only guard trigger (PgHistoryConfig.appendOnly). A no-op when
+// optional append-only guard trigger (PgChronicleConfig.appendOnly). A no-op when
 // the guard is not installed. Must be issued inside a transaction (SET LOCAL).
-const MAINTENANCE_ON = "SET LOCAL pg_history.maintenance = 'on'"
+const MAINTENANCE_ON = "SET LOCAL pg_chronicle.maintenance = 'on'"
 
 /** `YYYY-MM-DD` for a Date's UTC calendar day, matching `archive_date`. */
 function utcDay(date: Date): string {
 	return date.toISOString().slice(0, 10)
 }
 
-export class PgHistoryArchiver {
+export class PgChronicleArchiver {
 	private pool!: Pool
 	private ownConnection: boolean
 	private config: ArchiverConfig
@@ -55,7 +55,7 @@ export class PgHistoryArchiver {
 	constructor(config: ArchiverConfig) {
 		if (!Number.isFinite(config.gracePeriod) || config.gracePeriod < 0) {
 			throw new Error(
-				`PgHistoryArchiver: gracePeriod must be a non-negative finite number of days (got: ${config.gracePeriod})`,
+				`PgChronicleArchiver: gracePeriod must be a non-negative finite number of days (got: ${config.gracePeriod})`,
 			)
 		}
 		this.config = config
@@ -69,7 +69,9 @@ export class PgHistoryArchiver {
 			this.pendingConnection = config.connection
 			this.ownConnection = true
 		} else {
-			throw new Error('PgHistoryArchiver: No connection configuration provided')
+			throw new Error(
+				'PgChronicleArchiver: No connection configuration provided',
+			)
 		}
 
 		// Initialize S3 client
@@ -198,7 +200,7 @@ export class PgHistoryArchiver {
 		date: Date,
 	): Promise<{ s3Path: string; sha256: string }> {
 		// Write to a restricted temp directory to prevent data exposure on shared hosts
-		const tmpDir = await mkdtemp(join(tmpdir(), 'pg-history-'))
+		const tmpDir = await mkdtemp(join(tmpdir(), 'pg-chronicle-'))
 		await chmod(tmpDir, 0o700)
 		const tmpFile = join(tmpDir, 'data.parquet')
 
@@ -709,7 +711,7 @@ export class PgHistoryArchiver {
 	): Promise<Array<Record<string, unknown>>> {
 		await this.ensurePool()
 		if (typeof s3Path !== 'string' || s3Path.length === 0) {
-			throw new Error('PgHistoryArchiver: s3Path is required')
+			throw new Error('PgChronicleArchiver: s3Path is required')
 		}
 
 		const verify = options.verifyChecksum !== false
@@ -722,7 +724,7 @@ export class PgHistoryArchiver {
 			)
 			if (meta.rows.length === 0) {
 				throw new Error(
-					`PgHistoryArchiver: no archive metadata for "${s3Path}". Pass { verifyChecksum: false } to read an unrecorded object.`,
+					`PgChronicleArchiver: no archive metadata for "${s3Path}". Pass { verifyChecksum: false } to read an unrecorded object.`,
 				)
 			}
 			expected = (meta.rows[0] as { checksum_sha256: string | null })
@@ -742,14 +744,16 @@ export class PgHistoryArchiver {
 			new GetObjectCommand({ Bucket: this.config.s3.bucket, Key: s3Path }),
 		)
 		if (!result.Body) {
-			throw new Error(`PgHistoryArchiver: empty response body for "${s3Path}"`)
+			throw new Error(
+				`PgChronicleArchiver: empty response body for "${s3Path}"`,
+			)
 		}
 
 		// hyparquet reads from a file handle, so the object has to land on disk
 		// either way. Stream it there and hash in passing rather than buffering
 		// the whole archive first: at the 64 MiB default that is the difference
 		// between one transient copy and two (network buffer + file contents).
-		const tmpDir = await mkdtemp(join(tmpdir(), 'pg-history-read-'))
+		const tmpDir = await mkdtemp(join(tmpdir(), 'pg-chronicle-read-'))
 		await chmod(tmpDir, 0o700)
 		const tmpFile = join(tmpDir, 'data.parquet')
 		try {
@@ -773,7 +777,7 @@ export class PgHistoryArchiver {
 					// Thrown before the file is parsed or returned, so unverified bytes
 					// never reach the caller.
 					throw new Error(
-						`PgHistoryArchiver: checksum mismatch for "${s3Path}" — expected ${expected}, got ${actual}. The archive has been modified or corrupted.`,
+						`PgChronicleArchiver: checksum mismatch for "${s3Path}" — expected ${expected}, got ${actual}. The archive has been modified or corrupted.`,
 					)
 				}
 			}
@@ -795,7 +799,7 @@ export class PgHistoryArchiver {
 	 * prevents touching rows that were already finalized by a concurrent path.
 	 */
 	private async releaseClaim(claimId: string): Promise<void> {
-		// Runs in a transaction so SET LOCAL pg_history.maintenance authorizes the
+		// Runs in a transaction so SET LOCAL pg_chronicle.maintenance authorizes the
 		// UPDATE past the (optional) append-only guard without leaking onto the pool.
 		const client = await this.pool.connect()
 		try {
@@ -1286,7 +1290,7 @@ export interface ArchiveFile {
 	tableName: string
 	/** UTC calendar day the file's rows belong to. */
 	archiveDate: Date
-	/** Object key, the handle for {@link PgHistoryArchiver.readArchive}. */
+	/** Object key, the handle for {@link PgChronicleArchiver.readArchive}. */
 	s3Path: string
 	recordCount: number
 	fileSize: number
@@ -1296,7 +1300,7 @@ export interface ArchiveFile {
 }
 
 /**
- * Outcome of one {@link PgHistoryArchiver.processBatch} call.
+ * Outcome of one {@link PgChronicleArchiver.processBatch} call.
  *
  * `completed` with `recordCount === 0` is the ONLY signal that a table has no
  * more work. `reaped` and `contended` both mean "this attempt produced nothing,

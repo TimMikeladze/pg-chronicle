@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import type { Pool } from 'pg'
-import { PgHistory } from '../src/PgHistory'
+import { PgChronicle } from '../src/PgChronicle'
 import { cleanDatabase, getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()
 
-describe('PgHistory input validation', () => {
+describe('PgChronicle input validation', () => {
 	let pool: Pool
-	let audit: PgHistory
+	let audit: PgChronicle
 
 	beforeEach(async () => {
 		pool = await getTestConnection()
@@ -21,7 +21,7 @@ describe('PgHistory input validation', () => {
 			)
 		`)
 
-		audit = new PgHistory({ pool, tables: ['users'] })
+		audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 	})
 
@@ -137,7 +137,7 @@ describe('PgHistory input validation', () => {
 	describe('setup error handling', () => {
 		test('should handle setup gracefully when table does not exist', async () => {
 			// Create audit with non-existent table
-			const badAudit = new PgHistory({ pool, tables: ['nonexistent_table'] })
+			const badAudit = new PgChronicle({ pool, tables: ['nonexistent_table'] })
 
 			// Setup should not throw for non-existent tables - it just skips them
 			// This is by design for idempotency
@@ -150,7 +150,7 @@ describe('PgHistory input validation', () => {
 		})
 
 		test('should throw on empty table list', async () => {
-			const badAudit = new PgHistory({ pool, tables: [] })
+			const badAudit = new PgChronicle({ pool, tables: [] })
 
 			await expect(async () => {
 				await badAudit.setup()

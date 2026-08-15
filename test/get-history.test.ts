@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()
 
-describe('PgHistory.getHistory', () => {
+describe('PgChronicle.getHistory', () => {
 	beforeEach(async () => {
 		const pool = await getTestConnection()
 		await pool.query(`
@@ -18,7 +18,7 @@ describe('PgHistory.getHistory', () => {
 
 	test('should return paginated history for a record', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Create some history
@@ -42,7 +42,7 @@ describe('PgHistory.getHistory', () => {
 
 	test('should return results in descending order by default', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await pool.query(
@@ -60,7 +60,7 @@ describe('PgHistory.getHistory', () => {
 
 	test('should support cursor-based pagination', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Create 5 changes
@@ -99,7 +99,7 @@ describe('PgHistory.getHistory', () => {
 
 	test('should support ascending order', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await pool.query(

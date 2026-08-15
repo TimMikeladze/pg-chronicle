@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Pool } from 'pg'
-import { validateIdentifier } from './pg-history-validators'
+import { validateIdentifier } from './pg-chronicle-validators'
 
 // Cache schema per pool instance to avoid repeated round-trips.
 // The schema does not change during a session; keying by pool avoids
@@ -80,7 +80,7 @@ async function getSchemaPrefix(pool: Pool): Promise<string> {
 	return prefix
 }
 
-// Distinct from PgHistory's setup namespace (73616469) and the orchestrator's
+// Distinct from PgChronicle's setup namespace (73616469) and the orchestrator's
 // per-table namespace (73616468) so the three lock families never collide.
 const ARCHIVER_SETUP_LOCK_NAMESPACE = 73_616_470
 
@@ -88,8 +88,8 @@ const ARCHIVER_SETUP_LOCK_NAMESPACE = 73_616_470
 const SETUP_LOCK_WAIT_MS = 5 * 60_000
 const SETUP_LOCK_POLL_MS = 250
 
-const LOCK_SQL = `SELECT pg_try_advisory_lock(hashtextextended('pg-history:archiver-setup:' || current_schema(), $1::bigint)) AS acquired`
-const UNLOCK_SQL = `SELECT pg_advisory_unlock(hashtextextended('pg-history:archiver-setup:' || current_schema(), $1::bigint))`
+const LOCK_SQL = `SELECT pg_try_advisory_lock(hashtextextended('pg-chronicle:archiver-setup:' || current_schema(), $1::bigint)) AS acquired`
+const UNLOCK_SQL = `SELECT pg_advisory_unlock(hashtextextended('pg-chronicle:archiver-setup:' || current_schema(), $1::bigint))`
 
 /**
  * Take the archiver-setup lock without ever *blocking* on it.
@@ -197,7 +197,7 @@ async function applyArchiverSchema(pool: Pool): Promise<void> {
 	const metadataTable = `${s}."audit_archive_metadata"`
 	const statsTable = `${s}."audit_archival_stats"`
 
-	// The archiver extends the table PgHistory.setup() creates; it does not
+	// The archiver extends the table PgChronicle.setup() creates; it does not
 	// create it. Enabling the archiver first (S3 variables set, no audited
 	// tables) otherwise fails on the first ALTER with a bare
 	// `relation "public.audit_log" does not exist`, which says nothing about
@@ -209,10 +209,10 @@ async function applyArchiverSchema(pool: Pool): Promise<void> {
 	)
 	if (auditLogExists.rows.length === 0) {
 		throw new Error(
-			`pg-history: cannot set up the archiver — ${auditTable} does not exist. ` +
+			`pg-chronicle: cannot set up the archiver — ${auditTable} does not exist. ` +
 				'The archiver extends the audit table rather than creating it, so run ' +
-				'PgHistory.setup() first (on the standalone server, that means setting ' +
-				'PG_HISTORY_TABLES alongside the S3 configuration).',
+				'PgChronicle.setup() first (on the standalone server, that means setting ' +
+				'PG_CHRONICLE_TABLES alongside the S3 configuration).',
 		)
 	}
 
@@ -255,9 +255,9 @@ async function applyArchiverSchema(pool: Pool): Promise<void> {
       ADD COLUMN IF NOT EXISTS soft_deleted_at TIMESTAMPTZ
   `)
 
-	// Attribution columns. PgHistory.setup() owns audit_log's shape and creates
+	// Attribution columns. PgChronicle.setup() owns audit_log's shape and creates
 	// these, but a cron-only deployment may run the archiver against a table
-	// written by an older pg-history elsewhere. The archiver now copies these
+	// written by an older pg-chronicle elsewhere. The archiver now copies these
 	// into the Parquet archive, so it must be able to read them: assert they
 	// exist rather than failing the batch with "column does not exist".
 	await pool.query(
@@ -274,7 +274,7 @@ async function applyArchiverSchema(pool: Pool): Promise<void> {
 	// on a batch of rows in one short transaction, releases the lock, performs
 	// the slow S3 upload outside any transaction, then UPDATEs archived_at in a
 	// second short transaction. Crashed workers leave stale claims that
-	// PgHistoryArchiver.reapStaleClaims() resets via claimed_at < NOW() - interval.
+	// PgChronicleArchiver.reapStaleClaims() resets via claimed_at < NOW() - interval.
 	await pool.query(`
     ALTER TABLE ${auditTable}
       ADD COLUMN IF NOT EXISTS claim_id UUID
@@ -542,6 +542,6 @@ export async function teardownArchiverSchema(pool: Pool): Promise<void> {
 	await pool.query(`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS claim_id`)
 	await pool.query(`ALTER TABLE ${auditTable} DROP COLUMN IF EXISTS claimed_at`)
 	// db_user / app_actor / client_addr are deliberately NOT dropped: they are
-	// audit content owned by PgHistory.setup(), not archiver bookkeeping. The
+	// audit content owned by PgChronicle.setup(), not archiver bookkeeping. The
 	// archiver only ensures they exist.
 }

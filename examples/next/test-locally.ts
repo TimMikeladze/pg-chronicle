@@ -17,7 +17,7 @@
 import { Client, Pool } from 'pg'
 import { createServer } from '../../src/server'
 
-const DB_NAME = `pg_history_next_${Date.now()}`
+const DB_NAME = `pg_chronicle_next_${Date.now()}`
 const ADMIN_URL =
 	process.env.DATABASE_URL ||
 	'postgres://postgres:postgres@localhost:5432/postgres'
@@ -41,24 +41,25 @@ async function main() {
     )
   `)
 
-	// Create server in serverless mode (same as pg-history/next entry point)
+	// Create server in serverless mode (same as pg-chronicle/next entry point)
 	const { app } = await createServer({
 		pool,
 		serverless: true,
 		enableHistory: true,
-		// Local-only opt-in. In a real deployment set PG_HISTORY_JWT_SECRET
-		// instead — `pg-history/next` refuses to start without it.
+		// Local-only opt-in. In a real deployment set PG_CHRONICLE_JWT_SECRET
+		// instead — `pg-chronicle/next` refuses to start without it.
 		allowUnauthenticated: true,
 		historyConfig: { tables: ['users'] },
 		enableArchiver: true,
 		archiverConfig: {
 			s3: {
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT || 'http://localhost:9000',
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID || 'root',
+				endpoint:
+					process.env.PG_CHRONICLE_S3_ENDPOINT || 'http://localhost:9000',
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID || 'root',
 				secretAccessKey:
-					process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY || 'password',
-				region: process.env.PG_HISTORY_S3_REGION || 'us-west-1',
+					process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY || 'password',
+				region: process.env.PG_CHRONICLE_S3_REGION || 'us-west-1',
 			},
 			retention: { default: 1 },
 			gracePeriod: 0,

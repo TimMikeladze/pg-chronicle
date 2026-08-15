@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { createServer, PgHistory } from '../src'
+import { createServer, PgChronicle } from '../src'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()
@@ -20,8 +20,8 @@ describe('C2: fail closed on missing auth', () => {
 
 	test('createServer throws when history is enabled without a JWT secret', async () => {
 		const pool = await getTestConnection()
-		const original = process.env.PG_HISTORY_JWT_SECRET
-		delete process.env.PG_HISTORY_JWT_SECRET
+		const original = process.env.PG_CHRONICLE_JWT_SECRET
+		delete process.env.PG_CHRONICLE_JWT_SECRET
 		try {
 			await expect(
 				createServer({
@@ -31,14 +31,14 @@ describe('C2: fail closed on missing auth', () => {
 				}),
 			).rejects.toThrow(/Refusing to start/)
 		} finally {
-			if (original !== undefined) process.env.PG_HISTORY_JWT_SECRET = original
+			if (original !== undefined) process.env.PG_CHRONICLE_JWT_SECRET = original
 		}
 	})
 
 	test('createServer starts when allowUnauthenticated is explicitly set', async () => {
 		const pool = await getTestConnection()
-		const original = process.env.PG_HISTORY_JWT_SECRET
-		delete process.env.PG_HISTORY_JWT_SECRET
+		const original = process.env.PG_CHRONICLE_JWT_SECRET
+		delete process.env.PG_CHRONICLE_JWT_SECRET
 		try {
 			const { app } = await createServer({
 				pool,
@@ -48,7 +48,7 @@ describe('C2: fail closed on missing auth', () => {
 			})
 			expect(app).toBeDefined()
 		} finally {
-			if (original !== undefined) process.env.PG_HISTORY_JWT_SECRET = original
+			if (original !== undefined) process.env.PG_CHRONICLE_JWT_SECRET = original
 		}
 	})
 })
@@ -58,7 +58,7 @@ describe('C3: audit trail captures actor metadata', () => {
 
 	test('records db_user on every change', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await pool.query(
@@ -73,16 +73,16 @@ describe('C3: audit trail captures actor metadata', () => {
 		expect(data[0]?.dbUser?.length).toBeGreaterThan(0)
 	})
 
-	test('records app_actor from the pg_history.actor session setting', async () => {
+	test('records app_actor from the pg_chronicle.actor session setting', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// SET LOCAL + the DML must run on the same connection/transaction.
 		const client = await pool.connect()
 		try {
 			await client.query('BEGIN')
-			await client.query(`SET LOCAL pg_history.actor = 'user-42'`)
+			await client.query(`SET LOCAL pg_chronicle.actor = 'user-42'`)
 			await client.query(
 				`INSERT INTO users (id, name, email) VALUES (7, 'Bob', 'b@example.com')`,
 			)
@@ -97,7 +97,7 @@ describe('C3: audit trail captures actor metadata', () => {
 
 	test('app_actor is null when the session setting is unset', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await pool.query(
@@ -114,7 +114,7 @@ describe('H1: authorization hook', () => {
 
 	async function seed(): Promise<void> {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 		await pool.query(
 			`INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'a@example.com')`,

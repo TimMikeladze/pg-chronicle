@@ -11,10 +11,10 @@
  */
 
 import { Client, Pool } from 'pg'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import { assert, assertEqual, run } from './_assert'
 
-const DB_NAME = `pg_history_example_${Date.now()}`
+const DB_NAME = `pg_chronicle_example_${Date.now()}`
 const ADMIN_URL =
 	process.env.DATABASE_URL ||
 	'postgres://postgres:postgres@localhost:5432/postgres'
@@ -41,8 +41,8 @@ async function main() {
     `)
 		console.log('Created users table\n')
 
-		// ── 3. Set up pg-history ──────────────────────────────────
-		const history = new PgHistory({ pool, tables: ['users'] })
+		// ── 3. Set up pg-chronicle ──────────────────────────────────
+		const history = new PgChronicle({ pool, tables: ['users'] })
 		await history.setup()
 		console.log('History tracking enabled\n')
 

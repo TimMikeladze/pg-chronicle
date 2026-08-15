@@ -10,7 +10,7 @@ import { Callout } from '@/components/status'
 import { Button } from '@/components/ui/button'
 import { readConfig } from '@/lib/config'
 import { exactNumber } from '@/lib/format'
-import { ApiError, getStats, searchHistory } from '@/lib/pg-history-server'
+import { ApiError, getStats, searchHistory } from '@/lib/pg-chronicle-server'
 import { cachedProbe } from '@/lib/probe-cache'
 import type { ArchivalStatsRow, AuditEntryWire, Operation } from '@/lib/types'
 
@@ -48,7 +48,7 @@ function loadFeed(table: string): Promise<{
 					entries: [] as AuditEntryWire[],
 					error:
 						error instanceof ApiError && error.code === 'RATE_LIMITED'
-							? 'Rate limited — pg-history caps concurrent searches. Retry in a moment.'
+							? 'Rate limited — pg-chronicle caps concurrent searches. Retry in a moment.'
 							: 'Could not read this table’s history.',
 				}
 			}
@@ -76,7 +76,7 @@ export default async function TablePage({
 				<p className="text-muted-foreground text-[13px] leading-relaxed">
 					<span className="text-foreground font-mono">{table}</span> is not in{' '}
 					<code className="text-foreground font-mono text-xs">
-						PG_HISTORY_TABLES
+						PG_CHRONICLE_TABLES
 					</code>
 					. Currently audited:{' '}
 					<span className="text-foreground font-mono">

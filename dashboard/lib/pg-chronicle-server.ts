@@ -1,7 +1,10 @@
 import 'server-only'
 
 import { SignJWT } from 'jose'
-import { GET as pgHistoryGET, POST as pgHistoryPOST } from 'pg-history/next'
+import {
+	GET as pgChronicleGET,
+	POST as pgChroniclePOST,
+} from 'pg-chronicle/next'
 
 import { readConfig } from './config'
 import type {
@@ -15,7 +18,7 @@ import type {
 } from './types'
 
 /**
- * The dashboard talks to pg-history by invoking the very same route handlers it
+ * The dashboard talks to pg-chronicle by invoking the very same route handlers it
  * mounts at /api — in-process, with a synthetic Request. `hono/vercel`'s
  * `handle()` is just `app.fetch(req)`, so this is a direct function call: no
  * network hop, no CORS, no second connection pool, and identical auth /
@@ -33,30 +36,30 @@ const TOKEN_TTL_SECONDS = 60
  * Fail loudly rather than emitting tokens the server will reject with a 401.
  */
 function assertSymmetricAlg(): void {
-	const alg = process.env.PG_HISTORY_JWT_ALG?.trim().toUpperCase()
+	const alg = process.env.PG_CHRONICLE_JWT_ALG?.trim().toUpperCase()
 	if (alg && !alg.startsWith('HS')) {
 		throw new Error(
-			`The dashboard signs its own tokens and needs a symmetric algorithm, but PG_HISTORY_JWT_ALG is "${alg}". ` +
+			`The dashboard signs its own tokens and needs a symmetric algorithm, but PG_CHRONICLE_JWT_ALG is "${alg}". ` +
 				'Use HS256/384/512, or front the API with a token issuer that can sign with your private key.',
 		)
 	}
 }
 
 async function mintToken(): Promise<string> {
-	const secret = process.env.PG_HISTORY_JWT_SECRET
+	const secret = process.env.PG_CHRONICLE_JWT_SECRET
 	if (!secret) {
 		throw new Error(
-			'PG_HISTORY_JWT_SECRET is required. The dashboard exposes revert, so the API refuses to start without it.',
+			'PG_CHRONICLE_JWT_SECRET is required. The dashboard exposes revert, so the API refuses to start without it.',
 		)
 	}
 	assertSymmetricAlg()
 
-	const alg = process.env.PG_HISTORY_JWT_ALG?.trim().toUpperCase() || 'HS256'
+	const alg = process.env.PG_CHRONICLE_JWT_ALG?.trim().toUpperCase() || 'HS256'
 	const now = Math.floor(Date.now() / 1000)
 
 	return (
 		new SignJWT({})
-			// pg-history logs `sub` as the actor on every revert — that audit line is
+			// pg-chronicle logs `sub` as the actor on every revert — that audit line is
 			// the only record of who used the dashboard, so it must be meaningful.
 			.setSubject(readConfig().actor)
 			.setProtectedHeader({ alg })
@@ -81,7 +84,7 @@ export class ApiError extends Error {
  * The origin is arbitrary — nothing dials it. `Request` merely requires an
  * absolute URL, and Hono routes on the pathname alone.
  */
-const INTERNAL_ORIGIN = 'http://pg-history.internal'
+const INTERNAL_ORIGIN = 'http://pg-chronicle.internal'
 
 async function call<T>(
 	method: 'GET' | 'POST',
@@ -100,10 +103,10 @@ async function call<T>(
 
 	const response =
 		method === 'GET'
-			? await pgHistoryGET(request)
-			: await pgHistoryPOST(request)
+			? await pgChronicleGET(request)
+			: await pgChroniclePOST(request)
 
-	// 204 has no body; every other pg-history response is JSON.
+	// 204 has no body; every other pg-chronicle response is JSON.
 	const text = await response.text()
 	const payload = text ? JSON.parse(text) : null
 
@@ -190,7 +193,7 @@ export function runArchival(): Promise<{
 }
 
 /**
- * The OpenAPI document. pg-history JWT-gates `/openapi` unless `publicOpenApi`
+ * The OpenAPI document. pg-chronicle JWT-gates `/openapi` unless `publicOpenApi`
  * is set, and this entry point never sets it — so a browser hitting the route
  * directly would get a 401. Fetching it here with the minted token is what
  * makes the spec reachable at all.
@@ -206,7 +209,7 @@ export function getOpenApiSpec(): Promise<Record<string, unknown>> {
  */
 export async function getHealth(): Promise<{ status: string } | null> {
 	try {
-		const response = await pgHistoryGET(
+		const response = await pgChronicleGET(
 			new Request(`${INTERNAL_ORIGIN}/health`),
 		)
 		return (await response.json()) as { status: string }

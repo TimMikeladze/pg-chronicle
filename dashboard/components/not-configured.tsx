@@ -1,7 +1,7 @@
 import { TriangleAlertIcon } from 'lucide-react'
 
 /**
- * Shown instead of an empty dashboard when PG_HISTORY_TABLES is missing. The API
+ * Shown instead of an empty dashboard when PG_CHRONICLE_TABLES is missing. The API
  * would start and serve only /health in that state, so every panel below would
  * render blank — better to name the missing variable and give the exact block
  * to paste.
@@ -21,7 +21,7 @@ export function NotConfigured() {
 
 			<p className="text-muted-foreground text-[13px] leading-relaxed">
 				<code className="bg-inset text-foreground rounded border px-1.5 py-0.5 font-mono text-xs">
-					PG_HISTORY_TABLES
+					PG_CHRONICLE_TABLES
 				</code>{' '}
 				is what enables the history API. Without it the server starts but serves
 				only <code className="text-foreground font-mono text-xs">/health</code>,
@@ -29,9 +29,9 @@ export function NotConfigured() {
 			</p>
 
 			<pre className="bg-inset overflow-x-auto rounded-lg border p-4 font-mono text-xs leading-relaxed">
-				{`PG_HISTORY_DATABASE_URL=postgres://localhost:5432/mydb
-PG_HISTORY_TABLES=users,orders
-PG_HISTORY_JWT_SECRET=a-long-random-string`}
+				{`PG_CHRONICLE_DATABASE_URL=postgres://localhost:5432/mydb
+PG_CHRONICLE_TABLES=users,orders
+PG_CHRONICLE_JWT_SECRET=a-long-random-string`}
 			</pre>
 
 			<p className="text-muted-foreground text-[13px] leading-relaxed">

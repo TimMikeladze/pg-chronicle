@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import type { Pool } from 'pg'
 import { Orchestrator } from '../../src/orchestrator'
-import { PgHistoryArchiver } from '../../src/PgHistoryArchiver'
+import { PgChronicleArchiver } from '../../src/PgChronicleArchiver'
 import { setupArchiverSchema } from '../../src/schema'
 import { cleanupTestData, getTestConnection, setupTestData } from './helpers/db'
 import { ensureTestBucket, isS3Configured, putTestS3Object } from './helpers/s3'
@@ -21,24 +21,24 @@ const BUCKET = 'test-bucket'
  * populate in a way it can use.
  */
 const LOCK_CONNECTION_STRING =
-	'postgres://postgres:postgres@localhost:5432/pg_audit_archiver_test'
+	'postgres://postgres:postgres@localhost:5432/pg_chronicle_archiver_test'
 
 const S3_CONFIG = {
 	bucket: BUCKET,
-	endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-	accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-	secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-	region: process.env.PG_HISTORY_S3_REGION,
+	endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+	accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+	secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+	region: process.env.PG_CHRONICLE_S3_REGION,
 }
 
 function s3Client(): S3Client {
 	return new S3Client({
-		endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-		region: process.env.PG_HISTORY_S3_REGION || 'us-east-1',
+		endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+		region: process.env.PG_CHRONICLE_S3_REGION || 'us-east-1',
 		credentials: {
-			accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID || 'root',
+			accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID || 'root',
 			secretAccessKey:
-				process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY || 'password',
+				process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY || 'password',
 		},
 		forcePathStyle: true,
 	})
@@ -52,7 +52,7 @@ function cutoff(daysAgo = 90): Date {
 
 describe('archiver gaps', () => {
 	let pool: Pool
-	let archiver: PgHistoryArchiver
+	let archiver: PgChronicleArchiver
 	let s3Ready = false
 
 	beforeEach(async () => {
@@ -62,7 +62,7 @@ describe('archiver gaps', () => {
 		s3Ready = await isS3Configured()
 		if (s3Ready) await ensureTestBucket(BUCKET)
 
-		archiver = new PgHistoryArchiver({
+		archiver = new PgChronicleArchiver({
 			pool,
 			s3: S3_CONFIG,
 			retention: { default: 90 },

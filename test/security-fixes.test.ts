@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import type { Pool } from 'pg'
-import { PgHistory } from '../src/PgHistory'
+import { PgChronicle } from '../src/PgChronicle'
 import { createServer } from '../src/server'
 import { cleanDatabase, getTestConnection, setupTestDatabase } from './helpers'
 
@@ -20,8 +20,11 @@ describe('CRIT-1: DDL uses format() for safe interpolation', () => {
 
 	test('setup creates partition using format() without raw interpolation', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistory.ts', 'utf-8')
-		const setupSource = await fs.readFile('./src/pg-history-setup.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicle.ts', 'utf-8')
+		const setupSource = await fs.readFile(
+			'./src/pg-chronicle-setup.ts',
+			'utf-8',
+		)
 		const combined = `${source}\n${setupSource}`
 
 		expect(combined).not.toMatch(/FOR VALUES IN \('\$\{/)
@@ -36,8 +39,8 @@ describe('CRIT-1: DDL uses format() for safe interpolation', () => {
 			'CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)',
 		)
 
-		const pgHistory = new PgHistory({ pool, tables: ['users'] })
-		await pgHistory.setup()
+		const pgChronicle = new PgChronicle({ pool, tables: ['users'] })
+		await pgChronicle.setup()
 
 		// Verify partition was created
 		const partitions = await pool.query(
@@ -45,7 +48,7 @@ describe('CRIT-1: DDL uses format() for safe interpolation', () => {
 		)
 		expect(partitions.rows.length).toBe(1)
 
-		await pgHistory.teardown()
+		await pgChronicle.teardown()
 	})
 })
 
@@ -70,8 +73,8 @@ describe('CRIT-2: /api/stats requires JWT when secret is set', () => {
 	})
 
 	test('returns 401 on /api/stats without JWT when secret is set', async () => {
-		const original = process.env.PG_HISTORY_JWT_SECRET
-		process.env.PG_HISTORY_JWT_SECRET = 'test-secret'
+		const original = process.env.PG_CHRONICLE_JWT_SECRET
+		process.env.PG_CHRONICLE_JWT_SECRET = 'test-secret'
 
 		const { app } = await createServer({
 			pool,
@@ -88,15 +91,15 @@ describe('CRIT-2: /api/stats requires JWT when secret is set', () => {
 		const res = await app.request('/api/stats')
 		expect(res.status).toBe(401)
 
-		process.env.PG_HISTORY_JWT_SECRET = original
+		process.env.PG_CHRONICLE_JWT_SECRET = original
 	})
 })
 
 // ─────────────────────────────────────────────────────────
-// HIGH-2: PG_HISTORY_TABLES trimmed and filtered
+// HIGH-2: PG_CHRONICLE_TABLES trimmed and filtered
 // ─────────────────────────────────────────────────────────
 
-describe('HIGH-2: PG_HISTORY_TABLES sanitization', () => {
+describe('HIGH-2: PG_CHRONICLE_TABLES sanitization', () => {
 	test('next.ts trims and filters table names', async () => {
 		const fs = await import('node:fs/promises')
 		const source = await fs.readFile('./src/next.ts', 'utf-8')
@@ -134,7 +137,7 @@ describe('HIGH-3: Generic error messages for database errors', () => {
 		}
 
 		// No raw `error.message` should appear in any createErrorResponse call
-		// (except for controlled application errors like PgHistoryError)
+		// (except for controlled application errors like PgChronicleError)
 		const errorPattern = /createErrorResponse\([^)]*error\.message[^)]*\)/g
 		const matches = source.match(errorPattern) || []
 		// Only controlled error types should pass error.message
@@ -199,8 +202,8 @@ describe('HIGH-5: Revert column cross-check', () => {
 			'CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)',
 		)
 
-		const pgHistory = new PgHistory({ pool, tables: ['users'] })
-		await pgHistory.setup()
+		const pgChronicle = new PgChronicle({ pool, tables: ['users'] })
+		await pgChronicle.setup()
 
 		// Insert a user to create history
 		await pool.query("INSERT INTO users (name) VALUES ('Alice')")
@@ -221,10 +224,10 @@ describe('HIGH-5: Revert column cross-check', () => {
 
 		// Attempt to revert should fail because evil_column doesn't exist
 		await expect(
-			pgHistory.revert('users', '1', entry.rows[0].id.toString()),
+			pgChronicle.revert('users', '1', entry.rows[0].id.toString()),
 		).rejects.toThrow('columns not in table')
 
-		await pgHistory.teardown()
+		await pgChronicle.teardown()
 	})
 })
 
@@ -318,9 +321,9 @@ describe('MED-2: Timing-safe cron secret comparison', () => {
 // ──────────────────────────────────────────���──────────────
 
 describe('MED-3: Temp files use restricted directory', () => {
-	test('PgHistoryArchiver uses mkdtemp with chmod 0o700', async () => {
+	test('PgChronicleArchiver uses mkdtemp with chmod 0o700', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicleArchiver.ts', 'utf-8')
 
 		expect(source).toContain('mkdtemp')
 		expect(source).toContain('chmod')
@@ -346,43 +349,46 @@ describe('MED-4: Cursor must be numeric', () => {
 		await pool.query(
 			'CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)',
 		)
-		const pgHistory = new PgHistory({ pool, tables: ['users'] })
-		await pgHistory.setup()
+		const pgChronicle = new PgChronicle({ pool, tables: ['users'] })
+		await pgChronicle.setup()
 
 		await expect(
-			pgHistory.getHistory('users', '1', { cursor: 'abc; DROP TABLE users' }),
+			pgChronicle.getHistory('users', '1', { cursor: 'abc; DROP TABLE users' }),
 		).rejects.toThrow('cursor must be a numeric ID')
 
-		await pgHistory.teardown()
+		await pgChronicle.teardown()
 	})
 
 	test('getHistory accepts numeric cursor', async () => {
 		await pool.query(
 			'CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)',
 		)
-		const pgHistory = new PgHistory({ pool, tables: ['users'] })
-		await pgHistory.setup()
+		const pgChronicle = new PgChronicle({ pool, tables: ['users'] })
+		await pgChronicle.setup()
 
 		// Should not throw — cursor is valid
-		const result = await pgHistory.getHistory('users', '1', { cursor: '999' })
+		const result = await pgChronicle.getHistory('users', '1', { cursor: '999' })
 		expect(result.data).toBeArray()
 
-		await pgHistory.teardown()
+		await pgChronicle.teardown()
 	})
 
 	test('search rejects non-numeric cursor', async () => {
 		await pool.query(
 			'CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)',
 		)
-		const pgHistory = new PgHistory({ pool, tables: ['users'] })
-		await pgHistory.setup()
+		const pgChronicle = new PgChronicle({ pool, tables: ['users'] })
+		await pgChronicle.setup()
 
 		await expect(
 			// Cast: intentionally passing invalid input to test runtime validation
-			pgHistory.search({ tables: ['users'], cursor: 'not-a-number' as never }),
+			pgChronicle.search({
+				tables: ['users'],
+				cursor: 'not-a-number' as never,
+			}),
 		).rejects.toThrow('cursor must be a numeric ID')
 
-		await pgHistory.teardown()
+		await pgChronicle.teardown()
 	})
 })
 
@@ -403,8 +409,8 @@ describe('MED-5: discoverTables returns unqualified names', () => {
 			'CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)',
 		)
 
-		const pgHistory = new PgHistory({ pool, tables: ['users'] })
-		await pgHistory.setup()
+		const pgChronicle = new PgChronicle({ pool, tables: ['users'] })
+		await pgChronicle.setup()
 
 		const { Orchestrator } = await import('../src/orchestrator')
 		const orchestrator = new Orchestrator(
@@ -423,7 +429,7 @@ describe('MED-5: discoverTables returns unqualified names', () => {
 			expect(t).not.toContain('"')
 		}
 
-		await pgHistory.teardown()
+		await pgChronicle.teardown()
 	})
 })
 
@@ -434,7 +440,7 @@ describe('MED-5: discoverTables returns unqualified names', () => {
 describe('LOW-2: forcePathStyle only with custom endpoint', () => {
 	test('S3 client uses forcePathStyle conditionally', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicleArchiver.ts', 'utf-8')
 
 		expect(source).toContain('forcePathStyle: !!config.s3.endpoint')
 		expect(source).not.toContain('forcePathStyle: true')

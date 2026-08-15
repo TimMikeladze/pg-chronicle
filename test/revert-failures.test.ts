@@ -8,7 +8,7 @@
  * entry means" must never resolve to a write.
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import { RevertError } from '../src/errors'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
@@ -16,7 +16,7 @@ setupTestDatabase()
 
 /** The audit id of the newest entry for a record. */
 async function latestEntryId(
-	history: PgHistory,
+	history: PgChronicle,
 	table: string,
 	recordId: string,
 ): Promise<string> {
@@ -40,7 +40,7 @@ describe('revert refuses entries it cannot faithfully apply', () => {
 
 	test('a column that no longer exists on the table', async () => {
 		const pool = await getTestConnection()
-		const history = new PgHistory({ pool, tables: ['users'] })
+		const history = new PgChronicle({ pool, tables: ['users'] })
 		await history.setup()
 
 		await pool.query(`INSERT INTO users (id, name) VALUES (1, 'Alice')`)
@@ -60,7 +60,7 @@ describe('revert refuses entries it cannot faithfully apply', () => {
 
 	test('a DELETE whose row predates a NOT NULL column', async () => {
 		const pool = await getTestConnection()
-		const history = new PgHistory({ pool, tables: ['users'] })
+		const history = new PgChronicle({ pool, tables: ['users'] })
 		await history.setup()
 
 		await pool.query(`INSERT INTO users (id, name) VALUES (1, 'Alice')`)
@@ -82,7 +82,7 @@ describe('revert refuses entries it cannot faithfully apply', () => {
 
 	test('a DELETE whose key has since been taken', async () => {
 		const pool = await getTestConnection()
-		const history = new PgHistory({ pool, tables: ['users'] })
+		const history = new PgChronicle({ pool, tables: ['users'] })
 		await history.setup()
 
 		await pool.query(`INSERT INTO users (id, name) VALUES (1, 'Alice')`)
@@ -100,7 +100,7 @@ describe('revert refuses entries it cannot faithfully apply', () => {
 
 	test('an INSERT whose row is already gone', async () => {
 		const pool = await getTestConnection()
-		const history = new PgHistory({ pool, tables: ['users'] })
+		const history = new PgChronicle({ pool, tables: ['users'] })
 		await history.setup()
 
 		await pool.query(`INSERT INTO users (id, name) VALUES (1, 'Alice')`)
@@ -120,7 +120,7 @@ describe('revert refuses entries it cannot faithfully apply', () => {
 
 	test('an entry belonging to a different record', async () => {
 		const pool = await getTestConnection()
-		const history = new PgHistory({ pool, tables: ['users'] })
+		const history = new PgChronicle({ pool, tables: ['users'] })
 		await history.setup()
 
 		await pool.query(
@@ -139,7 +139,7 @@ describe('revert refuses entries it cannot faithfully apply', () => {
 	test('a table with no primary key', async () => {
 		const pool = await getTestConnection()
 		await pool.query(`CREATE TABLE events (name TEXT, payload TEXT)`)
-		const history = new PgHistory({ pool, tables: ['events'] })
+		const history = new PgChronicle({ pool, tables: ['events'] })
 		await history.setup()
 
 		await pool.query(`INSERT INTO events (name, payload) VALUES ('a', 'b')`)
@@ -157,7 +157,7 @@ describe('revert refuses entries it cannot faithfully apply', () => {
 	test('an UPDATE carrying nothing but its primary key', async () => {
 		const pool = await getTestConnection()
 		await pool.query(`CREATE TABLE flags (id SERIAL PRIMARY KEY, on_ BOOLEAN)`)
-		const history = new PgHistory({
+		const history = new PgChronicle({
 			pool,
 			tables: ['flags'],
 			// Every non-PK column excluded: the entry records that something
@@ -177,7 +177,7 @@ describe('revert refuses entries it cannot faithfully apply', () => {
 
 	test('the refusals are RevertError, so the API maps them to 422', async () => {
 		const pool = await getTestConnection()
-		const history = new PgHistory({ pool, tables: ['users'] })
+		const history = new PgChronicle({ pool, tables: ['users'] })
 		await history.setup()
 
 		await pool.query(`INSERT INTO users (id, name) VALUES (1, 'Alice')`)

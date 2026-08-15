@@ -8,15 +8,15 @@ concurrency:
 
 env:
   # The test helpers connect to postgres://postgres:postgres@localhost:5432 by
-  # default (override with PG_AUDIT_TEST_URL), which is exactly what the service
+  # default (override with PG_CHRONICLE_TEST_URL), which is exactly what the service
   # container below exposes — so no database variable is set here. A
   # PG_CONNECTION_STRING used to live here that nothing read, which made it look
   # like CI could be pointed elsewhere.
-  PG_HISTORY_S3_ENDPOINT: http://localhost:9000
-  PG_HISTORY_S3_ACCESS_KEY_ID: root
-  PG_HISTORY_S3_SECRET_ACCESS_KEY: password
-  PG_HISTORY_S3_REGION: us-west-1
-  PG_HISTORY_S3_BUCKET: test-bucket
+  PG_CHRONICLE_S3_ENDPOINT: http://localhost:9000
+  PG_CHRONICLE_S3_ACCESS_KEY_ID: root
+  PG_CHRONICLE_S3_SECRET_ACCESS_KEY: password
+  PG_CHRONICLE_S3_REGION: us-west-1
+  PG_CHRONICLE_S3_BUCKET: test-bucket
 
 jobs:
   test:
@@ -173,7 +173,7 @@ jobs:
     name: Dashboard
     runs-on: ubuntu-latest
     services:
-      # Needed only by the access-gate step below: `pg-history/next` opens a
+      # Needed only by the access-gate step below: `pg-chronicle/next` opens a
       # pool on first request, so without a database every /api call fails to
       # initialise and answers 500 — which would hide whether the JWT check
       # (the thing under test) actually runs.
@@ -204,7 +204,7 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      # The dashboard resolves `pg-history` / `pg-history/next` through the
+      # The dashboard resolves `pg-chronicle` / `pg-chronicle/next` through the
       # symlink created below, which reads the library's own exports map and
       # dist/. So the library's dependencies must be installed before it builds.
       - name: Install library dependencies
@@ -216,7 +216,7 @@ jobs:
       - name: Build library
         run: bun run build
 
-      # `pg-history` is declared as a published npm dependency so the dashboard
+      # `pg-chronicle` is declared as a published npm dependency so the dashboard
       # can deploy on its own (the README's Vercel button clones only this
       # directory). CI wants the opposite — the library in THIS commit — and
       # replaces it with a symlink two steps down. Drop the declaration before
@@ -225,10 +225,10 @@ jobs:
       - name: Install dashboard dependencies
         working-directory: dashboard
         run: |
-          bun pm pkg delete dependencies.pg-history
+          bun pm pkg delete dependencies.pg-chronicle
           bun install
 
-      # The dashboard declares `pg-history` as a published npm dependency so it
+      # The dashboard declares `pg-chronicle` as a published npm dependency so it
       # can be deployed on its own — the README's one-click Vercel button clones
       # only that directory, and Vercel's Root Directory setting cannot reach a
       # parent. Here we want the opposite: CI must test the library in this
@@ -238,12 +238,12 @@ jobs:
       # A symlink, not `file:..`: that makes bun deep-copy the whole parent tree
       # (161M of node_modules included) on every install — slow, and the copy
       # routinely landed without the parent's package.json, leaving
-      # `pg-history/next` unresolvable. The link is needed at
-      # *runtime*, not just for types: `pg-history` is marked external in
+      # `pg-chronicle/next` unresolvable. The link is needed at
+      # *runtime*, not just for types: `pg-chronicle` is marked external in
       # next.config.ts, and Next's "collect page data" step actually executes the
       # route modules in Node, so the package must be resolvable on disk.
       - name: Link library into dashboard node_modules
-        run: ln -sfn ../.. dashboard/node_modules/pg-history
+        run: ln -sfn ../.. dashboard/node_modules/pg-chronicle
 
       - name: Typecheck
         run: bun run tsc
@@ -271,13 +271,13 @@ jobs:
         working-directory: dashboard
         env:
           NODE_ENV: production
-          PG_HISTORY_TABLES: users
-          PG_HISTORY_JWT_SECRET: ci-jwt-secret-value-long-enough
-          PG_HISTORY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+          PG_CHRONICLE_TABLES: users
+          PG_CHRONICLE_JWT_SECRET: ci-jwt-secret-value-long-enough
+          PG_CHRONICLE_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
           # The job-wide S3 variables would switch the archiver on, and it
           # extends an audit_log this throwaway database does not have. The gate
           # is what is under test here, not archival.
-          PG_HISTORY_S3_BUCKET: ''
+          PG_CHRONICLE_S3_BUCKET: ''
         run: |
           set -euo pipefail
 
@@ -314,7 +314,7 @@ jobs:
           # 2. With a password: pages redirect to the login, the login itself is
           #    reachable, server actions get a 401 rather than a redirect that
           #    would send their body to /login, and /api keeps its own auth.
-          export PG_HISTORY_DASHBOARD_PASSWORD=ci-dashboard-password
+          export PG_CHRONICLE_DASHBOARD_PASSWORD=ci-dashboard-password
           start 3301
           expect "GET page -> redirect" \
             "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3301/tables)" 307

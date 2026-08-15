@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()
 
-describe('PgHistory.revert', () => {
+describe('PgChronicle.revert', () => {
 	beforeEach(async () => {
 		const pool = await getTestConnection()
 		await pool.query(`
@@ -18,7 +18,7 @@ describe('PgHistory.revert', () => {
 
 	test('should revert record to old_data from audit entry', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Create and modify a user
@@ -50,7 +50,7 @@ describe('PgHistory.revert', () => {
 
 	test('should use old_data for UPDATE revert, new_data for INSERT revert', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Create user and update
@@ -75,7 +75,7 @@ describe('PgHistory.revert', () => {
 
 	test('should throw error if audit entry not found', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await pool.query(
@@ -89,7 +89,7 @@ describe('PgHistory.revert', () => {
 
 	test('should revert a DELETE by re-inserting the row', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Insert then delete
@@ -119,7 +119,7 @@ describe('PgHistory.revert', () => {
 
 	test('should revert an INSERT by deleting the row', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await pool.query(

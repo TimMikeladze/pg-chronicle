@@ -18,13 +18,13 @@ import { Client, Pool } from 'pg'
 import {
 	createServer,
 	Orchestrator,
-	PgHistory,
-	PgHistoryArchiver,
-} from 'pg-history'
+	PgChronicle,
+	PgChronicleArchiver,
+} from 'pg-chronicle'
 
 const require = createRequire(import.meta.url)
 
-const DB_NAME = `pg_history_node_example_${Date.now()}`
+const DB_NAME = `pg_chronicle_node_example_${Date.now()}`
 const ADMIN_URL =
 	process.env.DATABASE_URL ||
 	'postgres://postgres:postgres@localhost:5432/postgres'
@@ -41,8 +41,8 @@ async function checkModuleFormats() {
 
 	await check('ESM import exposes the public API', () => {
 		for (const [name, value] of Object.entries({
-			PgHistory,
-			PgHistoryArchiver,
+			PgChronicle,
+			PgChronicleArchiver,
 			Orchestrator,
 			createServer,
 		})) {
@@ -51,16 +51,16 @@ async function checkModuleFormats() {
 	})
 
 	await check('CommonJS require resolves the same API', () => {
-		const cjs = require('pg-history')
-		assert.equal(typeof cjs.PgHistory, 'function')
+		const cjs = require('pg-chronicle')
+		assert.equal(typeof cjs.PgChronicle, 'function')
 		assert.equal(typeof cjs.createServer, 'function')
-		assert.equal(cjs.PgHistory.name, PgHistory.name)
+		assert.equal(cjs.PgChronicle.name, PgChronicle.name)
 	})
 
 	await check(
 		'the ./next subpath exports a Next.js route handler',
 		async () => {
-			const next = await import('pg-history/next')
+			const next = await import('pg-chronicle/next')
 			// OPTIONS included: without it Next answers CORS preflight with 405.
 			for (const method of ['GET', 'POST', 'OPTIONS']) {
 				assert.equal(typeof next[method], 'function', `next.${method}`)
@@ -74,7 +74,7 @@ async function checkModuleFormats() {
 		// that error proves the bundle parsed and ran under Node.
 		const out = spawnSync(process.execPath, [cliPath()], {
 			encoding: 'utf8',
-			env: { ...process.env, PG_HISTORY_DATABASE_URL: '' },
+			env: { ...process.env, PG_CHRONICLE_DATABASE_URL: '' },
 		})
 		assert.equal(
 			out.status,
@@ -83,7 +83,7 @@ async function checkModuleFormats() {
 		)
 		assert.match(
 			out.stdout + out.stderr,
-			/PG_HISTORY_DATABASE_URL environment variable is required/,
+			/PG_CHRONICLE_DATABASE_URL environment variable is required/,
 		)
 	})
 
@@ -96,14 +96,14 @@ async function checkModuleFormats() {
 		const child = spawn(process.execPath, [cliPath()], {
 			env: {
 				...process.env,
-				PG_HISTORY_DATABASE_URL: ADMIN_URL,
-				PG_HISTORY_PORT: String(port),
+				PG_CHRONICLE_DATABASE_URL: ADMIN_URL,
+				PG_CHRONICLE_PORT: String(port),
 				// This check is about the HTTP listener, not the archiver. CI sets
 				// S3 variables job-wide, and inheriting them would switch the
 				// archiver on against a database with no audit_log — a real failure,
 				// but not the one under test here.
-				PG_HISTORY_S3_BUCKET: '',
-				PG_HISTORY_TABLES: '',
+				PG_CHRONICLE_S3_BUCKET: '',
+				PG_CHRONICLE_TABLES: '',
 			},
 			stdio: ['ignore', 'pipe', 'pipe'],
 		})
@@ -140,7 +140,7 @@ async function checkModuleFormats() {
 }
 
 function cliPath() {
-	const pkg = require.resolve('pg-history/package.json')
+	const pkg = require.resolve('pg-chronicle/package.json')
 	return pkg.replace(/package\.json$/, 'dist/main.js')
 }
 
@@ -166,7 +166,7 @@ async function checkAuditTrail() {
       )
     `)
 
-		const history = new PgHistory({ pool, tables: ['users'] })
+		const history = new PgChronicle({ pool, tables: ['users'] })
 		await history.setup()
 
 		await pool.query(`INSERT INTO users (name, email) VALUES ($1, $2)`, [

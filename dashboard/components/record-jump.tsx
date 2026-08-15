@@ -82,7 +82,7 @@ export function RecordJump({
 				value={recordId}
 				onChange={(event) => setRecordId(event.target.value)}
 				placeholder="Primary key value — e.g. 4821"
-				// PgHistory bounds recordId at 500 characters (the HTTP route at
+				// PgChronicle bounds recordId at 500 characters (the HTTP route at
 				// 512). Stopping it here beats a round trip that 400s.
 				maxLength={500}
 				className="min-w-0 flex-1 rounded-none border-0 font-mono text-xs shadow-none focus-visible:ring-0"

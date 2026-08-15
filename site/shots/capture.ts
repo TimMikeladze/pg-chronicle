@@ -5,9 +5,9 @@
  * which is the point: what the page promises is what the product looks like.
  * Reproducing them takes two steps —
  *
- *   bun run site/shots/seed.ts 'postgres://…/pg_history_shots'
- *   cd dashboard && PG_HISTORY_DATABASE_URL='postgres://…/pg_history_shots' \
- *     PG_HISTORY_TABLES='users,orders,invoices,api_keys' bun run dev --port 3111
+ *   bun run site/shots/seed.ts 'postgres://…/pg_chronicle_shots'
+ *   cd dashboard && PG_CHRONICLE_DATABASE_URL='postgres://…/pg_chronicle_shots' \
+ *     PG_CHRONICLE_TABLES='users,orders,invoices,api_keys' bun run dev --port 3111
  *   bun run site/shots/capture.ts            # writes site/public/shots/*.png
  *
  * Chrome does the rendering: this drives the copy already installed on the

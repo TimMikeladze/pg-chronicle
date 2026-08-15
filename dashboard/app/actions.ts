@@ -8,7 +8,7 @@ import {
 	revertEntry,
 	runArchival,
 	searchHistory,
-} from '@/lib/pg-history-server'
+} from '@/lib/pg-chronicle-server'
 import type {
 	ActionResult,
 	AuditEntryWire,

@@ -9,7 +9,7 @@ import { createErrorResponse } from './api-helpers'
 import {
 	AuditEntryNotFoundError,
 	AuthorizationError,
-	PgHistoryError,
+	PgChronicleError,
 	RevertError,
 	SearchConcurrencyLimitError,
 	SetupRequiredError,
@@ -18,14 +18,14 @@ import {
 } from './errors'
 import { consoleLogger, type Logger } from './logger'
 import { Orchestrator } from './orchestrator'
-import { PgHistory } from './PgHistory'
-import { validateIdentifier } from './pg-history-validators'
+import { PgChronicle } from './PgChronicle'
+import { validateIdentifier } from './pg-chronicle-validators'
 import { getArchivalStats, setupArchiverSchema } from './schema'
 import type { ServerConfig } from './types'
 import { parseRevertBody, parseSearchBody } from './validation'
 
 type Variables = JwtVariables & {
-	pgHistory?: PgHistory
+	pgChronicle?: PgChronicle
 }
 
 /** Result of one archival trigger. See `runArchival` for what each means. */
@@ -77,7 +77,7 @@ export async function createServer(config: ServerConfig): Promise<{
 
 	// Resolve JWT secret once. Trim to catch accidental empty-string values that
 	// would otherwise silently disable auth while `jwtSecret` is falsy.
-	const jwtSecret = process.env.PG_HISTORY_JWT_SECRET?.trim() || undefined
+	const jwtSecret = process.env.PG_CHRONICLE_JWT_SECRET?.trim() || undefined
 
 	// FAIL CLOSED (C2): the history read API and the destructive
 	// POST /api/history/revert endpoint have no authentication unless a JWT
@@ -90,9 +90,9 @@ export async function createServer(config: ServerConfig): Promise<{
 		config.allowUnauthenticated !== true
 	) {
 		throw new Error(
-			'Refusing to start: enableHistory is set but PG_HISTORY_JWT_SECRET is not configured. ' +
+			'Refusing to start: enableHistory is set but PG_CHRONICLE_JWT_SECRET is not configured. ' +
 				'The history read API and the destructive POST /api/history/revert endpoint would be ' +
-				'exposed without authentication. Set PG_HISTORY_JWT_SECRET, or pass ' +
+				'exposed without authentication. Set PG_CHRONICLE_JWT_SECRET, or pass ' +
 				'allowUnauthenticated: true to explicitly opt in (local development / trusted network only).',
 		)
 	}
@@ -148,7 +148,7 @@ export async function createServer(config: ServerConfig): Promise<{
 	// In-memory rate limiter — only useful in long-running processes, skip in serverless.
 	// SERVERLESS DEPLOYMENTS (e.g. Vercel) get NO application-layer rate limiting and
 	// MUST configure gateway/edge rate limiting. The mode-independent DoS backstop is
-	// the search-concurrency limit in PgHistory (maxConcurrentSearches).
+	// the search-concurrency limit in PgChronicle (maxConcurrentSearches).
 	//
 	// Bucket identity, in precedence order:
 	//   1. config.clientIdentifier — the caller knows best (API key id, edge header).
@@ -244,27 +244,27 @@ export async function createServer(config: ServerConfig): Promise<{
 		})
 	}
 
-	// Initialize PgHistory if enabled
-	let pgHistory: PgHistory | undefined
+	// Initialize PgChronicle if enabled
+	let pgChronicle: PgChronicle | undefined
 	if (config.enableHistory && config.historyConfig) {
-		logger.info('Initializing PgHistory API')
-		pgHistory = new PgHistory({
+		logger.info('Initializing PgChronicle API')
+		pgChronicle = new PgChronicle({
 			tables: config.historyConfig.tables,
 			pool: config.pool,
 			logger,
 		})
-		await pgHistory.setup()
-		// After PgHistory setup, also run archiver schema setup below so the
+		await pgChronicle.setup()
+		// After PgChronicle setup, also run archiver schema setup below so the
 		// soft_deleted_at column exists. Invalidate the cached column check.
 		if (config.enableArchiver) {
-			pgHistory.invalidateSoftDeleteColumnCache()
+			pgChronicle.invalidateSoftDeleteColumnCache()
 		}
 	}
 
 	// Store in context for route handlers
 	app.use('*', async (c, next) => {
-		if (pgHistory) {
-			c.set('pgHistory', pgHistory)
+		if (pgChronicle) {
+			c.set('pgChronicle', pgChronicle)
 		}
 		await next()
 	})
@@ -309,8 +309,8 @@ export async function createServer(config: ServerConfig): Promise<{
 
 		logger.info('Setting up archiver schema')
 		await setupArchiverSchema(config.pool)
-		// If PgHistory is also enabled, the soft-delete column now exists
-		if (pgHistory) pgHistory.invalidateSoftDeleteColumnCache()
+		// If PgChronicle is also enabled, the soft-delete column now exists
+		if (pgChronicle) pgChronicle.invalidateSoftDeleteColumnCache()
 
 		const archiverConfig = config.archiverConfig
 		const runOptions = config.runOptions || {}
@@ -464,7 +464,7 @@ export async function createServer(config: ServerConfig): Promise<{
 			const intervalMs = Math.max(
 				MIN_INTERVAL_MS,
 				Number.parseInt(
-					process.env.PG_HISTORY_ARCHIVAL_INTERVAL_MS || '3600000',
+					process.env.PG_CHRONICLE_ARCHIVAL_INTERVAL_MS || '3600000',
 					10,
 				) || 3_600_000,
 			)
@@ -518,7 +518,7 @@ export async function createServer(config: ServerConfig): Promise<{
 		'/api/health/detailed',
 	])
 
-	// Conditionally apply JWT auth if PG_HISTORY_JWT_SECRET is set (resolved once
+	// Conditionally apply JWT auth if PG_CHRONICLE_JWT_SECRET is set (resolved once
 	// at the top of createServer). When set, we also gate the /openapi endpoint
 	// by default unless the consumer explicitly opts into publicOpenApi.
 	if (jwtSecret) {
@@ -538,10 +538,10 @@ export async function createServer(config: ServerConfig): Promise<{
 		] as const
 		type JwtAlg = (typeof SUPPORTED_ALGS)[number]
 		const requestedAlg =
-			process.env.PG_HISTORY_JWT_ALG?.trim().toUpperCase() || 'HS256'
+			process.env.PG_CHRONICLE_JWT_ALG?.trim().toUpperCase() || 'HS256'
 		if (!(SUPPORTED_ALGS as readonly string[]).includes(requestedAlg)) {
 			throw new Error(
-				`PG_HISTORY_JWT_ALG="${requestedAlg}" not supported. Allowed: ${SUPPORTED_ALGS.join(', ')}`,
+				`PG_CHRONICLE_JWT_ALG="${requestedAlg}" not supported. Allowed: ${SUPPORTED_ALGS.join(', ')}`,
 			)
 		}
 		const alg = requestedAlg as JwtAlg
@@ -551,8 +551,8 @@ export async function createServer(config: ServerConfig): Promise<{
 		// service that shares the secret. Unset (the default) leaves the claim
 		// unchecked, matching prior behaviour.
 		const issuer =
-			config.jwt?.issuer ?? process.env.PG_HISTORY_JWT_ISSUER?.trim()
-		const audienceEnv = process.env.PG_HISTORY_JWT_AUDIENCE?.trim()
+			config.jwt?.issuer ?? process.env.PG_CHRONICLE_JWT_ISSUER?.trim()
+		const audienceEnv = process.env.PG_CHRONICLE_JWT_AUDIENCE?.trim()
 		const audience =
 			config.jwt?.audience ??
 			(audienceEnv
@@ -600,7 +600,7 @@ export async function createServer(config: ServerConfig): Promise<{
 		}
 	} else if (config.enableHistory) {
 		logger.warn(
-			'API endpoints are unauthenticated. Set PG_HISTORY_JWT_SECRET for production use.',
+			'API endpoints are unauthenticated. Set PG_CHRONICLE_JWT_SECRET for production use.',
 		)
 	}
 
@@ -620,7 +620,7 @@ export async function createServer(config: ServerConfig): Promise<{
 	if (config.enableArchiver && !archiverEndpointsAuthorized) {
 		logger.warn(
 			'/api/stats and /api/health/detailed NOT registered: no authentication configured. ' +
-				'Set PG_HISTORY_JWT_SECRET or archiveCronSecret / CRON_SECRET, or pass allowUnauthenticated: true.',
+				'Set PG_CHRONICLE_JWT_SECRET or archiveCronSecret / CRON_SECRET, or pass allowUnauthenticated: true.',
 		)
 	}
 
@@ -712,7 +712,7 @@ export async function createServer(config: ServerConfig): Promise<{
 		if (!cronSecret && !jwtSecret) {
 			logger.error(
 				'/api/archive endpoint NOT registered: no authentication configured. ' +
-					'Set archiveCronSecret / CRON_SECRET or PG_HISTORY_JWT_SECRET to enable it.',
+					'Set archiveCronSecret / CRON_SECRET or PG_CHRONICLE_JWT_SECRET to enable it.',
 			)
 		} else {
 			app.post('/api/archive', async (c) => {
@@ -829,12 +829,12 @@ export async function createServer(config: ServerConfig): Promise<{
 	}
 
 	// History API endpoints (only if history enabled)
-	if (config.enableHistory && pgHistory) {
+	if (config.enableHistory && pgChronicle) {
 		app.get('/api/history/:table/:recordId', async (c) => {
-			const pgHistory = c.get('pgHistory')
-			if (!pgHistory) {
+			const pgChronicle = c.get('pgChronicle')
+			if (!pgChronicle) {
 				return c.json(
-					createErrorResponse('NOT_CONFIGURED', 'PgHistory not initialized'),
+					createErrorResponse('NOT_CONFIGURED', 'PgChronicle not initialized'),
 					500,
 				)
 			}
@@ -917,7 +917,7 @@ export async function createServer(config: ServerConfig): Promise<{
 
 			try {
 				await authorizeOrThrow(c, 'read', table, recordId)
-				const result = await pgHistory.getHistory(table, recordId, {
+				const result = await pgChronicle.getHistory(table, recordId, {
 					limit,
 					cursor,
 					order,
@@ -954,10 +954,10 @@ export async function createServer(config: ServerConfig): Promise<{
 		})
 
 		app.post('/api/history/search', async (c) => {
-			const pgHistory = c.get('pgHistory')
-			if (!pgHistory) {
+			const pgChronicle = c.get('pgChronicle')
+			if (!pgChronicle) {
 				return c.json(
-					createErrorResponse('NOT_CONFIGURED', 'PgHistory not initialized'),
+					createErrorResponse('NOT_CONFIGURED', 'PgChronicle not initialized'),
 					500,
 				)
 			}
@@ -992,7 +992,7 @@ export async function createServer(config: ServerConfig): Promise<{
 				for (const t of options.tables) {
 					await authorizeOrThrow(c, 'search', t)
 				}
-				const result = await pgHistory.search(options)
+				const result = await pgChronicle.search(options)
 				return c.json(result)
 			} catch (error) {
 				if (error instanceof AuthorizationError) {
@@ -1007,7 +1007,7 @@ export async function createServer(config: ServerConfig): Promise<{
 						400,
 					)
 				}
-				if (error instanceof PgHistoryError) {
+				if (error instanceof PgChronicleError) {
 					return c.json(
 						createErrorResponse('VALIDATION_ERROR', error.message),
 						400,
@@ -1022,10 +1022,10 @@ export async function createServer(config: ServerConfig): Promise<{
 		})
 
 		app.post('/api/history/revert', async (c) => {
-			const pgHistory = c.get('pgHistory')
-			if (!pgHistory) {
+			const pgChronicle = c.get('pgChronicle')
+			if (!pgChronicle) {
 				return c.json(
-					createErrorResponse('NOT_CONFIGURED', 'PgHistory not initialized'),
+					createErrorResponse('NOT_CONFIGURED', 'PgChronicle not initialized'),
 					500,
 				)
 			}
@@ -1076,7 +1076,7 @@ export async function createServer(config: ServerConfig): Promise<{
 
 			try {
 				await authorizeOrThrow(c, 'revert', parsed.table, parsed.recordId)
-				await pgHistory.revert(
+				await pgChronicle.revert(
 					parsed.table,
 					parsed.recordId,
 					parsed.auditEntryId,
@@ -1134,7 +1134,7 @@ export async function createServer(config: ServerConfig): Promise<{
 	if (!exposeOpenApi) {
 		logger.warn(
 			'/openapi NOT registered: publicOpenApi is false and no JWT is configured. ' +
-				'Set PG_HISTORY_JWT_SECRET, publicOpenApi: true, or allowUnauthenticated: true.',
+				'Set PG_CHRONICLE_JWT_SECRET, publicOpenApi: true, or allowUnauthenticated: true.',
 		)
 	}
 	if (exposeOpenApi) {
@@ -1143,7 +1143,7 @@ export async function createServer(config: ServerConfig): Promise<{
 			openAPIRouteHandler(app, {
 				documentation: {
 					info: {
-						title: 'pg-history Archiver API',
+						title: 'pg-chronicle Archiver API',
 						version: '1.0.0',
 						description: 'API for managing audit log archival',
 					},

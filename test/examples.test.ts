@@ -26,7 +26,7 @@ const EXAMPLES = [
 const NEEDS_S3 = new Set(['archival-lifecycle.ts', 'cron-archival.ts'])
 
 const S3_ENDPOINT =
-	process.env.PG_HISTORY_S3_ENDPOINT || 'http://localhost:9000'
+	process.env.PG_CHRONICLE_S3_ENDPOINT || 'http://localhost:9000'
 
 async function s3Reachable(): Promise<boolean> {
 	try {

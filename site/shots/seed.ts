@@ -9,24 +9,24 @@
  * diff, distinct actors, all three operations, and timestamps far enough apart
  * that the relative times ("2 weeks ago") differ down the page.
  *
- *   bun run site/shots/seed.ts 'postgres://.../pg_history_shots'
+ *   bun run site/shots/seed.ts 'postgres://.../pg_chronicle_shots'
  *
  * Destructive: it drops and recreates its four tables and the audit log every
  * time, so a re-run always produces the same screenshots. Point it at a
  * scratch database, never at anything real.
  */
 import { Pool } from 'pg'
-import { PgHistory } from '../../src/PgHistory'
+import { PgChronicle } from '../../src/PgChronicle'
 
 const TABLES = ['users', 'orders', 'invoices', 'api_keys']
 
-const url = process.argv[2] ?? process.env.PG_HISTORY_DATABASE_URL
+const url = process.argv[2] ?? process.env.PG_CHRONICLE_DATABASE_URL
 if (!url) throw new Error('usage: bun run site/shots/seed.ts <database-url>')
 
 const pool = new Pool({ connectionString: url })
 
 /**
- * One write, attributed. `pg_history.actor` has to be set in the same
+ * One write, attributed. `pg_chronicle.actor` has to be set in the same
  * transaction as the write for the trigger to record it — which is the point
  * the screenshots are there to make, so the seed does it the honest way rather
  * than by writing audit rows directly.
@@ -36,7 +36,7 @@ async function write(actor: string, sql: string, params: unknown[] = []) {
 	try {
 		await client.query('BEGIN')
 		await client.query('SELECT set_config($1, $2, true)', [
-			'pg_history.actor',
+			'pg_chronicle.actor',
 			actor,
 		])
 		await client.query(sql, params)
@@ -111,7 +111,7 @@ async function main() {
 		);
 	`)
 
-	const history = new PgHistory({ pool, tables: TABLES })
+	const history = new PgChronicle({ pool, tables: TABLES })
 	await history.setup()
 
 	// users/usr_8f2a1c — the record the hero screenshot follows. Read top to bottom it
@@ -120,7 +120,7 @@ async function main() {
 	// support puts it back. Each update touches more than one column, so the
 	// expanded diffs in the shot have something to show.
 	await write(
-		'signup@pg-history.dev',
+		'signup@pg-chronicle.dev',
 		`INSERT INTO users (id, name, email, plan, seats, status)
 		 VALUES ('usr_8f2a1c', 'Alice Nguyen', 'alice@exmaple.com', 'free', 1, 'active')`,
 	)

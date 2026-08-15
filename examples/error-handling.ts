@@ -11,16 +11,16 @@
  */
 
 import { Client, Pool } from 'pg'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import {
 	AuditEntryNotFoundError,
-	PgHistoryError,
+	PgChronicleError,
 	SetupRequiredError,
 	TableNotConfiguredError,
 } from '../src/errors'
 import { assertThrows, run } from './_assert'
 
-const DB_NAME = `pg_history_errors_${Date.now()}`
+const DB_NAME = `pg_chronicle_errors_${Date.now()}`
 const ADMIN_URL =
 	process.env.DATABASE_URL ||
 	'postgres://postgres:postgres@localhost:5432/postgres'
@@ -44,7 +44,7 @@ async function main() {
 	try {
 		// ── 1. SetupRequiredError ─────────────────────────────
 		console.log('1. Calling getHistory() before setup()...')
-		const history = new PgHistory({ pool, tables: ['users'] })
+		const history = new PgChronicle({ pool, tables: ['users'] })
 
 		// assertThrows fails the example if the call *succeeds* or throws the
 		// wrong error type — a silent `catch` would hide both.
@@ -85,16 +85,16 @@ async function main() {
 			`   Caught AuditEntryNotFoundError: ${(revertErr as Error).message}`,
 		)
 
-		// ── 4. Catching any pg-history error ─────────────────
-		console.log('\n4. Using the base PgHistoryError class...')
+		// ── 4. Catching any pg-chronicle error ─────────────────
+		console.log('\n4. Using the base PgChronicleError class...')
 
 		const baseErr = await assertThrows(
 			() => history.search({ tables: ['nonexistent'] }),
-			(e) => e instanceof PgHistoryError,
-			'every pg-history error extends PgHistoryError',
+			(e) => e instanceof PgChronicleError,
+			'every pg-chronicle error extends PgChronicleError',
 		)
 		console.log(
-			`   Caught PgHistoryError (${(baseErr as Error).constructor.name}): ${(baseErr as Error).message}`,
+			`   Caught PgChronicleError (${(baseErr as Error).constructor.name}): ${(baseErr as Error).message}`,
 		)
 
 		// ── 5. Invalid operation validation ──────────────────

@@ -1,5 +1,5 @@
 {
-	"name": "pg-history-node-example",
+	"name": "pg-chronicle-node-example",
 	"private": true,
 	"version": "0.0.0",
 	"type": "module",
@@ -9,6 +9,6 @@
 	},
 	"dependencies": {
 		"pg": "^8.22.0",
-		"pg-history": "file:../.."
+		"pg-chronicle": "file:../.."
 	}
 }

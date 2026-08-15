@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Pool } from 'pg'
-import { PgHistoryArchiver } from '../../src/PgHistoryArchiver'
+import { PgChronicleArchiver } from '../../src/PgChronicleArchiver'
 import { setupArchiverSchema } from '../../src/schema'
 import { cleanupTestData, getTestConnection, setupTestData } from './helpers/db'
 import { ensureTestBucket, isS3Configured, putTestS3Object } from './helpers/s3'
 
-describe('PgHistoryArchiver - Hard Delete', () => {
+describe('PgChronicleArchiver - Hard Delete', () => {
 	let pool: Pool
-	let archiver: PgHistoryArchiver
+	let archiver: PgChronicleArchiver
 
 	beforeEach(async () => {
 		pool = await getTestConnection()
@@ -19,14 +19,14 @@ describe('PgHistoryArchiver - Hard Delete', () => {
 			await ensureTestBucket('test-bucket')
 		}
 
-		archiver = new PgHistoryArchiver({
+		archiver = new PgChronicleArchiver({
 			pool,
 			s3: {
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-				region: process.env.PG_HISTORY_S3_REGION,
+				endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_CHRONICLE_S3_REGION,
 			},
 			retention: { default: 90 },
 			gracePeriod: 7,
@@ -114,7 +114,7 @@ describe('PgHistoryArchiver - Hard Delete', () => {
 describe('Review Fix #18: hardDeletePurged uses row locks', () => {
 	test('hardDeletePurged wraps delete in a transaction with FOR UPDATE', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicleArchiver.ts', 'utf-8')
 
 		const region = source.slice(source.indexOf('async hardDeletePurged'))
 		// The implementation must use BEGIN, SELECT FOR UPDATE, and commit/rollback

@@ -10,7 +10,7 @@ import {
 	endPoolWithTimeout,
 	type Logger,
 } from './logger'
-import { executeRevert } from './pg-history-revert'
+import { executeRevert } from './pg-chronicle-revert'
 import {
 	setupAuditTable as extSetupAuditTable,
 	setupIndexes as extSetupIndexes,
@@ -18,23 +18,23 @@ import {
 	triggerFuncNameFor,
 	triggerNameFor,
 	truncateTriggerNameFor,
-} from './pg-history-setup'
+} from './pg-chronicle-setup'
 import {
 	buildAppendOnlyGuardSql,
 	buildTriggerFunctionSql,
-} from './pg-history-triggers'
+} from './pg-chronicle-triggers'
 import {
 	validateColumnNames as extValidateColumnNames,
 	validateLimit as extValidateLimit,
 	validateStringInput as extValidateStringInput,
 	validateCursor,
 	validateIdentifier,
-} from './pg-history-validators'
+} from './pg-chronicle-validators'
 import type {
 	AuditEntry,
 	GetHistoryOptions,
 	PaginatedResult,
-	PgHistoryConfig,
+	PgChronicleConfig,
 	SearchCursor,
 	SearchOptions,
 	SearchPaginatedResult,
@@ -61,7 +61,7 @@ interface AuditRow {
 	client_addr: string | null
 }
 
-export class PgHistory {
+export class PgChronicle {
 	private pool!: Pool
 	private tables: string[]
 	private excludeColumns: Record<string, string[]>
@@ -87,7 +87,7 @@ export class PgHistory {
 	/** Guards close() against a double pool.end() (which pg rejects). */
 	private closed = false
 
-	constructor(config: PgHistoryConfig) {
+	constructor(config: PgChronicleConfig) {
 		this.tables = config.tables
 		this.logger = config.logger ?? consoleLogger
 		this.excludeColumns = config.excludeColumns ?? {}
@@ -99,7 +99,7 @@ export class PgHistory {
 		for (const [tableName, cols] of Object.entries(this.excludeColumns)) {
 			if (!this.tables.includes(tableName)) {
 				throw new Error(
-					`PgHistory: excludeColumns references unknown table "${tableName}"`,
+					`PgChronicle: excludeColumns references unknown table "${tableName}"`,
 				)
 			}
 			for (const col of cols) validateIdentifier(col, 'column')
@@ -108,12 +108,12 @@ export class PgHistory {
 		if (config.pool) {
 			this.pool = config.pool
 			this.ownConnection = false
-			attachPoolErrorHandler(this.pool, this.logger, 'PgHistory')
+			attachPoolErrorHandler(this.pool, this.logger, 'PgChronicle')
 		} else if (config.connection) {
 			this.pendingConnection = config.connection
 			this.ownConnection = true
 		} else {
-			throw new Error('PgHistory: No connection configuration provided')
+			throw new Error('PgChronicle: No connection configuration provided')
 		}
 	}
 
@@ -126,7 +126,7 @@ export class PgHistory {
 				this.pool = new pg.default.Pool({
 					connectionString: this.pendingConnection,
 				})
-				attachPoolErrorHandler(this.pool, this.logger, 'PgHistory')
+				attachPoolErrorHandler(this.pool, this.logger, 'PgChronicle')
 				this.pendingConnection = undefined
 			})().catch((err) => {
 				// Reset so the next call retries instead of re-awaiting the rejection
@@ -213,7 +213,9 @@ export class PgHistory {
 			await this.ensurePool()
 
 			if (this.tables.length === 0) {
-				throw new Error('PgHistory: No tables configured for history tracking')
+				throw new Error(
+					'PgChronicle: No tables configured for history tracking',
+				)
 			}
 
 			try {
@@ -223,7 +225,7 @@ export class PgHistory {
 				const errorMessage =
 					error instanceof Error ? error.message : String(error)
 				throw new Error(
-					`PgHistory setup failed: ${errorMessage}. You may need to call teardown() to clean up partial state.`,
+					`PgChronicle setup failed: ${errorMessage}. You may need to call teardown() to clean up partial state.`,
 				)
 			}
 		})().finally(() => {
@@ -247,14 +249,14 @@ export class PgHistory {
 		const lockClient = await this.pool.connect()
 		try {
 			await lockClient.query(
-				`SELECT pg_advisory_lock(hashtextextended('pg-history:setup:' || current_schema(), $1::bigint))`,
+				`SELECT pg_advisory_lock(hashtextextended('pg-chronicle:setup:' || current_schema(), $1::bigint))`,
 				[SETUP_LOCK_NAMESPACE],
 			)
 			return await fn()
 		} finally {
 			await lockClient
 				.query(
-					`SELECT pg_advisory_unlock(hashtextextended('pg-history:setup:' || current_schema(), $1::bigint))`,
+					`SELECT pg_advisory_unlock(hashtextextended('pg-chronicle:setup:' || current_schema(), $1::bigint))`,
 					[SETUP_LOCK_NAMESPACE],
 				)
 				.catch(() => {})
@@ -345,7 +347,7 @@ export class PgHistory {
 			// and fail fast when the caller opted into requirePrimaryKey.
 			if (this.requirePrimaryKey) {
 				throw new Error(
-					`PgHistory: table "${tableName}" has no primary key and requirePrimaryKey is set. ` +
+					`PgChronicle: table "${tableName}" has no primary key and requirePrimaryKey is set. ` +
 						'Add a primary key (or a surrogate key) to get correlatable audit history.',
 				)
 			}
@@ -360,7 +362,7 @@ export class PgHistory {
 		const conflicts = tableExcludes.filter((c) => pkSet.has(c))
 		if (conflicts.length > 0) {
 			throw new Error(
-				`PgHistory: excludeColumns for "${tableName}" cannot include PK columns [${conflicts.join(', ')}]`,
+				`PgChronicle: excludeColumns for "${tableName}" cannot include PK columns [${conflicts.join(', ')}]`,
 			)
 		}
 
@@ -463,7 +465,7 @@ export class PgHistory {
 
 	/**
 	 * Check if the soft_deleted_at column exists on audit_log.
-	 * This column is added by the archiver setup, not by PgHistory.setup().
+	 * This column is added by the archiver setup, not by PgChronicle.setup().
 	 *
 	 * Positive result is cached permanently — the column is stable once added.
 	 * Negative result uses a 10-second TTL: bounds per-request query rate in
@@ -633,7 +635,7 @@ export class PgHistory {
 					parsed = JSON.parse(trimmed)
 				} catch {
 					throw new Error(
-						'PgHistory: query looks like JSON but failed to parse',
+						'PgChronicle: query looks like JSON but failed to parse',
 					)
 				}
 				const jsonStr = JSON.stringify(parsed)
@@ -664,7 +666,7 @@ export class PgHistory {
 			const validOps = ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'] as const
 			if (!validOps.includes(options.operation)) {
 				throw new Error(
-					`PgHistory: Invalid operation "${options.operation}". Must be one of: ${validOps.join(', ')}`,
+					`PgChronicle: Invalid operation "${options.operation}". Must be one of: ${validOps.join(', ')}`,
 				)
 			}
 			conditions.push(`operation = $${paramIndex}`)
@@ -729,7 +731,7 @@ export class PgHistory {
 				error.message.includes('statement timeout')
 			) {
 				throw new Error(
-					'PgHistory: Text search query timed out. Use JSON containment search (pass a JSON object as query) for better performance on large tables.',
+					'PgChronicle: Text search query timed out. Use JSON containment search (pass a JSON object as query) for better performance on large tables.',
 				)
 			}
 			throw error
@@ -761,7 +763,7 @@ export class PgHistory {
 
 		if (options.tables.length === 0) {
 			throw new Error(
-				'PgHistory: At least one table must be specified for search',
+				'PgChronicle: At least one table must be specified for search',
 			)
 		}
 
@@ -944,6 +946,6 @@ export class PgHistory {
 		// fire SIGTERM+SIGINT, or call close() alongside shared cleanup, must not throw.
 		if (this.closed) return
 		this.closed = true
-		await endPoolWithTimeout(this.pool, timeoutMs, this.logger, 'PgHistory')
+		await endPoolWithTimeout(this.pool, timeoutMs, this.logger, 'PgChronicle')
 	}
 }

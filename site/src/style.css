@@ -1,5 +1,5 @@
 /*
- * pg-history — marketing site.
+ * pg-chronicle — marketing site.
  *
  * Shares one design system with the dashboard (dashboard/app/globals.css):
  * the same neutral ramp, the same Geist pairing, the same hairline borders, and
@@ -1394,7 +1394,7 @@ a:hover {
 	/* The bar can't hold four links beside the wordmark; these two are the
 	 * least-used and both are reachable from the docs and the footer. */
 	.nav-links a[href="/llms.txt"],
-	.nav-links a[href$="/package/pg-history"] {
+	.nav-links a[href$="/package/pg-chronicle"] {
 		display: none;
 	}
 

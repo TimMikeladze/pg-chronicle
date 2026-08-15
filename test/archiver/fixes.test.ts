@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Pool } from 'pg'
-import { PgHistoryArchiver } from '../../src/PgHistoryArchiver'
+import { PgChronicleArchiver } from '../../src/PgChronicleArchiver'
 import { setupArchiverSchema } from '../../src/schema'
 import { cleanupTestData, getTestConnection, setupTestData } from './helpers/db'
 import { ensureTestBucket, isS3Configured, putTestS3Object } from './helpers/s3'
@@ -11,7 +11,7 @@ import { ensureTestBucket, isS3Configured, putTestS3Object } from './helpers/s3'
 
 describe('Fix #2: processBatch UTC date boundaries', () => {
 	let pool: Pool
-	let archiver: PgHistoryArchiver
+	let archiver: PgChronicleArchiver
 
 	beforeEach(async () => {
 		pool = await getTestConnection()
@@ -22,14 +22,14 @@ describe('Fix #2: processBatch UTC date boundaries', () => {
 			await ensureTestBucket('test-bucket')
 		}
 
-		archiver = new PgHistoryArchiver({
+		archiver = new PgChronicleArchiver({
 			pool,
 			s3: {
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-				region: process.env.PG_HISTORY_S3_REGION,
+				endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_CHRONICLE_S3_REGION,
 			},
 			retention: { default: 90 },
 			gracePeriod: 7,
@@ -98,7 +98,7 @@ describe('Fix #2: processBatch UTC date boundaries', () => {
 
 describe('Fix #3: Hard delete S3 verification', () => {
 	let pool: Pool
-	let archiver: PgHistoryArchiver
+	let archiver: PgChronicleArchiver
 
 	beforeEach(async () => {
 		pool = await getTestConnection()
@@ -109,14 +109,14 @@ describe('Fix #3: Hard delete S3 verification', () => {
 			await ensureTestBucket('test-bucket')
 		}
 
-		archiver = new PgHistoryArchiver({
+		archiver = new PgChronicleArchiver({
 			pool,
 			s3: {
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-				region: process.env.PG_HISTORY_S3_REGION,
+				endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_CHRONICLE_S3_REGION,
 			},
 			retention: { default: 90 },
 			gracePeriod: 7,
@@ -211,7 +211,7 @@ describe('Fix #3: Hard delete S3 verification', () => {
 // Fix #5: ensurePool race condition (Archiver)
 // ─────────────────────────────────────────────────────────
 
-describe('Fix #5: PgHistoryArchiver ensurePool race condition', () => {
+describe('Fix #5: PgChronicleArchiver ensurePool race condition', () => {
 	let pool: Pool
 
 	beforeEach(async () => {
@@ -231,17 +231,17 @@ describe('Fix #5: PgHistoryArchiver ensurePool race condition', () => {
 
 	test('concurrent processBatch calls share one pool', async () => {
 		const connectionString =
-			process.env.PG_AUDIT_TEST_URL ||
-			'postgres://postgres:postgres@localhost:5432/pg_audit_archiver_test'
+			process.env.PG_CHRONICLE_TEST_URL ||
+			'postgres://postgres:postgres@localhost:5432/pg_chronicle_archiver_test'
 
-		const archiver = new PgHistoryArchiver({
+		const archiver = new PgChronicleArchiver({
 			connection: connectionString,
 			s3: {
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-				region: process.env.PG_HISTORY_S3_REGION,
+				endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_CHRONICLE_S3_REGION,
 			},
 			retention: { default: 90 },
 			gracePeriod: 7,
@@ -273,7 +273,7 @@ describe('Fix #5: PgHistoryArchiver ensurePool race condition', () => {
 describe('Fix #12: S3 orphan crash recovery documented', () => {
 	test('processBatch documents the claim-based recovery path', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicleArchiver.ts', 'utf-8')
 
 		// New 3-phase flow releases the claim and best-effort deletes the S3 file
 		// on failure; cleanupOrphanedFiles is the backstop and reapStaleClaims
@@ -291,7 +291,7 @@ describe('Fix #12: S3 orphan crash recovery documented', () => {
 describe('Review Fix #6: archival queries have ORDER BY', () => {
 	test('softDeleteArchived SQL contains ORDER BY id', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicleArchiver.ts', 'utf-8')
 
 		const softDeleteRegion = source.slice(
 			source.indexOf('async softDeleteArchived('),
@@ -302,7 +302,7 @@ describe('Review Fix #6: archival queries have ORDER BY', () => {
 
 	test('hardDeletePurged SQL contains ORDER BY id', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicleArchiver.ts', 'utf-8')
 
 		const hardDeleteRegion = source.slice(
 			source.indexOf('async hardDeletePurged('),
@@ -319,7 +319,7 @@ describe('Review Fix #6: archival queries have ORDER BY', () => {
 describe('Review Fix #17: verifyS3File uses checksum when available', () => {
 	test('verifyS3File sends ChecksumMode: ENABLED', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicleArchiver.ts', 'utf-8')
 
 		// Both verifyS3File and the upload HeadObject should request checksums
 		expect(source).toContain("ChecksumMode: 'ENABLED'")
@@ -335,7 +335,7 @@ describe('Review Fix #17: verifyS3File uses checksum when available', () => {
 describe('Review Fix #19: dynamic imports removed from hot paths', () => {
 	test('HeadObjectCommand and DeleteObjectCommand imported statically', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicleArchiver.ts', 'utf-8')
 
 		// Top-level imports should include these — they were dynamic before
 		expect(source).toMatch(
@@ -359,7 +359,7 @@ describe('Review Fix #19: dynamic imports removed from hot paths', () => {
 describe('Review Fix #25: concurrent archival uses row locks', () => {
 	test('processBatch claims batches with SELECT FOR UPDATE SKIP LOCKED', async () => {
 		const fs = await import('node:fs/promises')
-		const source = await fs.readFile('./src/PgHistoryArchiver.ts', 'utf-8')
+		const source = await fs.readFile('./src/PgChronicleArchiver.ts', 'utf-8')
 
 		expect(source).toContain('FOR UPDATE SKIP LOCKED')
 	})

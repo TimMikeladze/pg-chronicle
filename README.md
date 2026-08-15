@@ -1,22 +1,22 @@
-# pg-history
+# pg-chronicle
 
 PostgreSQL audit trails with automated S3 archival.
 
-[![npm version](https://img.shields.io/npm/v/pg-history.svg)](https://www.npmjs.com/package/pg-history)
+[![npm version](https://img.shields.io/npm/v/pg-chronicle.svg)](https://www.npmjs.com/package/pg-chronicle)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ```bash
-bun add pg-history
+bun add pg-chronicle
 ```
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TimMikeladze/pg-history/main/site/public/shots/timeline-dark.png">
-  <img alt="The pg-history dashboard showing one row's full change timeline: each entry's before/after diff, the actor and IP behind it, and a revert button." src="https://raw.githubusercontent.com/TimMikeladze/pg-history/main/site/public/shots/timeline-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/timeline-dark.png">
+  <img alt="The pg-chronicle dashboard showing one row's full change timeline: each entry's before/after diff, the actor and IP behind it, and a revert button." src="https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/timeline-light.png">
 </picture>
 
 *One record's timeline in the bundled [dashboard](#dashboard) — what each change set, who made it, and a revert for any entry. Screens are real captures, not mockups.*
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fdashboard&project-name=pg-history-dashboard&repository-name=pg-history-dashboard&env=PG_HISTORY_DATABASE_URL%2CPG_HISTORY_TABLES%2CPG_HISTORY_JWT_SECRET%2CPG_HISTORY_DASHBOARD_PASSWORD%2CPG_HISTORY_JWT_ALG%2CPG_HISTORY_POOL_MAX%2CPG_HISTORY_STATEMENT_TIMEOUT_MS%2CPG_HISTORY_DASHBOARD_ACTOR%2CPG_HISTORY_RETENTION_DAYS%2CPG_HISTORY_GRACE_PERIOD_DAYS%2CPG_HISTORY_BATCH_SIZE&envDefaults=%7B%22PG_HISTORY_JWT_ALG%22%3A%22HS256%22%2C%22PG_HISTORY_POOL_MAX%22%3A%223%22%2C%22PG_HISTORY_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_HISTORY_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_HISTORY_RETENTION_DAYS%22%3A%2290%22%2C%22PG_HISTORY_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_HISTORY_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+four+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+a+JWT+signing+secret%2C+and+a+password+for+the+dashboard+UI+%28it+can+read+and+revert+every+audited+record%29.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%2Ftree%2Fmain%2Fdashboard&project-name=pg-chronicle-dashboard&repository-name=pg-chronicle-dashboard&env=PG_CHRONICLE_DATABASE_URL%2CPG_CHRONICLE_TABLES%2CPG_CHRONICLE_JWT_SECRET%2CPG_CHRONICLE_DASHBOARD_PASSWORD%2CPG_CHRONICLE_JWT_ALG%2CPG_CHRONICLE_POOL_MAX%2CPG_CHRONICLE_STATEMENT_TIMEOUT_MS%2CPG_CHRONICLE_DASHBOARD_ACTOR%2CPG_CHRONICLE_RETENTION_DAYS%2CPG_CHRONICLE_GRACE_PERIOD_DAYS%2CPG_CHRONICLE_BATCH_SIZE&envDefaults=%7B%22PG_CHRONICLE_JWT_ALG%22%3A%22HS256%22%2C%22PG_CHRONICLE_POOL_MAX%22%3A%223%22%2C%22PG_CHRONICLE_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_CHRONICLE_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_CHRONICLE_RETENTION_DAYS%22%3A%2290%22%2C%22PG_CHRONICLE_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_CHRONICLE_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+four+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+a+JWT+signing+secret%2C+and+a+password+for+the+dashboard+UI+%28it+can+read+and+revert+every+audited+record%29.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%23environment-variables)
 
 **The short version.** `setup()` installs a trigger on each table you name. From then on PostgreSQL does the auditing itself: every `INSERT`, `UPDATE` and `DELETE` writes a JSONB before/after snapshot — plus who made the change and when — into an `audit_log` table, in the *same transaction* as the change. Both commit or neither does, so no write slips through unrecorded.
 
@@ -65,10 +65,10 @@ Detail in [How It Works](#how-it-works) and [Architecture](#architecture).
 
 ```typescript
 import { Pool } from 'pg'
-import { PgHistory } from 'pg-history'
+import { PgChronicle } from 'pg-chronicle'
 
 const pool = new Pool({ connectionString: 'postgres://localhost:5432/mydb' })
-const history = new PgHistory({ pool, tables: ['users'] })
+const history = new PgChronicle({ pool, tables: ['users'] })
 await history.setup()
 
 // That's it. Every INSERT/UPDATE/DELETE on 'users' is now audited automatically.
@@ -96,14 +96,14 @@ const found = await history.search({
 await history.revert('users', '1', result.data[1].id) // whole row back to that entry's oldData
 // (reverting the INSERT entry would DELETE the row instead — see the revert table below)
 
-await history.close()   // ends only a pool pg-history created itself
+await history.close()   // ends only a pool pg-chronicle created itself
 await pool.end()        // your pool stays yours to close
 ```
 
 **Skip auditing secrets/PII** by listing the columns to strip per table (an update that touches only an excluded column still records an entry — with identical `oldData` and `newData` — so the trail shows *that* a secret changed and when, never what it changed to):
 
 ```typescript
-new PgHistory({
+new PgChronicle({
   pool,
   tables: ['users'],
   excludeColumns: { users: ['password_hash', 'mfa_secret'] },
@@ -114,21 +114,21 @@ new PgHistory({
 
 ```typescript
 import pino from 'pino'
-new PgHistory({ pool, tables: ['users'], logger: pino() })
+new PgChronicle({ pool, tables: ['users'], logger: pino() })
 ```
 
 ### Deploy in one click
 
 Nothing above needs a server — the triggers live in PostgreSQL. This deploys the parts that do: the REST API, the dashboard and cron archival, as one Vercel project. Full details in [Deployment](#deployment).
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fdashboard&project-name=pg-history-dashboard&repository-name=pg-history-dashboard&env=PG_HISTORY_DATABASE_URL%2CPG_HISTORY_TABLES%2CPG_HISTORY_JWT_SECRET%2CPG_HISTORY_DASHBOARD_PASSWORD%2CPG_HISTORY_JWT_ALG%2CPG_HISTORY_POOL_MAX%2CPG_HISTORY_STATEMENT_TIMEOUT_MS%2CPG_HISTORY_DASHBOARD_ACTOR%2CPG_HISTORY_RETENTION_DAYS%2CPG_HISTORY_GRACE_PERIOD_DAYS%2CPG_HISTORY_BATCH_SIZE&envDefaults=%7B%22PG_HISTORY_JWT_ALG%22%3A%22HS256%22%2C%22PG_HISTORY_POOL_MAX%22%3A%223%22%2C%22PG_HISTORY_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_HISTORY_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_HISTORY_RETENTION_DAYS%22%3A%2290%22%2C%22PG_HISTORY_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_HISTORY_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+four+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+a+JWT+signing+secret%2C+and+a+password+for+the+dashboard+UI+%28it+can+read+and+revert+every+audited+record%29.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%2Ftree%2Fmain%2Fdashboard&project-name=pg-chronicle-dashboard&repository-name=pg-chronicle-dashboard&env=PG_CHRONICLE_DATABASE_URL%2CPG_CHRONICLE_TABLES%2CPG_CHRONICLE_JWT_SECRET%2CPG_CHRONICLE_DASHBOARD_PASSWORD%2CPG_CHRONICLE_JWT_ALG%2CPG_CHRONICLE_POOL_MAX%2CPG_CHRONICLE_STATEMENT_TIMEOUT_MS%2CPG_CHRONICLE_DASHBOARD_ACTOR%2CPG_CHRONICLE_RETENTION_DAYS%2CPG_CHRONICLE_GRACE_PERIOD_DAYS%2CPG_CHRONICLE_BATCH_SIZE&envDefaults=%7B%22PG_CHRONICLE_JWT_ALG%22%3A%22HS256%22%2C%22PG_CHRONICLE_POOL_MAX%22%3A%223%22%2C%22PG_CHRONICLE_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_CHRONICLE_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_CHRONICLE_RETENTION_DAYS%22%3A%2290%22%2C%22PG_CHRONICLE_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_CHRONICLE_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+four+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+a+JWT+signing+secret%2C+and+a+password+for+the+dashboard+UI+%28it+can+read+and+revert+every+audited+record%29.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%23environment-variables)
 
-The button clones [`dashboard/`](./dashboard) — the UI *and* the REST API it is built on, mounted at `/api`. Eleven environment variables come up in the clone form and seven are already filled in; only `PG_HISTORY_DATABASE_URL`, `PG_HISTORY_TABLES`, `PG_HISTORY_JWT_SECRET` and `PG_HISTORY_DASHBOARD_PASSWORD` need you.
+The button clones [`dashboard/`](./dashboard) — the UI *and* the REST API it is built on, mounted at `/api`. Eleven environment variables come up in the clone form and seven are already filled in; only `PG_CHRONICLE_DATABASE_URL`, `PG_CHRONICLE_TABLES`, `PG_CHRONICLE_JWT_SECRET` and `PG_CHRONICLE_DASHBOARD_PASSWORD` need you.
 
 ## Installation
 
 ```bash
-bun add pg-history
+bun add pg-chronicle
 ```
 
 `pg`, `hono`, and the S3/Parquet libraries ship as regular dependencies — nothing else to install.
@@ -156,15 +156,15 @@ Examples assert their own output, so they exit non-zero if the behavior they doc
 | [archival-lifecycle.ts](./examples/archival-lifecycle.ts) | Full S3 archival pipeline: archive, soft delete, hard delete |
 | [error-handling.ts](./examples/error-handling.ts) | Typed error classes, catching specific errors |
 | [next/](./examples/next) | Files to copy into a Next.js app: catch-all route handler, `vercel.json` cron, plus `test-locally.ts` that exercises the serverless setup against Docker |
-| [node/](./examples/node) | Plain Node.js consumer of the built package — ESM import, CommonJS `require`, the `pg-history` bin, and a live audit round trip, so a broken build fails here and not in a user's app |
+| [node/](./examples/node) | Plain Node.js consumer of the built package — ESM import, CommonJS `require`, the `pg-chronicle` bin, and a live audit round trip, so a broken build fails here and not in a user's app |
 
 ## How It Works
 
-pg-history uses PostgreSQL's own trigger system to capture every change. Nothing runs in your application — the database does all the work.
+pg-chronicle uses PostgreSQL's own trigger system to capture every change. Nothing runs in your application — the database does all the work.
 
 ### 1. Setup installs triggers
 
-When you call `history.setup()`, pg-history creates:
+When you call `history.setup()`, pg-chronicle creates:
 - A partitioned `audit_log` table (one partition per tracked table for fast queries)
 - Two `AFTER` triggers on each tracked table: a row trigger for INSERT/UPDATE/DELETE and a statement trigger for TRUNCATE (row triggers never fire on TRUNCATE)
 - GIN indexes (`jsonb_path_ops`) on `old_data` / `new_data` for containment search, plus btree indexes on `changed_at` and `(table_name, record_id, changed_at)`
@@ -186,7 +186,7 @@ COMMIT                                             -- both succeed or both fail
 
 ### 3. Query and revert through the library
 
-The `PgHistory` class provides methods to read back the audit trail:
+The `PgChronicle` class provides methods to read back the audit trail:
 - **`getHistory(table, recordId)`** — full change history for one record, cursor-paginated
 - **`search({ tables, query, ... })`** — search across tables by JSON fields or text, with date and operation filters
 - **`revert(table, recordId, auditEntryId)`** — restore a record to any previous state in a single transaction
@@ -211,13 +211,13 @@ One partitioned `audit_log` table — partitioned by `LIST (table_name)` so quer
 | `old_data` | `JSONB` | Previous row state (excluded columns omitted) |
 | `new_data` | `JSONB` | New row state (excluded columns omitted) |
 | `db_user` | `TEXT` | DB role that made the change (`current_user`) |
-| `app_actor` | `TEXT` | Application actor (from the `pg_history.actor` session setting), or `NULL` |
+| `app_actor` | `TEXT` | Application actor (from the `pg_chronicle.actor` session setting), or `NULL` |
 | `client_addr` | `INET` | Client network address (`inet_client_addr()`), or `NULL` |
 
 **Capturing the application user:** every audit row records `db_user` and `client_addr` automatically. To also record *your* end-user, set a session-local variable before the write and the trigger stores it in `app_actor`:
 
 ```sql
-SET LOCAL pg_history.actor = 'user-42';   -- same transaction as the DML
+SET LOCAL pg_chronicle.actor = 'user-42';   -- same transaction as the DML
 ```
 
 When the archiver is enabled, additional columns track lifecycle: `archived_at`, `s3_path`, `soft_deleted_at`, `claim_id`, `claimed_at`. Treat these as internal — `getHistory` and `search` filter on them automatically (soft-deleted rows hidden, archived rows still visible until hard-deleted).
@@ -236,12 +236,12 @@ When the archiver is enabled, additional columns track lifecycle: `archived_at`,
 
 ## API Reference
 
-### `PgHistory`
+### `PgChronicle`
 
 #### Constructor
 
 ```typescript
-const history = new PgHistory({
+const history = new PgChronicle({
   tables: ['users', 'orders'],
   pool: existingPool,                      // or connection: 'postgres://...'
   excludeColumns: {                         // optional — strip PII per table
@@ -258,7 +258,7 @@ const history = new PgHistory({
 - `excludeColumns` — per-table column allowlist subtraction. Trigger emits `(to_jsonb(NEW) - 'col1' - 'col2')`. PK columns rejected at setup (would break `revert()`).
 - `logger` — anything implementing the `Logger` interface (`debug`/`info`/`warn`/`error`). `silentLogger` available for tests.
 - `maxConcurrentSearches` — bounds concurrent `search()` queries so unindexed `ILIKE` scans can't exhaust the pool. Excess searches reject with `SearchConcurrencyLimitError` (HTTP 429 via the server). Default 4; set `0` to disable.
-- `appendOnly` — when `true`, `setup()` installs a `BEFORE UPDATE OR DELETE` guard trigger on `audit_log` that blocks mutations unless the session set `pg_history.maintenance = 'on'` (the archiver does this automatically). Makes the trail append-only for the application. Tamper-*resistance*, not cryptographic tamper-evidence — see [Production Caveats](#trigger-ownership-security-definer). Requires PostgreSQL 14+. Default `false`.
+- `appendOnly` — when `true`, `setup()` installs a `BEFORE UPDATE OR DELETE` guard trigger on `audit_log` that blocks mutations unless the session set `pg_chronicle.maintenance = 'on'` (the archiver does this automatically). Makes the trail append-only for the application. Tamper-*resistance*, not cryptographic tamper-evidence — see [Production Caveats](#trigger-ownership-security-definer). Requires PostgreSQL 14+. Default `false`.
 - `requirePrimaryKey` — when `true`, `setup()` throws for a table with no primary key instead of logging a warning. Default `false`.
 
 #### `setup(): Promise<void>`
@@ -302,7 +302,7 @@ Clears the cached PK lookup for `tableName` (or all tables if omitted). Call aft
 
 #### `invalidateSoftDeleteColumnCache(): void`
 
-Clears the cached `soft_deleted_at` column existence check. Call after running the archiver schema setup on a database where PgHistory was already configured.
+Clears the cached `soft_deleted_at` column existence check. Call after running the archiver schema setup on a database where PgChronicle was already configured.
 
 #### `teardown(): Promise<void>`
 
@@ -312,12 +312,12 @@ Drops triggers, functions, and `audit_log`. Idempotent.
 
 Ends internal Pool if one was created. Races `pool.end()` against `timeoutMs` (default 30s) so SIGTERM can't be blocked by hung clients.
 
-### `PgHistoryArchiver`
+### `PgChronicleArchiver`
 
 Low-level archiver — most callers should use `Orchestrator.run()` instead. Direct API for custom schedulers or one-off cleanup jobs.
 
 ```typescript
-const archiver = new PgHistoryArchiver({
+const archiver = new PgChronicleArchiver({
   pool,
   s3: { bucket, endpoint, region, accessKeyId, secretAccessKey },
   retention: { default: 90 },
@@ -360,7 +360,7 @@ const orch = new Orchestrator({
 const stats = await orch.run(pool, { dryRun: false, targetTable: 'users' })
 ```
 
-`run()` discovers audited tables by looking for pg-history triggers in the current schema (or processes `targetTable`), takes a 64-bit advisory lock per table, reaps stale claims, then loops `processBatch → softDelete → hardDelete` to exhaustion. Stats per table aggregated into `OrchestratorStats`.
+`run()` discovers audited tables by looking for pg-chronicle triggers in the current schema (or processes `targetTable`), takes a 64-bit advisory lock per table, reaps stale claims, then loops `processBatch → softDelete → hardDelete` to exhaustion. Stats per table aggregated into `OrchestratorStats`.
 
 The per-table lock is **`pg_try_advisory_lock`** — a table another instance is already working on is skipped, not waited on, and comes back with `skipped: true` in its `TableStats`. Two overlapping runs therefore divide the tables between them rather than one blocking; a table skipped by every run in a window is simply picked up by the next one.
 
@@ -379,7 +379,7 @@ const { app, dispose } = await createServer({
   runOptions: { dryRun: false, targetTable: 'users' },
   // Auth — see "Server & REST API"
   allowUnauthenticated: false,          // required opt-in to serve history without a JWT
-  jwt: { issuer: 'https://issuer', audience: 'pg-history' }, // pin the token to this API
+  jwt: { issuer: 'https://issuer', audience: 'pg-chronicle' }, // pin the token to this API
   trustProxy: false,                    // trust x-forwarded-for for rate limiting (proxy only)
   clientIdentifier: ({ request, env }) => request.headers.get('x-api-key-id') ?? undefined,
   authorize: async ({ actor, table, recordId, action }) => {
@@ -405,7 +405,7 @@ interface AuditEntry {
   oldData: Record<string, unknown> | null
   newData: Record<string, unknown> | null
   dbUser: string | null      // DB role that made the change
-  appActor: string | null    // pg_history.actor session value, if set
+  appActor: string | null    // pg_chronicle.actor session value, if set
   clientAddr: string | null  // client IP, or null for local connections
 }
 
@@ -431,9 +431,9 @@ interface OrchestratorStats {
 }
 ```
 
-Types exported from the `pg-history` root: `ArchiveFile`, `ArchiverConfig`, `AuditEntry`, `AuthorizeContext`, `AuthorizeFn`, `BatchResult`, `ClientIdentifierFn`, `ClientIdentityContext`, `GetHistoryOptions`, `LogContext`, `Logger`, `LogLevel`, `OrchestratorConfig`, `OrchestratorStats`, `PaginatedResult`, `PgHistoryConfig`, `RetentionConfig`, `RunOptions`, `S3Config`, `SearchCursor`, `SearchOptions`, `SearchPaginatedResult`, `ServerConfig`, `TableStats`.
+Types exported from the `pg-chronicle` root: `ArchiveFile`, `ArchiverConfig`, `AuditEntry`, `AuthorizeContext`, `AuthorizeFn`, `BatchResult`, `ClientIdentifierFn`, `ClientIdentityContext`, `GetHistoryOptions`, `LogContext`, `Logger`, `LogLevel`, `OrchestratorConfig`, `OrchestratorStats`, `PaginatedResult`, `PgChronicleConfig`, `RetentionConfig`, `RunOptions`, `S3Config`, `SearchCursor`, `SearchOptions`, `SearchPaginatedResult`, `ServerConfig`, `TableStats`.
 
-Values exported alongside them: `PgHistory`, `PgHistoryArchiver`, `Orchestrator`, `createServer`, `readParquet`, `writeParquet`, `consoleLogger`, `silentLogger`, and the [error classes](#error-handling).
+Values exported alongside them: `PgChronicle`, `PgChronicleArchiver`, `Orchestrator`, `createServer`, `readParquet`, `writeParquet`, `consoleLogger`, `silentLogger`, and the [error classes](#error-handling).
 
 ## Server & REST API
 
@@ -441,7 +441,7 @@ A ready-made Hono server exposing the audit trail over HTTP, with JWT or cron-se
 
 ```typescript
 import { Pool } from 'pg'
-import { createServer } from 'pg-history'
+import { createServer } from 'pg-chronicle'
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 const { app } = await createServer({
@@ -451,7 +451,7 @@ const { app } = await createServer({
   historyConfig: { tables: ['users', 'orders'] },
   enableArchiver: true,
   archiverConfig: { /* see Archiver section */ },
-  allowUnauthenticated: !process.env.PG_HISTORY_JWT_SECRET,  // dev only
+  allowUnauthenticated: !process.env.PG_CHRONICLE_JWT_SECRET,  // dev only
 })
 
 Bun.serve({ port: 3001, fetch: app.fetch })
@@ -471,9 +471,9 @@ Bun.serve({ port: 3001, fetch: app.fetch })
 | `POST` | `/api/archive` | JWT or cron | Trigger archival on demand (requires `enableArchiver`) |
 
 **Auth resolution:**
-- **Fail-closed:** with `enableHistory: true` and no `PG_HISTORY_JWT_SECRET`, `createServer` throws at startup unless `allowUnauthenticated: true` is passed.
-- Set `PG_HISTORY_JWT_SECRET` to enable JWT on `/api/*`. Algorithm via `PG_HISTORY_JWT_ALG` (default `HS256`; supports `HS256/384/512`, `RS256/384/512`, `ES256/384/512`). Pin the token to this API with `jwt: { issuer, audience }` (or `PG_HISTORY_JWT_ISSUER` / `PG_HISTORY_JWT_AUDIENCE`) — signature checking alone accepts any token signed with the same key, including one minted by another service that shares the secret.
-- **Authorization** is separate from authentication: supply an `authorize` hook to scope access per tenant/record (returning `false` → `403`). Without it, any valid token can reach any configured table's history. On `pg-history/next`, pass it through `createHandlers`.
+- **Fail-closed:** with `enableHistory: true` and no `PG_CHRONICLE_JWT_SECRET`, `createServer` throws at startup unless `allowUnauthenticated: true` is passed.
+- Set `PG_CHRONICLE_JWT_SECRET` to enable JWT on `/api/*`. Algorithm via `PG_CHRONICLE_JWT_ALG` (default `HS256`; supports `HS256/384/512`, `RS256/384/512`, `ES256/384/512`). Pin the token to this API with `jwt: { issuer, audience }` (or `PG_CHRONICLE_JWT_ISSUER` / `PG_CHRONICLE_JWT_AUDIENCE`) — signature checking alone accepts any token signed with the same key, including one minted by another service that shares the secret.
+- **Authorization** is separate from authentication: supply an `authorize` hook to scope access per tenant/record (returning `false` → `403`). Without it, any valid token can reach any configured table's history. On `pg-chronicle/next`, pass it through `createHandlers`.
 - Set `archiveCronSecret` (or `CRON_SECRET` env) to authenticate the three archiver endpoints via timing-safe HMAC. It is an **alternative** credential, not an additional one: on `/api/archive`, `/api/stats` and `/api/health/detailed` a request is accepted if it presents either a valid JWT or the exact cron secret. (A request carries one `Authorization` header — demanding both made the route uncallable whenever both were configured.)
 - Archiver endpoints also need `enableArchiver: true` with a valid `archiverConfig`; without that, or without any auth at all, they are never registered.
 - `/health` is always public. `/openapi` is public with `publicOpenApi: true`, JWT-gated when a JWT secret is set, registered unauthenticated under `allowUnauthenticated: true`, and unregistered otherwise — so a cron-only deployment doesn't leak the API shape.
@@ -526,29 +526,29 @@ Reads return the `PaginatedResult` shape (`{data, nextCursor, hasMore}`); revert
 
 ### Standalone
 
-`src/main.ts` is the entrypoint (also published as the `pg-history` bin). It reads config from the environment and binds the port with `Bun.serve` — `src/server.ts` only exports `createServer` and does nothing when executed directly.
+`src/main.ts` is the entrypoint (also published as the `pg-chronicle` bin). It reads config from the environment and binds the port with `Bun.serve` — `src/server.ts` only exports `createServer` and does nothing when executed directly.
 
 ```bash
-PG_HISTORY_DATABASE_URL=postgres://localhost:5432/mydb \
-PG_HISTORY_TABLES=users,orders \
-PG_HISTORY_JWT_SECRET=your-secret \
+PG_CHRONICLE_DATABASE_URL=postgres://localhost:5432/mydb \
+PG_CHRONICLE_TABLES=users,orders \
+PG_CHRONICLE_JWT_SECRET=your-secret \
 bun run src/main.ts
 ```
 
-`PG_HISTORY_TABLES` is what enables the history API — without it the process starts but serves only `/health`. Without `PG_HISTORY_JWT_SECRET`, startup fails closed unless `PG_HISTORY_ALLOW_UNAUTHENTICATED=true`.
+`PG_CHRONICLE_TABLES` is what enables the history API — without it the process starts but serves only `/health`. Without `PG_CHRONICLE_JWT_SECRET`, startup fails closed unless `PG_CHRONICLE_ALLOW_UNAUTHENTICATED=true`.
 
 ## Dashboard
 
-A ready-to-deploy Next.js UI for browsing, searching and reverting the audit trail. It lives in [`dashboard/`](./dashboard) and is a single deployment: the same app mounts the real pg-history REST API at `/api` and renders the screens on top of it, so nothing else has to be running.
+A ready-to-deploy Next.js UI for browsing, searching and reverting the audit trail. It lives in [`dashboard/`](./dashboard) and is a single deployment: the same app mounts the real pg-chronicle REST API at `/api` and renders the screens on top of it, so nothing else has to be running.
 
 ```bash
 cd dashboard
-cp .env.example .env.local   # PG_HISTORY_DATABASE_URL, PG_HISTORY_TABLES, PG_HISTORY_JWT_SECRET
+cp .env.example .env.local   # PG_CHRONICLE_DATABASE_URL, PG_CHRONICLE_TABLES, PG_CHRONICLE_JWT_SECRET
 bun install
 bun run dev                  # builds the root package, then starts Next on :3000
 ```
 
-It reads the same environment variables the server does — `PG_HISTORY_TABLES` is what enables the history screens, and setting `PG_HISTORY_S3_BUCKET` turns on the archival panels. See [`dashboard/README.md`](./dashboard/README.md) for the full walkthrough.
+It reads the same environment variables the server does — `PG_CHRONICLE_TABLES` is what enables the history screens, and setting `PG_CHRONICLE_S3_BUCKET` turns on the archival panels. See [`dashboard/README.md`](./dashboard/README.md) for the full walkthrough.
 
 ### Screens
 
@@ -562,20 +562,20 @@ It reads the same environment variables the server does — `PG_HISTORY_TABLES` 
 | `/archival` | Archival status and on-demand runs |
 | `/openapi` | The API reference, rendered from the OpenAPI document |
 | `/openapi.json` | That document itself |
-| `/api/*` | The pg-history REST API itself — for cron, scripts and other services |
+| `/api/*` | The pg-chronicle REST API itself — for cron, scripts and other services |
 | `/health` | Public liveness probe, added by the dashboard because the catch-all only serves `/api/**` |
 | `/login` | The password gate |
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TimMikeladze/pg-history/main/site/public/shots/explore-dark.png">
-  <img alt="The Explore screen: a JSONB containment query across four audited tables, with operation and date-range filters and a result row per change." src="https://raw.githubusercontent.com/TimMikeladze/pg-history/main/site/public/shots/explore-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/explore-dark.png">
+  <img alt="The Explore screen: a JSONB containment query across four audited tables, with operation and date-range filters and a result row per change." src="https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/explore-light.png">
 </picture>
 
 *`/search` — one query across every audited table, colour-coded by operation, with the changed columns on each row.*
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TimMikeladze/pg-history/main/site/public/shots/tables-dark.png">
-  <img alt="The Tables screen: every audited table with its last change, the actor behind it, and its pending archive and purge counts." src="https://raw.githubusercontent.com/TimMikeladze/pg-history/main/site/public/shots/tables-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/tables-dark.png">
+  <img alt="The Tables screen: every audited table with its last change, the actor behind it, and its pending archive and purge counts." src="https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/tables-light.png">
 </picture>
 
 *`/tables` — what is audited, when each table last changed, and how much history is queued for archival.*
@@ -584,13 +584,13 @@ Every shot above is a real capture of this repo's dashboard against a seeded dat
 
 ### Access control
 
-**The UI is password-gated.** Set `PG_HISTORY_DASHBOARD_PASSWORD`; visitors exchange it for a signed, httpOnly session cookie (12 hours by default — `PG_HISTORY_DASHBOARD_SESSION_TTL_HOURS`). In production the middleware **refuses to serve the UI** until a password is set, because a page load is enough to read and revert every audited record. Development runs open. If an access proxy or SSO already authenticates every request, acknowledge that with `PG_HISTORY_DASHBOARD_ALLOW_ANONYMOUS=true` instead of leaving it accidental.
+**The UI is password-gated.** Set `PG_CHRONICLE_DASHBOARD_PASSWORD`; visitors exchange it for a signed, httpOnly session cookie (12 hours by default — `PG_CHRONICLE_DASHBOARD_SESSION_TTL_HOURS`). In production the middleware **refuses to serve the UI** until a password is set, because a page load is enough to read and revert every audited record. Development runs open. If an access proxy or SSO already authenticates every request, acknowledge that with `PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS=true` instead of leaving it accidental.
 
 Failed logins are throttled — escalating delay for everyone, plus a 15-minute lockout for clients the platform can identify (an unidentifiable client is never locked out, or an attacker could lock *you* out by failing five times). Rotating the password invalidates every session, and it is the only revocation there is: one shared password means no individual sessions to revoke, so treat the cookie as a 12-hour bearer token.
 
 `/api/*` is deliberately outside the cookie gate: it is the real REST API with its own JWT (and cron secret), and schedulers call it.
 
-**It never issues a token to the browser.** Server components and server actions mint a 60-second HS256 JWT with `jose` and invoke the very same route handlers mounted at `/api`, in-process with a synthetic `Request`. No network hop, no CORS, one connection pool, and identical auth, validation and error semantics to any external caller. The JWT `sub` carries `PG_HISTORY_DASHBOARD_ACTOR`, which pg-history logs on every revert — set it to something identifiable per deployment.
+**It never issues a token to the browser.** Server components and server actions mint a 60-second HS256 JWT with `jose` and invoke the very same route handlers mounted at `/api`, in-process with a synthetic `Request`. No network hop, no CORS, one connection pool, and identical auth, validation and error semantics to any external caller. The JWT `sub` carries `PG_CHRONICLE_DASHBOARD_ACTOR`, which pg-chronicle logs on every revert — set it to something identifiable per deployment.
 
 **Authentication is not authorization.** Past the gate, the dashboard's self-minted token has blanket access to every record of every configured table. For per-tenant scoping, mount the API with an `authorize` hook via `createHandlers` (see [Next.js](#nextjs-serverless)) — the shared password says *someone* is allowed in, not *which rows* they may touch.
 
@@ -598,42 +598,42 @@ One behaviour worth knowing: archived history disappears from reads. Both `getHi
 
 ## Deployment
 
-Click the button below to get the dashboard and the REST API as one Vercel project, wire the `pg-history/next` route handler into an app you already have, or run the container anywhere.
+Click the button below to get the dashboard and the REST API as one Vercel project, wire the `pg-chronicle/next` route handler into an app you already have, or run the container anywhere.
 
 ### One click: the dashboard on Vercel
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%2Ftree%2Fmain%2Fdashboard&project-name=pg-history-dashboard&repository-name=pg-history-dashboard&env=PG_HISTORY_DATABASE_URL%2CPG_HISTORY_TABLES%2CPG_HISTORY_JWT_SECRET%2CPG_HISTORY_DASHBOARD_PASSWORD%2CPG_HISTORY_JWT_ALG%2CPG_HISTORY_POOL_MAX%2CPG_HISTORY_STATEMENT_TIMEOUT_MS%2CPG_HISTORY_DASHBOARD_ACTOR%2CPG_HISTORY_RETENTION_DAYS%2CPG_HISTORY_GRACE_PERIOD_DAYS%2CPG_HISTORY_BATCH_SIZE&envDefaults=%7B%22PG_HISTORY_JWT_ALG%22%3A%22HS256%22%2C%22PG_HISTORY_POOL_MAX%22%3A%223%22%2C%22PG_HISTORY_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_HISTORY_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_HISTORY_RETENTION_DAYS%22%3A%2290%22%2C%22PG_HISTORY_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_HISTORY_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+four+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+a+JWT+signing+secret%2C+and+a+password+for+the+dashboard+UI+%28it+can+read+and+revert+every+audited+record%29.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-history%23environment-variables)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%2Ftree%2Fmain%2Fdashboard&project-name=pg-chronicle-dashboard&repository-name=pg-chronicle-dashboard&env=PG_CHRONICLE_DATABASE_URL%2CPG_CHRONICLE_TABLES%2CPG_CHRONICLE_JWT_SECRET%2CPG_CHRONICLE_DASHBOARD_PASSWORD%2CPG_CHRONICLE_JWT_ALG%2CPG_CHRONICLE_POOL_MAX%2CPG_CHRONICLE_STATEMENT_TIMEOUT_MS%2CPG_CHRONICLE_DASHBOARD_ACTOR%2CPG_CHRONICLE_RETENTION_DAYS%2CPG_CHRONICLE_GRACE_PERIOD_DAYS%2CPG_CHRONICLE_BATCH_SIZE&envDefaults=%7B%22PG_CHRONICLE_JWT_ALG%22%3A%22HS256%22%2C%22PG_CHRONICLE_POOL_MAX%22%3A%223%22%2C%22PG_CHRONICLE_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_CHRONICLE_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_CHRONICLE_RETENTION_DAYS%22%3A%2290%22%2C%22PG_CHRONICLE_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_CHRONICLE_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Only+the+first+four+need+a+value%3A+a+Postgres+connection+string%2C+the+tables+to+audit%2C+a+JWT+signing+secret%2C+and+a+password+for+the+dashboard+UI+%28it+can+read+and+revert+every+audited+record%29.+The+rest+arrive+prefilled+with+the+library+defaults.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%23environment-variables)
 
-The button clones [`dashboard/`](./dashboard) on its own — the [Dashboard](#dashboard) UI and the REST API it runs on, in one project, with `dashboard/vercel.json` registering the archival cron. The clone consumes `pg-history` from npm, so nothing else in this repo has to build for it to deploy — Vercel's Root Directory cannot reach a parent directory, which is what makes the published package the dependency here.
+The button clones [`dashboard/`](./dashboard) on its own — the [Dashboard](#dashboard) UI and the REST API it runs on, in one project, with `dashboard/vercel.json` registering the archival cron. The clone consumes `pg-chronicle` from npm, so nothing else in this repo has to build for it to deploy — Vercel's Root Directory cannot reach a parent directory, which is what makes the published package the dependency here.
 
 **What you fill in.** Four variables:
 
 | Variable | Value |
 |----------|-------|
-| `PG_HISTORY_DATABASE_URL` | Postgres connection string. Point it at a pooled endpoint (Neon, Supabase, PgBouncer) — every invocation opens its own pool |
-| `PG_HISTORY_TABLES` | Comma-separated tables to audit, e.g. `users,orders`. They must already exist: the app installs triggers on them at first request |
-| `PG_HISTORY_JWT_SECRET` | Long random string. The dashboard signs its own short-lived tokens with it and it never reaches the browser |
-| `PG_HISTORY_DASHBOARD_PASSWORD` | Long random string. The password for the UI itself — without it the deployed dashboard refuses to serve pages, because reaching one means being able to read and revert every audited record |
+| `PG_CHRONICLE_DATABASE_URL` | Postgres connection string. Point it at a pooled endpoint (Neon, Supabase, PgBouncer) — every invocation opens its own pool |
+| `PG_CHRONICLE_TABLES` | Comma-separated tables to audit, e.g. `users,orders`. They must already exist: the app installs triggers on them at first request |
+| `PG_CHRONICLE_JWT_SECRET` | Long random string. The dashboard signs its own short-lived tokens with it and it never reaches the browser |
+| `PG_CHRONICLE_DASHBOARD_PASSWORD` | Long random string. The password for the UI itself — without it the deployed dashboard refuses to serve pages, because reaching one means being able to read and revert every audited record |
 
-**What arrives prefilled**, straight from the library's defaults, so the form is a click-through: `PG_HISTORY_JWT_ALG=HS256`, `PG_HISTORY_POOL_MAX=3`, `PG_HISTORY_STATEMENT_TIMEOUT_MS=30000`, `PG_HISTORY_DASHBOARD_ACTOR=dashboard`, `PG_HISTORY_RETENTION_DAYS=90`, `PG_HISTORY_GRACE_PERIOD_DAYS=7`, `PG_HISTORY_BATCH_SIZE=10000`. Defaults are only ever passed for non-secret values — the clone URL ends up in browser history, which is why the two secrets above arrive blank (as does the connection string, which carries a password).
+**What arrives prefilled**, straight from the library's defaults, so the form is a click-through: `PG_CHRONICLE_JWT_ALG=HS256`, `PG_CHRONICLE_POOL_MAX=3`, `PG_CHRONICLE_STATEMENT_TIMEOUT_MS=30000`, `PG_CHRONICLE_DASHBOARD_ACTOR=dashboard`, `PG_CHRONICLE_RETENTION_DAYS=90`, `PG_CHRONICLE_GRACE_PERIOD_DAYS=7`, `PG_CHRONICLE_BATCH_SIZE=10000`. Defaults are only ever passed for non-secret values — the clone URL ends up in browser history, which is why the two secrets above arrive blank (as does the connection string, which carries a password).
 
-**After the first deploy**, add the archiver's own variables in the project settings — `PG_HISTORY_S3_BUCKET` (this is the switch: without it there is no `/api/archive` and no archival UI), the S3 credentials, and `CRON_SECRET`. Until `CRON_SECRET` is set the nightly cron gets a `401`; until the bucket is set it gets a `404`. Both are inert, not broken — see [Cron Archival](#cron-archival-vercel-cron).
+**After the first deploy**, add the archiver's own variables in the project settings — `PG_CHRONICLE_S3_BUCKET` (this is the switch: without it there is no `/api/archive` and no archival UI), the S3 credentials, and `CRON_SECRET`. Until `CRON_SECRET` is set the nightly cron gets a `401`; until the bucket is set it gets a `404`. Both are inert, not broken — see [Cron Archival](#cron-archival-vercel-cron).
 
 Past the password gate the dashboard has blanket access to every audited row by design — the password is a lock on the door, not per-user authorization. Put it behind SSO or a network boundary too before pointing it at production, and supply an `authorize` hook for per-tenant scoping — see [Access control](#access-control).
 
 ### Next.js (Serverless)
 
-Auditing itself is runtime-independent — the triggers live in PostgreSQL. The `pg-history/next` entry point is a Next.js App Router route handler and runs anywhere Next.js runs; only the *cron scheduling* below is Vercel-specific.
+Auditing itself is runtime-independent — the triggers live in PostgreSQL. The `pg-chronicle/next` entry point is a Next.js App Router route handler and runs anywhere Next.js runs; only the *cron scheduling* below is Vercel-specific.
 
 **Option A: Use the library directly in your API routes**
 
 ```typescript
 // app/api/history/route.ts
 import { Pool } from 'pg'
-import { PgHistory } from 'pg-history'
+import { PgChronicle } from 'pg-chronicle'
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 3 })
-const history = new PgHistory({ pool, tables: ['users', 'orders'] })
+const history = new PgChronicle({ pool, tables: ['users', 'orders'] })
 const setupDone = history.setup()
 
 export async function GET(req: Request) {
@@ -650,18 +650,18 @@ export async function GET(req: Request) {
 
 ```typescript
 // app/api/[[...route]]/route.ts
-export { GET, POST, OPTIONS } from 'pg-history/next'
+export { GET, POST, OPTIONS } from 'pg-chronicle/next'
 ```
 
 Set environment variables on your host — all three are required:
 
 ```
-PG_HISTORY_DATABASE_URL=postgres://...
-PG_HISTORY_TABLES=users,orders
-PG_HISTORY_JWT_SECRET=your-secret
+PG_CHRONICLE_DATABASE_URL=postgres://...
+PG_CHRONICLE_TABLES=users,orders
+PG_CHRONICLE_JWT_SECRET=your-secret
 ```
 
-The JWT secret is not optional here: this entry point always enables the history API, destructive `revert` included, so without a secret it refuses to start and every request returns `500 INIT_ERROR`. `PG_HISTORY_ALLOW_UNAUTHENTICATED` is deliberately not wired up on this path.
+The JWT secret is not optional here: this entry point always enables the history API, destructive `revert` included, so without a secret it refuses to start and every request returns `500 INIT_ERROR`. `PG_CHRONICLE_ALLOW_UNAUTHENTICATED` is deliberately not wired up on this path.
 
 Export `OPTIONS` too if anything calls the API cross-origin — without it Next answers preflight with `405` and the browser blocks the real request, whatever `cors` says.
 
@@ -669,7 +669,7 @@ Export `OPTIONS` too if anything calls the API cross-origin — without it Next 
 
 ```typescript
 // app/api/[[...route]]/route.ts
-import { createHandlers } from 'pg-history/next'
+import { createHandlers } from 'pg-chronicle/next'
 
 export const { GET, POST, OPTIONS } = createHandlers({
   // Without this, any valid token reaches every record of every audited table.
@@ -683,9 +683,9 @@ export const { GET, POST, OPTIONS } = createHandlers({
 export const dynamic = 'force-dynamic'
 ```
 
-Everything not overridden still comes from the environment, and the handlers keep their own lazily-initialised app and pool. Pass `pool` to supply your own — pg-history will not close a pool it did not create.
+Everything not overridden still comes from the environment, and the handlers keep their own lazily-initialised app and pool. Pass `pool` to supply your own — pg-chronicle will not close a pool it did not create.
 
-The `pg-history/next` entry point automatically enables `serverless: true`, which:
+The `pg-chronicle/next` entry point automatically enables `serverless: true`, which:
 - Skips background archival (use [cron archival](#cron-archival-vercel-cron) instead)
 - Skips in-memory rate limiting (handle at API gateway / firewall level)
 - Uses a small pool size (default 3) to stay within connection limits
@@ -719,13 +719,13 @@ The response distinguishes three outcomes, so a scheduler's history reflects wha
 
 A failed run answers `500` deliberately — a broken archiver reporting `200` puts a green tick in the cron history while the audit log grows unchecked. The cron secret is accepted *instead of* a JWT on the operational routes (`/api/archive`, `/api/stats`, `/api/health/detailed`), so a deployment can have both credentials and let each caller present its own.
 
-Two things to know: `POST /api/archive` only exists when `PG_HISTORY_S3_BUCKET` is set (that's what enables the archiver in `pg-history/next`), and the catch-all serves `/api/**` only — the public `GET /health` probe is unreachable here, so use `/api/health/detailed` or add your own `app/health/route.ts`.
+Two things to know: `POST /api/archive` only exists when `PG_CHRONICLE_S3_BUCKET` is set (that's what enables the archiver in `pg-chronicle/next`), and the catch-all serves `/api/**` only — the public `GET /health` probe is unreachable here, so use `/api/health/detailed` or add your own `app/health/route.ts`.
 
 **Vercel plan limits:**
 - **Hobby:** Cron minimum interval 24h, function timeout 10s
 - **Pro:** Cron minimum interval 1h, function timeout 60s
 
-If archival takes longer than the function timeout, it will be interrupted. The design is retry-safe — unfinished records stay unarchived and get picked up on the next run. Set `PG_HISTORY_BATCH_SIZE` to a lower value (1000-2000) to keep individual runs within timeout limits.
+If archival takes longer than the function timeout, it will be interrupted. The design is retry-safe — unfinished records stay unarchived and get picked up on the next run. Set `PG_CHRONICLE_BATCH_SIZE` to a lower value (1000-2000) to keep individual runs within timeout limits.
 
 **Turn the retry loop off under cron.** `POST /api/archive` runs the same `archivalRetry` policy as background archival — up to 4 attempts, sleeping 5s / 15s / 60s (plus 0-25% jitter) *inside the request*. On a serverless function that is a guaranteed timeout rather than a recovery, and the scheduler is already the retry mechanism. One-shot it:
 
@@ -742,13 +742,13 @@ export const { GET, POST, OPTIONS } = createHandlers({
 
 | Concern | Impact | Mitigation |
 |---------|--------|------------|
-| Connection pooling | Each invocation may create a pool | Use an external pooler (PgBouncer, Neon, Supabase, RDS Proxy). Set `PG_HISTORY_POOL_MAX` low (2-3). |
+| Connection pooling | Each invocation may create a pool | Use an external pooler (PgBouncer, Neon, Supabase, RDS Proxy). Set `PG_CHRONICLE_POOL_MAX` low (2-3). |
 | Cold starts | `setup()` runs on every cold instance | It re-runs the whole idempotent DDL sweep (~15 round trips for one table) under an advisory lock, not a single probe — nothing is created twice, but it isn't free. Cache the promise at module level so it happens once per instance, not once per request. |
 | Rate limiting | In-memory rate limiter resets per invocation | Use platform-level rate limiting (API Gateway, Vercel Firewall, Cloudflare). |
 
 ### Long-lived server (Docker)
 
-Anywhere that runs a container, the repo's `Dockerfile` builds the standalone server described in [Server & REST API](#server--rest-api) — same REST API, but with a background archival loop instead of cron. It runs immediately on startup and then on an interval (`PG_HISTORY_ARCHIVAL_INTERVAL_MS`, default hourly), so give the container a 30s termination grace period and keep at least one instance alive or archival never runs. Configuration is the same environment variables, passed as secrets.
+Anywhere that runs a container, the repo's `Dockerfile` builds the standalone server described in [Server & REST API](#server--rest-api) — same REST API, but with a background archival loop instead of cron. It runs immediately on startup and then on an interval (`PG_CHRONICLE_ARCHIVAL_INTERVAL_MS`, default hourly), so give the container a 30s termination grace period and keep at least one instance alive or archival never runs. Configuration is the same environment variables, passed as secrets.
 
 ### Other Platforms
 
@@ -767,7 +767,7 @@ export default app
 
 ## Archiver
 
-Move old audit rows to S3 as compressed Parquet files. Hands off to `Orchestrator` for scheduling and `PgHistoryArchiver` for the upload + delete lifecycle. Concurrent runs are safe — advisory locks prevent two archivers from processing the same table.
+Move old audit rows to S3 as compressed Parquet files. Hands off to `Orchestrator` for scheduling and `PgChronicleArchiver` for the upload + delete lifecycle. Concurrent runs are safe — advisory locks prevent two archivers from processing the same table.
 
 ### Lifecycle
 
@@ -847,16 +847,16 @@ const { app } = await createServer({
 })
 ```
 
-The archiver's `logger` is the server's. Everything else — including `maxBatchBytes`, `staleClaimMinutes` and `lockConnectionString` — is forwarded to the `PgHistoryArchiver` the server builds, so you no longer have to construct one by hand to change them.
+The archiver's `logger` is the server's. Everything else — including `maxBatchBytes`, `staleClaimMinutes` and `lockConnectionString` — is forwarded to the `PgChronicleArchiver` the server builds, so you no longer have to construct one by hand to change them.
 
 ### Pruning long-term archives
 
 Metadata + S3 grow linearly forever. Set `runOptions.pruneArchivesOlderThanDays` to trim archives past compliance retention as part of the run, or drive it yourself:
 
 ```typescript
-import { PgHistoryArchiver } from 'pg-history'
+import { PgChronicleArchiver } from 'pg-chronicle'
 
-const archiver = new PgHistoryArchiver({ pool, ...config })
+const archiver = new PgChronicleArchiver({ pool, ...config })
 const cutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000) // 1 year
 const deleted = await archiver.pruneArchive('users', cutoff)
 ```
@@ -879,41 +879,41 @@ To run archival on your own schedule instead of the server's, drive [`Orchestrat
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PG_HISTORY_DATABASE_URL` | Standalone server | PostgreSQL connection string |
-| `PG_HISTORY_PORT` | No | Server port (also reads `PORT`, default `3001`) |
-| `PG_HISTORY_POOL_MAX` | No | Max pool connections (default `5`, use `2-3` for serverless) |
-| `PG_HISTORY_STATEMENT_TIMEOUT_MS` | No | Pool-wide `statement_timeout` (default `30000`; `0` disables). Raise for a one-time archiver index build on a large existing log |
-| `PG_HISTORY_JWT_SECRET` | `pg-history/next` entry point | JWT auth on `/api/*`. The standalone server can skip it only with `PG_HISTORY_ALLOW_UNAUTHENTICATED=true`; `pg-history/next` has no such escape hatch |
-| `PG_HISTORY_JWT_ALG` | No | JWT algorithm: `HS256/384/512`, `RS256/384/512`, `ES256/384/512` (default `HS256`) |
-| `PG_HISTORY_JWT_ISSUER` | No | Required `iss` claim. Unset means the claim is not checked — any token signed with the same key is accepted, including one minted by another service |
-| `PG_HISTORY_JWT_AUDIENCE` | No | Acceptable `aud` claim(s), comma-separated |
-| `PG_HISTORY_ALLOW_UNAUTHENTICATED` | No | Set `true` to let the standalone server start history endpoints without a JWT (local/trusted only). Read by the standalone server only — `pg-history/next` ignores it |
-| `PG_HISTORY_TABLES` | `pg-history/next` entry point | Comma-separated table names. Also what enables the history API on the standalone server — omit it and only `/health` is served |
-| `PG_HISTORY_S3_BUCKET` | Archival | S3 bucket. Setting it is what enables the archiver on both entry points |
-| `PG_HISTORY_S3_ENDPOINT` | No | Custom S3 endpoint (MinIO, R2, localstack). Omit for AWS; setting it also switches on path-style addressing |
-| `PG_HISTORY_S3_ACCESS_KEY_ID` | No | Explicit access key. Omit both key vars to use the default AWS credential chain (IAM role, instance profile, env) |
-| `PG_HISTORY_S3_SECRET_ACCESS_KEY` | No | Explicit secret key |
-| `PG_HISTORY_S3_REGION` | No | S3 region (default `us-east-1`) |
-| `PG_HISTORY_ARCHIVAL_INTERVAL_MS` | No | Background archival interval (default `3600000` / 1 hour, floored at `60000` so a bad value can't spin a tight loop). Long-lived server only — `serverless: true` runs no background archival |
-| `PG_HISTORY_RETENTION_DAYS` | No | Default retention period (default `90`) |
-| `PG_HISTORY_GRACE_PERIOD_DAYS` | No | Grace period before hard delete (default `7`; `0` = no grace, purge once the S3 backup is confirmed) |
-| `PG_HISTORY_BATCH_SIZE` | No | Archival batch size (default `10000`) |
-| `PG_HISTORY_MAX_BATCH_BYTES` | No | Soft memory cap per batch in bytes (default `67108864` / 64 MiB). `pg-history/next` only; the standalone server takes it from `archiverConfig` |
-| `PG_HISTORY_STALE_CLAIM_MINUTES` | No | When an unfinalized claim is reclaimable, and the orphan-sweep safety window (default `30`). `pg-history/next` only; the standalone server takes it from `archiverConfig` |
+| `PG_CHRONICLE_DATABASE_URL` | Standalone server | PostgreSQL connection string |
+| `PG_CHRONICLE_PORT` | No | Server port (also reads `PORT`, default `3001`) |
+| `PG_CHRONICLE_POOL_MAX` | No | Max pool connections (default `5`, use `2-3` for serverless) |
+| `PG_CHRONICLE_STATEMENT_TIMEOUT_MS` | No | Pool-wide `statement_timeout` (default `30000`; `0` disables). Raise for a one-time archiver index build on a large existing log |
+| `PG_CHRONICLE_JWT_SECRET` | `pg-chronicle/next` entry point | JWT auth on `/api/*`. The standalone server can skip it only with `PG_CHRONICLE_ALLOW_UNAUTHENTICATED=true`; `pg-chronicle/next` has no such escape hatch |
+| `PG_CHRONICLE_JWT_ALG` | No | JWT algorithm: `HS256/384/512`, `RS256/384/512`, `ES256/384/512` (default `HS256`) |
+| `PG_CHRONICLE_JWT_ISSUER` | No | Required `iss` claim. Unset means the claim is not checked — any token signed with the same key is accepted, including one minted by another service |
+| `PG_CHRONICLE_JWT_AUDIENCE` | No | Acceptable `aud` claim(s), comma-separated |
+| `PG_CHRONICLE_ALLOW_UNAUTHENTICATED` | No | Set `true` to let the standalone server start history endpoints without a JWT (local/trusted only). Read by the standalone server only — `pg-chronicle/next` ignores it |
+| `PG_CHRONICLE_TABLES` | `pg-chronicle/next` entry point | Comma-separated table names. Also what enables the history API on the standalone server — omit it and only `/health` is served |
+| `PG_CHRONICLE_S3_BUCKET` | Archival | S3 bucket. Setting it is what enables the archiver on both entry points |
+| `PG_CHRONICLE_S3_ENDPOINT` | No | Custom S3 endpoint (MinIO, R2, localstack). Omit for AWS; setting it also switches on path-style addressing |
+| `PG_CHRONICLE_S3_ACCESS_KEY_ID` | No | Explicit access key. Omit both key vars to use the default AWS credential chain (IAM role, instance profile, env) |
+| `PG_CHRONICLE_S3_SECRET_ACCESS_KEY` | No | Explicit secret key |
+| `PG_CHRONICLE_S3_REGION` | No | S3 region (default `us-east-1`) |
+| `PG_CHRONICLE_ARCHIVAL_INTERVAL_MS` | No | Background archival interval (default `3600000` / 1 hour, floored at `60000` so a bad value can't spin a tight loop). Long-lived server only — `serverless: true` runs no background archival |
+| `PG_CHRONICLE_RETENTION_DAYS` | No | Default retention period (default `90`) |
+| `PG_CHRONICLE_GRACE_PERIOD_DAYS` | No | Grace period before hard delete (default `7`; `0` = no grace, purge once the S3 backup is confirmed) |
+| `PG_CHRONICLE_BATCH_SIZE` | No | Archival batch size (default `10000`) |
+| `PG_CHRONICLE_MAX_BATCH_BYTES` | No | Soft memory cap per batch in bytes (default `67108864` / 64 MiB). `pg-chronicle/next` only; the standalone server takes it from `archiverConfig` |
+| `PG_CHRONICLE_STALE_CLAIM_MINUTES` | No | When an unfinalized claim is reclaimable, and the orphan-sweep safety window (default `30`). `pg-chronicle/next` only; the standalone server takes it from `archiverConfig` |
 | `CRON_SECRET` | Cron archival (Vercel Cron) | Authenticates `POST /api/archive`, `/api/stats` and `/api/health/detailed`. Accepted **instead of** a JWT on those routes, so setting both is fine |
-| `PG_HISTORY_SILENT_LOGS` | No | Set `1` to drop all output from the default `consoleLogger` (used by the test suite). No effect on an injected `logger` |
+| `PG_CHRONICLE_SILENT_LOGS` | No | Set `1` to drop all output from the default `consoleLogger` (used by the test suite). No effect on an injected `logger` |
 | `VERCEL_URL` | No | Injected by Vercel. Used as the OpenAPI `servers[].url` when `baseUrl` is unset |
 
 ### Dashboard-only
 
-Read by [`dashboard/`](./dashboard), not by the library. It also reads every variable above — `PG_HISTORY_TABLES` enables the history screens and `PG_HISTORY_S3_BUCKET` turns on the archival panels. One narrowing: `PG_HISTORY_JWT_ALG` must be symmetric here (`HS256/384/512`), because the dashboard both signs and verifies with the same secret; it refuses to start on an `RS*`/`ES*` value.
+Read by [`dashboard/`](./dashboard), not by the library. It also reads every variable above — `PG_CHRONICLE_TABLES` enables the history screens and `PG_CHRONICLE_S3_BUCKET` turns on the archival panels. One narrowing: `PG_CHRONICLE_JWT_ALG` must be symmetric here (`HS256/384/512`), because the dashboard both signs and verifies with the same secret; it refuses to start on an `RS*`/`ES*` value.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PG_HISTORY_DASHBOARD_PASSWORD` | Production UI | Password for the UI. Without it (and without the opt-out below) the deployed dashboard refuses to render, because a page load is enough to read and revert every audited record. Development runs open |
-| `PG_HISTORY_DASHBOARD_ALLOW_ANONYMOUS` | No | Set `true` to serve the UI unauthenticated in production. Only correct behind an access proxy / SSO that authenticates every request |
-| `PG_HISTORY_DASHBOARD_SESSION_TTL_HOURS` | No | Lifetime of a dashboard sign-in cookie (default `12`) |
-| `PG_HISTORY_DASHBOARD_ACTOR` | No | Written to the `sub` of the token the dashboard mints for itself, which pg-history logs as `app_actor` on every revert (default `dashboard`) |
+| `PG_CHRONICLE_DASHBOARD_PASSWORD` | Production UI | Password for the UI. Without it (and without the opt-out below) the deployed dashboard refuses to render, because a page load is enough to read and revert every audited record. Development runs open |
+| `PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS` | No | Set `true` to serve the UI unauthenticated in production. Only correct behind an access proxy / SSO that authenticates every request |
+| `PG_CHRONICLE_DASHBOARD_SESSION_TTL_HOURS` | No | Lifetime of a dashboard sign-in cookie (default `12`) |
+| `PG_CHRONICLE_DASHBOARD_ACTOR` | No | Written to the `sub` of the token the dashboard mints for itself, which pg-chronicle logs as `app_actor` on every revert (default `dashboard`) |
 
 ## Production Caveats
 
@@ -951,11 +951,11 @@ The cap trims the tail, never the first row: a single row larger than `maxBatchB
 
 ### Trigger ownership (SECURITY DEFINER)
 
-Generated trigger functions run with the privileges of their **owner** — whoever ran `setup()`. If that role is superuser, audit inserts run with superuser privilege. For least-privilege deployments, create a dedicated `pg_history_writer` role with INSERT on `audit_log` and either run `setup()` as that role, or post-setup do `ALTER FUNCTION audit_trigger_func_<table>() OWNER TO pg_history_writer`.
+Generated trigger functions run with the privileges of their **owner** — whoever ran `setup()`. If that role is superuser, audit inserts run with superuser privilege. For least-privilege deployments, create a dedicated `pg_chronicle_writer` role with INSERT on `audit_log` and either run `setup()` as that role, or post-setup do `ALTER FUNCTION audit_trigger_func_<table>() OWNER TO pg_chronicle_writer`.
 
 ### Tamper-resistance / append-only
 
-`appendOnly: true` installs a guard trigger that blocks `UPDATE`/`DELETE` on `audit_log` outside the pg-history maintenance context (PostgreSQL 14+). That stops accidental and casual tampering, but the context is just a session GUC: **any role that can reach the database can run `SET pg_history.maintenance = 'on'` and walk straight past the guard.** It is tamper-*resistance* against mistakes and careless code, not evidence against a motivated actor — do not describe it to an auditor as WORM. For genuine WORM guarantees, layer on: `REVOKE UPDATE, DELETE, TRUNCATE ON audit_log` from the application role (run the archiver under a separate privileged role), enforce S3 Object Lock on the archive bucket, and add a per-row hash chain if you need cryptographic evidence.
+`appendOnly: true` installs a guard trigger that blocks `UPDATE`/`DELETE` on `audit_log` outside the pg-chronicle maintenance context (PostgreSQL 14+). That stops accidental and casual tampering, but the context is just a session GUC: **any role that can reach the database can run `SET pg_chronicle.maintenance = 'on'` and walk straight past the guard.** It is tamper-*resistance* against mistakes and careless code, not evidence against a motivated actor — do not describe it to an auditor as WORM. For genuine WORM guarantees, layer on: `REVOKE UPDATE, DELETE, TRUNCATE ON audit_log` from the application role (run the archiver under a separate privileged role), enforce S3 Object Lock on the archive bucket, and add a per-row hash chain if you need cryptographic evidence.
 
 ### Metrics & observability
 
@@ -964,8 +964,8 @@ No metrics emitted natively. Wire your monitor of choice via the injected `Logge
 ```typescript
 import pino from 'pino'
 const logger = pino()
-new PgHistory({ pool, tables, logger })
-new PgHistoryArchiver({ pool, ...config, logger })
+new PgChronicle({ pool, tables, logger })
+new PgChronicleArchiver({ pool, ...config, logger })
 ```
 
 Then aggregate by event name (`Archival complete`, `Batch failed`, `Pool idle client error`, etc.).
@@ -976,11 +976,11 @@ Then aggregate by event name (`Archival complete`, `Batch failed`, `Pool idle cl
 
 ## Error Handling
 
-Typed error classes, all extending `PgHistoryError`:
+Typed error classes, all extending `PgChronicleError`:
 
 ```typescript
 import {
-  PgHistoryError,               // Base class for all pg-history errors
+  PgChronicleError,               // Base class for all pg-chronicle errors
   TableNotConfiguredError,       // Table not in configured tables list
   SetupRequiredError,            // setup() not called before query
   AuditEntryNotFoundError,       // Audit entry not found for revert
@@ -988,7 +988,7 @@ import {
   RevertError,                   // Revert operation failure
   AuthorizationError,            // authorize() hook denied the request (HTTP 403)
   SearchConcurrencyLimitError,   // too many concurrent search() calls (HTTP 429)
-} from 'pg-history'
+} from 'pg-chronicle'
 
 try {
   await history.getHistory('unknown_table', '1')

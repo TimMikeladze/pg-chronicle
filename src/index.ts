@@ -1,7 +1,7 @@
 export {
 	AuditEntryNotFoundError,
 	AuthorizationError,
-	PgHistoryError,
+	PgChronicleError,
 	RevertError,
 	SearchConcurrencyLimitError,
 	SetupRequiredError,
@@ -16,16 +16,16 @@ export {
 	silentLogger,
 } from './logger'
 export { Orchestrator } from './orchestrator'
-export { PgHistory } from './PgHistory'
+export { PgChronicle } from './PgChronicle'
 export {
 	type ArchiveFile,
 	type BatchResult,
-	PgHistoryArchiver,
-} from './PgHistoryArchiver'
+	PgChronicleArchiver,
+} from './PgChronicleArchiver'
 // Decoding an archived Parquet file is part of the product, not an internal:
 // archived history is filtered out of getHistory/search and eventually deleted
 // from Postgres, so these are how it is read back. Prefer
-// PgHistoryArchiver.listArchives/readArchive, which handle S3 and checksums;
+// PgChronicleArchiver.listArchives/readArchive, which handle S3 and checksums;
 // reach for these directly only for files you already have on disk.
 export { readParquet, writeParquet } from './parquet'
 export { createServer } from './server'
@@ -40,7 +40,7 @@ export type {
 	OrchestratorConfig,
 	OrchestratorStats,
 	PaginatedResult,
-	PgHistoryConfig,
+	PgChronicleConfig,
 	RetentionConfig,
 	RunOptions,
 	S3Config,

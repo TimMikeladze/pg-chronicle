@@ -9,7 +9,7 @@
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import type { Pool } from 'pg'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import { createServer } from '../src/server'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
@@ -42,7 +42,7 @@ function post(
 
 describe('POST /api/history/revert', () => {
 	let pool: Pool
-	let history: PgHistory
+	let history: PgChronicle
 
 	beforeEach(async () => {
 		pool = await getTestConnection()
@@ -53,7 +53,7 @@ describe('POST /api/history/revert', () => {
         email TEXT
       )
     `)
-		history = new PgHistory({ pool, tables: ['users'] })
+		history = new PgChronicle({ pool, tables: ['users'] })
 		await history.setup()
 	})
 

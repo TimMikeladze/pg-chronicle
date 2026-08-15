@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { PgHistory } from '../src'
-import { buildTriggerFunctionSql } from '../src/pg-history-triggers'
+import { PgChronicle } from '../src'
+import { buildTriggerFunctionSql } from '../src/pg-chronicle-triggers'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()
 
-describe('PgHistory triggers', () => {
+describe('PgChronicle triggers', () => {
 	beforeEach(async () => {
 		const pool = await getTestConnection()
 
@@ -21,7 +21,7 @@ describe('PgHistory triggers', () => {
 
 	test('should capture INSERT operations', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Insert a user
@@ -43,7 +43,7 @@ describe('PgHistory triggers', () => {
 
 	test('should capture UPDATE operations', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Insert then update
@@ -68,7 +68,7 @@ describe('PgHistory triggers', () => {
 
 	test('should capture DELETE operations', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Insert then delete
@@ -91,7 +91,7 @@ describe('PgHistory triggers', () => {
 
 	test('should extract record_id correctly', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Insert a user
@@ -123,7 +123,7 @@ describe('PgHistory triggers', () => {
       )
     `)
 
-		const audit = new PgHistory({ pool, tables: ['profiles'] })
+		const audit = new PgChronicle({ pool, tables: ['profiles'] })
 		await audit.setup()
 
 		// Insert a profile
@@ -158,7 +158,7 @@ describe('PgHistory triggers', () => {
       )
     `)
 
-		const audit = new PgHistory({ pool, tables: ['user_roles'] })
+		const audit = new PgChronicle({ pool, tables: ['user_roles'] })
 		await audit.setup()
 
 		// Insert a user role
@@ -193,7 +193,7 @@ describe('PgHistory triggers', () => {
       )
     `)
 
-		const audit = new PgHistory({ pool, tables: ['logs'] })
+		const audit = new PgChronicle({ pool, tables: ['logs'] })
 		await audit.setup()
 
 		// Insert a log entry

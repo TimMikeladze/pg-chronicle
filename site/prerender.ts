@@ -24,7 +24,7 @@ import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
 const SHOTS = [
 	{
 		label: 'Timeline',
-		alt: 'One record’s change timeline in the pg-history dashboard: each entry names the columns it changed, its actor and how long ago, and expands into a before/after diff with a revert button.',
+		alt: 'One record’s change timeline in the pg-chronicle dashboard: each entry names the columns it changed, its actor and how long ago, and expands into a before/after diff with a revert button.',
 		light: '/shots/timeline-light.png',
 		dark: '/shots/timeline-dark.png',
 	},
@@ -42,8 +42,8 @@ const SHOTS = [
 	},
 ] as const
 
-const REPO = 'https://github.com/TimMikeladze/pg-history'
-const NPM = 'https://www.npmjs.com/package/pg-history'
+const REPO = 'https://github.com/TimMikeladze/pg-chronicle'
+const NPM = 'https://www.npmjs.com/package/pg-chronicle'
 
 /**
  * One-click deploy. The button clones `dashboard/` on its own — the UI plus
@@ -57,28 +57,28 @@ const NPM = 'https://www.npmjs.com/package/pg-history'
  * with the README's Deployment section.
  */
 const DEPLOY_ENV_DEFAULTS = {
-	PG_HISTORY_JWT_ALG: 'HS256',
-	PG_HISTORY_POOL_MAX: '3',
-	PG_HISTORY_STATEMENT_TIMEOUT_MS: '30000',
-	PG_HISTORY_DASHBOARD_ACTOR: 'dashboard',
-	PG_HISTORY_RETENTION_DAYS: '90',
-	PG_HISTORY_GRACE_PERIOD_DAYS: '7',
-	PG_HISTORY_BATCH_SIZE: '10000',
+	PG_CHRONICLE_JWT_ALG: 'HS256',
+	PG_CHRONICLE_POOL_MAX: '3',
+	PG_CHRONICLE_STATEMENT_TIMEOUT_MS: '30000',
+	PG_CHRONICLE_DASHBOARD_ACTOR: 'dashboard',
+	PG_CHRONICLE_RETENTION_DAYS: '90',
+	PG_CHRONICLE_GRACE_PERIOD_DAYS: '7',
+	PG_CHRONICLE_BATCH_SIZE: '10000',
 } as const
 
 const VERCEL_DEPLOY = `https://vercel.com/new/clone?${new URLSearchParams({
 	'repository-url': `${REPO}/tree/main/dashboard`,
-	'project-name': 'pg-history-dashboard',
-	'repository-name': 'pg-history-dashboard',
+	'project-name': 'pg-chronicle-dashboard',
+	'repository-name': 'pg-chronicle-dashboard',
 	env: [
-		'PG_HISTORY_DATABASE_URL',
-		'PG_HISTORY_TABLES',
-		'PG_HISTORY_JWT_SECRET',
+		'PG_CHRONICLE_DATABASE_URL',
+		'PG_CHRONICLE_TABLES',
+		'PG_CHRONICLE_JWT_SECRET',
 		// Without this the deployed dashboard refuses to serve any page in
 		// production — reaching one grants full audit read plus revert, so the
 		// gate fails closed. Omitting it here would ship a one-click deploy that
 		// 503s on first visit.
-		'PG_HISTORY_DASHBOARD_PASSWORD',
+		'PG_CHRONICLE_DASHBOARD_PASSWORD',
 		...Object.keys(DEPLOY_ENV_DEFAULTS),
 	].join(','),
 	envDefaults: JSON.stringify(DEPLOY_ENV_DEFAULTS),
@@ -117,7 +117,7 @@ const PILLARS = [
 ] as const
 
 /** The setup snippet, verbatim from the README's Quick Start. */
-const SETUP_SNIPPET = `const history = new PgHistory({ pool, tables: ['users'] })
+const SETUP_SNIPPET = `const history = new PgChronicle({ pool, tables: ['users'] })
 await history.setup()
 
 // Every INSERT/UPDATE/DELETE on 'users' is audited from here on,
@@ -130,12 +130,12 @@ await history.revert('users', '1', data[1].id)`
 
 /** Title + tagline for the hero, so the README stays the only source of truth. */
 function readHero(md: string) {
-	const title = /^#\s+(.+)$/m.exec(md)?.[1] ?? 'pg-history'
+	const title = /^#\s+(.+)$/m.exec(md)?.[1] ?? 'pg-chronicle'
 	const tagline = md
 		.split(/\r?\n/)
 		.slice(1)
 		.find((l) => l.trim() && !l.startsWith('['))
-	const pkg = /```bash\nbun add ([^\n]+)\n```/.exec(md)?.[1] ?? 'pg-history'
+	const pkg = /```bash\nbun add ([^\n]+)\n```/.exec(md)?.[1] ?? 'pg-chronicle'
 	const install = {
 		bun: `bun add ${pkg}`,
 		npm: `npm install ${pkg}`,
@@ -449,7 +449,7 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 			</div>
 		</section>
 
-		<section class="pitch" aria-label="Why pg-history">
+		<section class="pitch" aria-label="Why pg-chronicle">
 			<div class="pitch-inner">
 				<div class="pillars">
 					${PILLARS.map(

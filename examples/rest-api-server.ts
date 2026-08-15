@@ -14,7 +14,7 @@ import { Client, Pool } from 'pg'
 import { createServer } from '../src/server'
 import { assert, assertEqual, run } from './_assert'
 
-const DB_NAME = `pg_history_api_${Date.now()}`
+const DB_NAME = `pg_chronicle_api_${Date.now()}`
 const ADMIN_URL =
 	process.env.DATABASE_URL ||
 	'postgres://postgres:postgres@localhost:5432/postgres'
@@ -39,7 +39,7 @@ async function main() {
   `)
 
 	// Create and start the server.
-	// PRODUCTION: set PG_HISTORY_JWT_SECRET so the history + revert endpoints
+	// PRODUCTION: set PG_CHRONICLE_JWT_SECRET so the history + revert endpoints
 	// require a JWT. createServer FAILS CLOSED without it. This local example
 	// opts out explicitly via allowUnauthenticated — never do this on a public
 	// deployment (it exposes the destructive revert endpoint to anyone).
@@ -48,12 +48,12 @@ async function main() {
 		port: PORT,
 		enableHistory: true,
 		historyConfig: { tables: ['tasks'] },
-		allowUnauthenticated: !process.env.PG_HISTORY_JWT_SECRET,
+		allowUnauthenticated: !process.env.PG_CHRONICLE_JWT_SECRET,
 	})
 
 	// setup() must be called separately when using createServer
-	const { PgHistory } = await import('../src')
-	const history = new PgHistory({ pool, tables: ['tasks'] })
+	const { PgChronicle } = await import('../src')
+	const history = new PgChronicle({ pool, tables: ['tasks'] })
 	await history.setup()
 
 	const server = Bun.serve({ port: PORT, fetch: app.fetch })

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Pool } from 'pg'
 import { SetupRequiredError } from '../src/errors'
-import { PgHistory } from '../src/PgHistory'
+import { PgChronicle } from '../src/PgChronicle'
 import { createServer } from '../src/server'
 import { cleanDatabase, getTestConnection, setupTestDatabase } from './helpers'
 
@@ -10,7 +10,7 @@ setupTestDatabase()
 describe('SetupRequiredError guard', () => {
 	test('getHistory throws SetupRequiredError before setup()', async () => {
 		const pool = await getTestConnection()
-		const history = new PgHistory({ pool, tables: ['users'] })
+		const history = new PgChronicle({ pool, tables: ['users'] })
 
 		await expect(history.getHistory('users', '1')).rejects.toThrow(
 			SetupRequiredError,
@@ -19,7 +19,7 @@ describe('SetupRequiredError guard', () => {
 
 	test('search throws SetupRequiredError before setup()', async () => {
 		const pool = await getTestConnection()
-		const history = new PgHistory({ pool, tables: ['users'] })
+		const history = new PgChronicle({ pool, tables: ['users'] })
 
 		await expect(history.search({ tables: ['users'] })).rejects.toThrow(
 			SetupRequiredError,
@@ -28,7 +28,7 @@ describe('SetupRequiredError guard', () => {
 
 	test('revert throws SetupRequiredError before setup()', async () => {
 		const pool = await getTestConnection()
-		const history = new PgHistory({ pool, tables: ['users'] })
+		const history = new PgChronicle({ pool, tables: ['users'] })
 
 		await expect(history.revert('users', '1', '1')).rejects.toThrow(
 			SetupRequiredError,
@@ -41,7 +41,7 @@ describe('SetupRequiredError guard', () => {
 			'CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)',
 		)
 
-		const history = new PgHistory({ pool, tables: ['users'] })
+		const history = new PgChronicle({ pool, tables: ['users'] })
 		await history.setup()
 
 		const result = await history.getHistory('users', '1')
@@ -53,7 +53,7 @@ describe('SetupRequiredError guard', () => {
 
 describe('Operation validation in search', () => {
 	let pool: Pool
-	let history: PgHistory
+	let history: PgChronicle
 
 	beforeEach(async () => {
 		pool = await getTestConnection()
@@ -61,7 +61,7 @@ describe('Operation validation in search', () => {
 		await pool.query(
 			'CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)',
 		)
-		history = new PgHistory({ pool, tables: ['users'] })
+		history = new PgChronicle({ pool, tables: ['users'] })
 		await history.setup()
 	})
 
@@ -205,10 +205,10 @@ describe('POST /api/archive endpoint', () => {
 			archiverConfig: {
 				s3: {
 					bucket: 'test-bucket',
-					endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-					accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-					secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-					region: process.env.PG_HISTORY_S3_REGION,
+					endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+					accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+					secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+					region: process.env.PG_CHRONICLE_S3_REGION,
 				},
 				retention: { default: 90 },
 				gracePeriod: 7,
@@ -255,10 +255,10 @@ describe('POST /api/archive endpoint', () => {
 			archiverConfig: {
 				s3: {
 					bucket: 'test-bucket',
-					endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-					accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-					secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-					region: process.env.PG_HISTORY_S3_REGION,
+					endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+					accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+					secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+					region: process.env.PG_CHRONICLE_S3_REGION,
 				},
 				retention: { default: 90 },
 				gracePeriod: 7,
@@ -279,7 +279,7 @@ describe('POST /api/archive endpoint', () => {
 
 describe('ILIKE statement timeout', () => {
 	let pool: Pool
-	let history: PgHistory
+	let history: PgChronicle
 
 	beforeEach(async () => {
 		pool = await getTestConnection()
@@ -287,7 +287,7 @@ describe('ILIKE statement timeout', () => {
 		await pool.query(
 			'CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)',
 		)
-		history = new PgHistory({ pool, tables: ['users'] })
+		history = new PgChronicle({ pool, tables: ['users'] })
 		await history.setup()
 	})
 

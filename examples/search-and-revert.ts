@@ -12,10 +12,10 @@
  */
 
 import { Client, Pool } from 'pg'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import { assert, assertEqual, run } from './_assert'
 
-const DB_NAME = `pg_history_search_revert_${Date.now()}`
+const DB_NAME = `pg_chronicle_search_revert_${Date.now()}`
 const ADMIN_URL =
 	process.env.DATABASE_URL ||
 	'postgres://postgres:postgres@localhost:5432/postgres'
@@ -39,7 +39,7 @@ async function main() {
       )
     `)
 
-		const history = new PgHistory({ pool, tables: ['orders'] })
+		const history = new PgChronicle({ pool, tables: ['orders'] })
 		await history.setup()
 
 		// ── Seed some data ───────────────────────────────────────

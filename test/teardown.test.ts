@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()
 
-describe('PgHistory.teardown', () => {
+describe('PgChronicle.teardown', () => {
 	beforeEach(async () => {
 		const pool = await getTestConnection()
 		await pool.query(`
@@ -18,7 +18,7 @@ describe('PgHistory.teardown', () => {
 
 	test('should remove all audit infrastructure', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Verify setup worked
@@ -43,7 +43,7 @@ describe('PgHistory.teardown', () => {
 
 	test('should remove triggers from tables', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Verify trigger exists
@@ -66,7 +66,7 @@ describe('PgHistory.teardown', () => {
 
 	test('should be idempotent - running twice works', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await audit.teardown()

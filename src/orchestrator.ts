@@ -1,7 +1,7 @@
 import type { Pool } from 'pg'
 import pg from 'pg'
 import { consoleLogger, type Logger } from './logger'
-import { validateIdentifier } from './pg-history-validators'
+import { validateIdentifier } from './pg-chronicle-validators'
 import { updateArchivalStats } from './schema'
 import type {
 	OrchestratorConfig,
@@ -13,10 +13,10 @@ import type {
 } from './types'
 
 // Fixed namespace for advisory locks to avoid collisions with other lock users.
-// We prefix the table name with 'pg-history:' before hashing so two different
+// We prefix the table name with 'pg-chronicle:' before hashing so two different
 // applications using hashtext() on raw table names cannot collide with us.
 const ADVISORY_LOCK_NAMESPACE = 73_616_468 // arbitrary stable int32
-const ADVISORY_LOCK_KEY_PREFIX = 'pg-history:'
+const ADVISORY_LOCK_KEY_PREFIX = 'pg-chronicle:'
 
 export class Orchestrator {
 	private s3Config: S3Config
@@ -142,7 +142,7 @@ export class Orchestrator {
 	}
 
 	async discoverTables(pool: Pool): Promise<string[]> {
-		// Query pg_trigger to find tables with pg-history audit triggers.
+		// Query pg_trigger to find tables with pg-chronicle audit triggers.
 		// We require BOTH:
 		//   1. The trigger name matches 'audit_trigger_%'
 		//   2. The trigger's function name matches 'audit_trigger_func_%'
@@ -173,7 +173,7 @@ export class Orchestrator {
 	 * database clock, so archival cannot disagree with `softDeleteArchived` /
 	 * `hardDeletePurged` (which do their interval arithmetic in SQL) under
 	 * app-server/DB clock skew. This method remains for callers driving
-	 * `PgHistoryArchiver.processBatch` themselves, and for inspecting the
+	 * `PgChronicleArchiver.processBatch` themselves, and for inspecting the
 	 * configured policy — if the two ever need to agree exactly, ask the
 	 * database, not this.
 	 */
@@ -386,8 +386,8 @@ export class Orchestrator {
 			}
 
 			// Create archiver
-			const { PgHistoryArchiver } = await import('./PgHistoryArchiver')
-			const archiver = new PgHistoryArchiver({
+			const { PgChronicleArchiver } = await import('./PgChronicleArchiver')
+			const archiver = new PgChronicleArchiver({
 				pool,
 				s3: this.s3Config,
 				retention: this.retentionConfig,
@@ -399,7 +399,7 @@ export class Orchestrator {
 			})
 			// Schema is already initialized by callers that use the archiver
 			// directly; mark it ready here so reapStaleClaims/processBatch don't
-			// re-run setup under the advisory lock. The PgHistory.setup() call in
+			// re-run setup under the advisory lock. The PgChronicle.setup() call in
 			// server.ts and standalone scripts handles the actual DDL.
 			await archiver.setup()
 

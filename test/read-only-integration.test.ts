@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { PgHistory } from '../src/PgHistory'
+import { PgChronicle } from '../src/PgChronicle'
 import { createServer } from '../src/server'
 import type { AuditEntry } from '../src/types'
 import { getTestConnection, setupTestDatabase } from './helpers'
@@ -29,13 +29,13 @@ describe('Read-Only API Integration Test', () => {
 			)
 		`)
 
-		// Step 2: Initialize PgHistory and set up triggers
-		console.log('Step 2: Setting up PgHistory triggers...')
-		const pgHistory = new PgHistory({
+		// Step 2: Initialize PgChronicle and set up triggers
+		console.log('Step 2: Setting up PgChronicle triggers...')
+		const pgChronicle = new PgChronicle({
 			tables: ['users', 'posts'],
 			pool,
 		})
-		await pgHistory.setup()
+		await pgChronicle.setup()
 
 		// Step 3: Create test data (INSERT and UPDATE operations)
 		console.log('Step 3: Creating test data...')
@@ -257,7 +257,7 @@ describe('Read-Only API Integration Test', () => {
 
 		// Step 10: Cleanup
 		console.log('Step 10: Cleaning up...')
-		await pgHistory.teardown()
+		await pgChronicle.teardown()
 
 		console.log('✓ All read-only integration tests passed!')
 	})
@@ -274,12 +274,12 @@ describe('Read-Only API Integration Test', () => {
 			)
 		`)
 
-		// Setup PgHistory
-		const pgHistory = new PgHistory({
+		// Setup PgChronicle
+		const pgChronicle = new PgChronicle({
 			tables: ['products'],
 			pool,
 		})
-		await pgHistory.setup()
+		await pgChronicle.setup()
 
 		// Create multiple records to test pagination
 		await pool.query(
@@ -324,16 +324,16 @@ describe('Read-Only API Integration Test', () => {
 		const overlap = page1Ids.filter((id: string) => page2Ids.includes(id))
 		expect(overlap.length).toBe(0)
 
-		await pgHistory.teardown()
+		await pgChronicle.teardown()
 	})
 
 	test('should handle JWT authentication when enabled', async () => {
 		// Save original env
-		const originalSecret = process.env.PG_HISTORY_JWT_SECRET
+		const originalSecret = process.env.PG_CHRONICLE_JWT_SECRET
 
 		try {
 			// Enable JWT auth
-			process.env.PG_HISTORY_JWT_SECRET = 'test-secret-key'
+			process.env.PG_CHRONICLE_JWT_SECRET = 'test-secret-key'
 
 			const pool = await getTestConnection()
 
@@ -344,11 +344,11 @@ describe('Read-Only API Integration Test', () => {
 				)
 			`)
 
-			const pgHistory = new PgHistory({
+			const pgChronicle = new PgChronicle({
 				tables: ['items'],
 				pool,
 			})
-			await pgHistory.setup()
+			await pgChronicle.setup()
 
 			const { app } = await createServer({
 				pool,
@@ -367,13 +367,13 @@ describe('Read-Only API Integration Test', () => {
 			const healthRes = await app.request('/health')
 			expect(healthRes.status).toBe(200)
 
-			await pgHistory.teardown()
+			await pgChronicle.teardown()
 		} finally {
 			// Restore original env
 			if (originalSecret === undefined) {
-				delete process.env.PG_HISTORY_JWT_SECRET
+				delete process.env.PG_CHRONICLE_JWT_SECRET
 			} else {
-				process.env.PG_HISTORY_JWT_SECRET = originalSecret
+				process.env.PG_CHRONICLE_JWT_SECRET = originalSecret
 			}
 		}
 	})

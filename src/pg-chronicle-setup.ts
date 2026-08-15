@@ -3,7 +3,7 @@ import type { Pool } from 'pg'
 import type { Logger } from './logger'
 
 /**
- * PG identifier limit is 63 chars. Prefixes used by PgHistory eat part of
+ * PG identifier limit is 63 chars. Prefixes used by PgChronicle eat part of
  * that budget; beyond the budget PG silently truncates, which lets two
  * long-named tables collide into the same partition/function/trigger.
  *
@@ -63,7 +63,7 @@ export async function setupAuditTable(
 	// Actor columns capture WHO made each change — required for any audit trail.
 	// ADD COLUMN IF NOT EXISTS makes this idempotent and upgrades an audit_log
 	// created by an older version (pre-actor) in place. db_user = current_user,
-	// app_actor = current_setting('pg_history.actor'), client_addr =
+	// app_actor = current_setting('pg_chronicle.actor'), client_addr =
 	// inet_client_addr(); populated by the generated trigger functions.
 	await pool.query(
 		`ALTER TABLE ${auditTable} ADD COLUMN IF NOT EXISTS db_user TEXT`,

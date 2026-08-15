@@ -11,7 +11,7 @@
  */
 import { beforeEach, describe, expect, test } from 'bun:test'
 import type { Pool } from 'pg'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import { createServer } from '../src/server'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
@@ -26,7 +26,7 @@ async function seedArchivableRows(pool: Pool): Promise<void> {
 	await pool.query(
 		`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)`,
 	)
-	const history = new PgHistory({ pool, tables: ['users'] })
+	const history = new PgChronicle({ pool, tables: ['users'] })
 	await history.setup()
 
 	// Old enough to be past the retention cutoff, so the archiver actually

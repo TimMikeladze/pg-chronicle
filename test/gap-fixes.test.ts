@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { sign } from 'hono/jwt'
 import type { Pool } from 'pg'
-import { PgHistory } from '../src/PgHistory'
+import { PgChronicle } from '../src/PgChronicle'
 import { createServer } from '../src/server'
 import { parseSearchBody } from '../src/validation'
 import { getTestConnection, setupTestDatabase } from './helpers'
@@ -23,14 +23,14 @@ const ARCHIVER_CONFIG = {
 
 /**
  * The archiver's schema setup extends `audit_log`, so it has to exist before a
- * server with `enableArchiver` can start. Running PgHistory's own setup is the
+ * server with `enableArchiver` can start. Running PgChronicle's own setup is the
  * realistic way to get there.
  */
 async function seedAuditLog(pool: Pool): Promise<void> {
 	await pool.query(
 		`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)`,
 	)
-	const history = new PgHistory({ pool, tables: ['users'] })
+	const history = new PgChronicle({ pool, tables: ['users'] })
 	await history.setup()
 }
 
@@ -65,7 +65,7 @@ describe('POST /api/archive accepts either credential', () => {
 	 * called at all — by anyone.
 	 */
 	test('a scheduler can call it with the cron secret while JWT auth is on', async () => {
-		restoreEnv = withEnv({ PG_HISTORY_JWT_SECRET: 'jwt-secret-value' })
+		restoreEnv = withEnv({ PG_CHRONICLE_JWT_SECRET: 'jwt-secret-value' })
 		const pool = await getTestConnection()
 		await seedAuditLog(pool)
 		const { app } = await createServer({
@@ -85,7 +85,7 @@ describe('POST /api/archive accepts either credential', () => {
 	})
 
 	test('the dashboard can call it with a JWT while a cron secret is set', async () => {
-		restoreEnv = withEnv({ PG_HISTORY_JWT_SECRET: 'jwt-secret-value' })
+		restoreEnv = withEnv({ PG_CHRONICLE_JWT_SECRET: 'jwt-secret-value' })
 		const pool = await getTestConnection()
 		await seedAuditLog(pool)
 		const { app } = await createServer({
@@ -105,7 +105,7 @@ describe('POST /api/archive accepts either credential', () => {
 	})
 
 	test('a credential that is neither is still rejected', async () => {
-		restoreEnv = withEnv({ PG_HISTORY_JWT_SECRET: 'jwt-secret-value' })
+		restoreEnv = withEnv({ PG_CHRONICLE_JWT_SECRET: 'jwt-secret-value' })
 		const pool = await getTestConnection()
 		await seedAuditLog(pool)
 		const { app } = await createServer({
@@ -124,7 +124,7 @@ describe('POST /api/archive accepts either credential', () => {
 	})
 
 	test('the cron secret does not open non-operational endpoints', async () => {
-		restoreEnv = withEnv({ PG_HISTORY_JWT_SECRET: 'jwt-secret-value' })
+		restoreEnv = withEnv({ PG_CHRONICLE_JWT_SECRET: 'jwt-secret-value' })
 		const pool = await getTestConnection()
 		await seedAuditLog(pool)
 		const { app } = await createServer({
@@ -179,7 +179,7 @@ describe('endpoints are not registered when nothing can authenticate them', () =
 
 	test('archiver endpoints are absent with no JWT and no cron secret', async () => {
 		restoreEnv = withEnv({
-			PG_HISTORY_JWT_SECRET: undefined,
+			PG_CHRONICLE_JWT_SECRET: undefined,
 			CRON_SECRET: undefined,
 		})
 		const { app } = await archiverServer()
@@ -195,7 +195,7 @@ describe('endpoints are not registered when nothing can authenticate them', () =
 
 	test('allowUnauthenticated is the explicit opt-in that registers them', async () => {
 		restoreEnv = withEnv({
-			PG_HISTORY_JWT_SECRET: undefined,
+			PG_CHRONICLE_JWT_SECRET: undefined,
 			CRON_SECRET: undefined,
 		})
 		const { app } = await archiverServer({ allowUnauthenticated: true })
@@ -206,7 +206,7 @@ describe('endpoints are not registered when nothing can authenticate them', () =
 
 	test('a cron secret alone authenticates the stats endpoints', async () => {
 		restoreEnv = withEnv({
-			PG_HISTORY_JWT_SECRET: undefined,
+			PG_CHRONICLE_JWT_SECRET: undefined,
 			CRON_SECRET: undefined,
 		})
 		const { app } = await archiverServer({
@@ -246,7 +246,7 @@ describe('/openapi is registered only when something guards it', () => {
 	}
 
 	test('absent in a cron-only deployment, so the API shape does not leak', async () => {
-		restoreEnv = withEnv({ PG_HISTORY_JWT_SECRET: undefined })
+		restoreEnv = withEnv({ PG_CHRONICLE_JWT_SECRET: undefined })
 		// A real cron-only deployment: archiver on, history API off (with it on
 		// and no JWT secret, createServer refuses to start at all), authenticated
 		// solely by the cron secret.
@@ -263,7 +263,7 @@ describe('/openapi is registered only when something guards it', () => {
 	})
 
 	test('public when explicitly opted into', async () => {
-		restoreEnv = withEnv({ PG_HISTORY_JWT_SECRET: undefined })
+		restoreEnv = withEnv({ PG_CHRONICLE_JWT_SECRET: undefined })
 		const { app } = await server({
 			allowUnauthenticated: true,
 			publicOpenApi: true,
@@ -272,7 +272,7 @@ describe('/openapi is registered only when something guards it', () => {
 	})
 
 	test('JWT-gated when a secret is configured', async () => {
-		restoreEnv = withEnv({ PG_HISTORY_JWT_SECRET: 'openapi-secret' })
+		restoreEnv = withEnv({ PG_CHRONICLE_JWT_SECRET: 'openapi-secret' })
 		const { app } = await server()
 
 		expect((await app.request('/openapi')).status).toBe(401)
@@ -285,7 +285,7 @@ describe('/openapi is registered only when something guards it', () => {
 	})
 
 	test('the cron secret does not unlock it', async () => {
-		restoreEnv = withEnv({ PG_HISTORY_JWT_SECRET: 'openapi-secret' })
+		restoreEnv = withEnv({ PG_CHRONICLE_JWT_SECRET: 'openapi-secret' })
 		const pool = await getTestConnection()
 		await seedAuditLog(pool)
 		const { app } = await createServer({
@@ -364,13 +364,13 @@ describe('JWT issuer / audience are verified when configured', () => {
 			pool,
 			enableHistory: true,
 			historyConfig: { tables: ['users'] },
-			jwt: { issuer: 'https://issuer.example', audience: 'pg-history' },
+			jwt: { issuer: 'https://issuer.example', audience: 'pg-chronicle' },
 			serverless: true,
 		})
 	}
 
 	test('a token from another service sharing the secret is rejected', async () => {
-		restoreEnv = withEnv({ PG_HISTORY_JWT_SECRET: 'shared-secret' })
+		restoreEnv = withEnv({ PG_CHRONICLE_JWT_SECRET: 'shared-secret' })
 		const { app } = await serverWithClaims()
 
 		const foreign = await sign(
@@ -384,11 +384,11 @@ describe('JWT issuer / audience are verified when configured', () => {
 	})
 
 	test('a token minted for this API is accepted', async () => {
-		restoreEnv = withEnv({ PG_HISTORY_JWT_SECRET: 'shared-secret' })
+		restoreEnv = withEnv({ PG_CHRONICLE_JWT_SECRET: 'shared-secret' })
 		const { app } = await serverWithClaims()
 
 		const ours = await sign(
-			{ sub: 'someone', iss: 'https://issuer.example', aud: 'pg-history' },
+			{ sub: 'someone', iss: 'https://issuer.example', aud: 'pg-chronicle' },
 			'shared-secret',
 		)
 		const res = await app.request('/api/history/users/1', {
@@ -464,7 +464,7 @@ describe('rate limiting buckets by client identity', () => {
 	})
 })
 
-describe('pg-history/next is configurable in code', () => {
+describe('pg-chronicle/next is configurable in code', () => {
 	let restoreEnv: (() => void) | undefined
 
 	afterEach(() => {
@@ -474,13 +474,13 @@ describe('pg-history/next is configurable in code', () => {
 
 	/**
 	 * `createHandlers` exists so callers can supply what no env var can express —
-	 * above all the `authorize` hook. Requiring PG_HISTORY_TABLES anyway, even
+	 * above all the `authorize` hook. Requiring PG_CHRONICLE_TABLES anyway, even
 	 * when historyConfig was passed in code, defeated that.
 	 */
-	test('historyConfig in code replaces the PG_HISTORY_TABLES requirement', async () => {
+	test('historyConfig in code replaces the PG_CHRONICLE_TABLES requirement', async () => {
 		restoreEnv = withEnv({
-			PG_HISTORY_TABLES: undefined,
-			PG_HISTORY_JWT_SECRET: 'jwt-secret-value',
+			PG_CHRONICLE_TABLES: undefined,
+			PG_CHRONICLE_JWT_SECRET: 'jwt-secret-value',
 		})
 		const pool = await getTestConnection()
 		await pool.query(
@@ -495,18 +495,18 @@ describe('pg-history/next is configurable in code', () => {
 		})
 
 		// Reaching /health proves the app initialised — it would otherwise have
-		// thrown "PG_HISTORY_TABLES environment variable is required" and every
+		// thrown "PG_CHRONICLE_TABLES environment variable is required" and every
 		// request would return 500 INIT_ERROR.
 		const health = await handlers.GET(
-			new Request('http://pg-history.test/health'),
+			new Request('http://pg-chronicle.test/health'),
 		)
 		expect(health.status).toBe(200)
 	})
 
 	test('the authorize hook supplied in code is enforced', async () => {
 		restoreEnv = withEnv({
-			PG_HISTORY_TABLES: undefined,
-			PG_HISTORY_JWT_SECRET: 'jwt-secret-value',
+			PG_CHRONICLE_TABLES: undefined,
+			PG_CHRONICLE_JWT_SECRET: 'jwt-secret-value',
 		})
 		const pool = await getTestConnection()
 		await pool.query(
@@ -524,7 +524,7 @@ describe('pg-history/next is configurable in code', () => {
 
 		const token = await sign({ sub: 'someone' }, 'jwt-secret-value')
 		const res = await handlers.GET(
-			new Request('http://pg-history.test/api/history/users/1', {
+			new Request('http://pg-chronicle.test/api/history/users/1', {
 				headers: { Authorization: `Bearer ${token}` },
 			}),
 		)
@@ -533,17 +533,17 @@ describe('pg-history/next is configurable in code', () => {
 })
 
 describe('TRUNCATE entries are first-class', () => {
-	let history: PgHistory | undefined
+	let history: PgChronicle | undefined
 
 	afterEach(async () => {
 		history = undefined
 	})
 
-	async function seedTruncate(pool: Pool): Promise<PgHistory> {
+	async function seedTruncate(pool: Pool): Promise<PgChronicle> {
 		await pool.query(
 			`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT)`,
 		)
-		const h = new PgHistory({ pool, tables: ['users'] })
+		const h = new PgChronicle({ pool, tables: ['users'] })
 		await h.setup()
 		await pool.query(`INSERT INTO users (name) VALUES ('alice')`)
 		await pool.query(`TRUNCATE TABLE users`)

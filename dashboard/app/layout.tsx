@@ -14,10 +14,10 @@ import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { isSignedIn, loginEnabled } from '@/lib/auth-server'
 import { readConfig } from '@/lib/config'
-import { getHealth } from '@/lib/pg-history-server'
+import { getHealth } from '@/lib/pg-chronicle-server'
 
 export const metadata: Metadata = {
-	title: 'pg-history',
+	title: 'pg-chronicle',
 	description: 'Browse, search, and revert the PostgreSQL audit trail.',
 }
 

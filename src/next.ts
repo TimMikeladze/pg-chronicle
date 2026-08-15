@@ -32,87 +32,87 @@ export interface NextRouteHandlers {
  *
  * `overrides` is consulted only to decide which env vars are *required*: a
  * caller who passes `historyConfig` in code has already answered the question
- * `PG_HISTORY_TABLES` exists to answer, and demanding the variable anyway would
+ * `PG_CHRONICLE_TABLES` exists to answer, and demanding the variable anyway would
  * make the whole point of `createHandlers` — configuring in code — impossible.
  */
 function envConfig(
 	overrides: NextServerOverrides,
 ): Omit<ServerConfig, 'pool'> & { pool?: Pool } {
 	const tables =
-		process.env.PG_HISTORY_TABLES?.split(',')
+		process.env.PG_CHRONICLE_TABLES?.split(',')
 			.map((t) => t.trim())
 			.filter(Boolean) || []
 	if (tables.length === 0 && !overrides.historyConfig) {
 		throw new Error(
-			'PG_HISTORY_TABLES environment variable is required (comma-separated table names), ' +
+			'PG_CHRONICLE_TABLES environment variable is required (comma-separated table names), ' +
 				'or pass historyConfig to createHandlers()',
 		)
 	}
 
 	let archiverConfig: ServerConfig['archiverConfig']
-	if (process.env.PG_HISTORY_S3_BUCKET) {
+	if (process.env.PG_CHRONICLE_S3_BUCKET) {
 		const retentionDays = Number.parseInt(
-			process.env.PG_HISTORY_RETENTION_DAYS || '90',
+			process.env.PG_CHRONICLE_RETENTION_DAYS || '90',
 			10,
 		)
 		if (!Number.isFinite(retentionDays) || retentionDays < 1) {
 			throw new Error(
-				`PG_HISTORY_RETENTION_DAYS must be a positive integer (got: ${process.env.PG_HISTORY_RETENTION_DAYS})`,
+				`PG_CHRONICLE_RETENTION_DAYS must be a positive integer (got: ${process.env.PG_CHRONICLE_RETENTION_DAYS})`,
 			)
 		}
 
 		const gracePeriod = Number.parseInt(
-			process.env.PG_HISTORY_GRACE_PERIOD_DAYS || '7',
+			process.env.PG_CHRONICLE_GRACE_PERIOD_DAYS || '7',
 			10,
 		)
 		// gracePeriod may be 0 (no grace — purge once the S3 backup is confirmed).
 		if (!Number.isFinite(gracePeriod) || gracePeriod < 0) {
 			throw new Error(
-				`PG_HISTORY_GRACE_PERIOD_DAYS must be an integer >= 0 (got: ${process.env.PG_HISTORY_GRACE_PERIOD_DAYS})`,
+				`PG_CHRONICLE_GRACE_PERIOD_DAYS must be an integer >= 0 (got: ${process.env.PG_CHRONICLE_GRACE_PERIOD_DAYS})`,
 			)
 		}
 
 		const batchSize = Number.parseInt(
-			process.env.PG_HISTORY_BATCH_SIZE || '10000',
+			process.env.PG_CHRONICLE_BATCH_SIZE || '10000',
 			10,
 		)
 		if (!Number.isFinite(batchSize) || batchSize < 1) {
 			throw new Error(
-				`PG_HISTORY_BATCH_SIZE must be a positive integer (got: ${process.env.PG_HISTORY_BATCH_SIZE})`,
+				`PG_CHRONICLE_BATCH_SIZE must be a positive integer (got: ${process.env.PG_CHRONICLE_BATCH_SIZE})`,
 			)
 		}
 
-		const maxBatchBytes = process.env.PG_HISTORY_MAX_BATCH_BYTES
-			? Number.parseInt(process.env.PG_HISTORY_MAX_BATCH_BYTES, 10)
+		const maxBatchBytes = process.env.PG_CHRONICLE_MAX_BATCH_BYTES
+			? Number.parseInt(process.env.PG_CHRONICLE_MAX_BATCH_BYTES, 10)
 			: undefined
 		if (
 			maxBatchBytes !== undefined &&
 			(!Number.isFinite(maxBatchBytes) || maxBatchBytes < 1)
 		) {
 			throw new Error(
-				`PG_HISTORY_MAX_BATCH_BYTES must be a positive integer (got: ${process.env.PG_HISTORY_MAX_BATCH_BYTES})`,
+				`PG_CHRONICLE_MAX_BATCH_BYTES must be a positive integer (got: ${process.env.PG_CHRONICLE_MAX_BATCH_BYTES})`,
 			)
 		}
 
-		const staleClaimMinutes = process.env.PG_HISTORY_STALE_CLAIM_MINUTES
-			? Number.parseInt(process.env.PG_HISTORY_STALE_CLAIM_MINUTES, 10)
+		const staleClaimMinutes = process.env.PG_CHRONICLE_STALE_CLAIM_MINUTES
+			? Number.parseInt(process.env.PG_CHRONICLE_STALE_CLAIM_MINUTES, 10)
 			: undefined
 		if (
 			staleClaimMinutes !== undefined &&
 			(!Number.isFinite(staleClaimMinutes) || staleClaimMinutes < 1)
 		) {
 			throw new Error(
-				`PG_HISTORY_STALE_CLAIM_MINUTES must be a positive integer (got: ${process.env.PG_HISTORY_STALE_CLAIM_MINUTES})`,
+				`PG_CHRONICLE_STALE_CLAIM_MINUTES must be a positive integer (got: ${process.env.PG_CHRONICLE_STALE_CLAIM_MINUTES})`,
 			)
 		}
 
 		archiverConfig = {
 			s3: {
-				bucket: process.env.PG_HISTORY_S3_BUCKET,
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-				region: process.env.PG_HISTORY_S3_REGION,
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
+				bucket: process.env.PG_CHRONICLE_S3_BUCKET,
+				endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+				region: process.env.PG_CHRONICLE_S3_REGION,
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
 			},
 			retention: { default: retentionDays },
 			gracePeriod,
@@ -126,27 +126,29 @@ function envConfig(
 		serverless: true,
 		enableHistory: true,
 		historyConfig: { tables },
-		enableArchiver: !!process.env.PG_HISTORY_S3_BUCKET,
+		enableArchiver: !!process.env.PG_CHRONICLE_S3_BUCKET,
 		archiverConfig,
 	}
 }
 
 function envPool(): Pool | Promise<Pool> {
-	const databaseUrl = process.env.PG_HISTORY_DATABASE_URL
+	const databaseUrl = process.env.PG_CHRONICLE_DATABASE_URL
 	if (!databaseUrl) {
-		throw new Error('PG_HISTORY_DATABASE_URL environment variable is required')
+		throw new Error(
+			'PG_CHRONICLE_DATABASE_URL environment variable is required',
+		)
 	}
 
-	const poolMax = Number.parseInt(process.env.PG_HISTORY_POOL_MAX || '3', 10)
+	const poolMax = Number.parseInt(process.env.PG_CHRONICLE_POOL_MAX || '3', 10)
 	if (!Number.isFinite(poolMax) || poolMax < 1) {
 		throw new Error(
-			`PG_HISTORY_POOL_MAX must be a positive integer (got: ${process.env.PG_HISTORY_POOL_MAX})`,
+			`PG_CHRONICLE_POOL_MAX must be a positive integer (got: ${process.env.PG_CHRONICLE_POOL_MAX})`,
 		)
 	}
 	// Bound every pool query so a stuck connection can't wedge a warm
-	// serverless instance. See main.ts for PG_HISTORY_STATEMENT_TIMEOUT_MS.
+	// serverless instance. See main.ts for PG_CHRONICLE_STATEMENT_TIMEOUT_MS.
 	const statementTimeoutMs = Number.parseInt(
-		process.env.PG_HISTORY_STATEMENT_TIMEOUT_MS || '30000',
+		process.env.PG_CHRONICLE_STATEMENT_TIMEOUT_MS || '30000',
 		10,
 	)
 	return import('pg').then(
@@ -165,7 +167,7 @@ function envPool(): Pool | Promise<Pool> {
 }
 
 /**
- * Build App Router handlers for the pg-history REST API.
+ * Build App Router handlers for the pg-chronicle REST API.
  *
  * Call this instead of re-exporting the default `GET`/`POST` when you need
  * anything that cannot be expressed as an environment variable — above all an
@@ -173,7 +175,7 @@ function envPool(): Pool | Promise<Pool> {
  *
  * ```ts
  * // app/api/[[...route]]/route.ts
- * import { createHandlers } from 'pg-history/next'
+ * import { createHandlers } from 'pg-chronicle/next'
  *
  * export const { GET, POST, OPTIONS } = createHandlers({
  *   authorize: async ({ actor, table, recordId }) =>

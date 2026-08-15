@@ -1,22 +1,22 @@
 import { describe, expect, test } from 'bun:test'
-import { PgHistory } from '../src'
-import { PgHistoryError, RevertError, ValidationError } from '../src/errors'
+import { PgChronicle } from '../src'
+import { PgChronicleError, RevertError, ValidationError } from '../src/errors'
 import {
 	validateColumnNames,
 	validateCursor,
 	validateIdentifier,
 	validateLimit,
 	validateStringInput,
-} from '../src/pg-history-validators'
+} from '../src/pg-chronicle-validators'
 import { parseRevertBody, parseSearchBody } from '../src/validation'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()
 
-describe('PgHistory validation', () => {
+describe('PgChronicle validation', () => {
 	test('should throw if no tables configured', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: [] })
+		const audit = new PgChronicle({ pool, tables: [] })
 
 		await expect(async () => {
 			await audit.setup()
@@ -25,7 +25,7 @@ describe('PgHistory validation', () => {
 
 	test('should throw if querying unconfigured table', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await expect(async () => {
@@ -35,7 +35,7 @@ describe('PgHistory validation', () => {
 
 	test('should throw if searching unconfigured table', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await expect(async () => {
@@ -170,25 +170,25 @@ describe('parseRevertBody runtime validation', () => {
 // Error class hierarchy
 // ─────────────────────────────────────────────────────────
 
-describe('PgHistory error class hierarchy', () => {
-	test('ValidationError is a PgHistoryError', () => {
+describe('PgChronicle error class hierarchy', () => {
+	test('ValidationError is a PgChronicleError', () => {
 		const err = new ValidationError('bad input')
-		expect(err).toBeInstanceOf(PgHistoryError)
+		expect(err).toBeInstanceOf(PgChronicleError)
 		expect(err.name).toBe('ValidationError')
 	})
 
-	test('RevertError is a PgHistoryError', () => {
+	test('RevertError is a PgChronicleError', () => {
 		const err = new RevertError('cannot revert')
-		expect(err).toBeInstanceOf(PgHistoryError)
+		expect(err).toBeInstanceOf(PgChronicleError)
 		expect(err.name).toBe('RevertError')
 	})
 })
 
 // ─────────────────────────────────────────────────────────
-// pg-history-validators — extracted pure validation functions
+// pg-chronicle-validators — extracted pure validation functions
 // ─────────────────────────────────────────────────────────
 
-describe('pg-history-validators — extracted validation functions', () => {
+describe('pg-chronicle-validators — extracted validation functions', () => {
 	test('validateIdentifier rejects invalid table names', () => {
 		expect(() => validateIdentifier('valid_name', 'table')).not.toThrow()
 		expect(() =>

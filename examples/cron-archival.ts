@@ -15,7 +15,7 @@ import { Client, Pool } from 'pg'
 import { createServer } from '../src/server'
 import { assertEqual, run } from './_assert'
 
-const DB_NAME = `pg_history_cron_${Date.now()}`
+const DB_NAME = `pg_chronicle_cron_${Date.now()}`
 const ADMIN_URL =
 	process.env.DATABASE_URL ||
 	'postgres://postgres:postgres@localhost:5432/postgres'
@@ -41,7 +41,7 @@ async function main() {
 	// Create server in serverless mode with archiver enabled.
 	// This local demo opts out of JWT (createServer fails closed without one);
 	// /api/archive below is still protected by the cron secret. In production set
-	// PG_HISTORY_JWT_SECRET and an `authorize` hook instead.
+	// PG_CHRONICLE_JWT_SECRET and an `authorize` hook instead.
 	const { app } = await createServer({
 		pool,
 		serverless: true,
@@ -52,11 +52,12 @@ async function main() {
 		archiverConfig: {
 			s3: {
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT || 'http://localhost:9000',
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID || 'root',
+				endpoint:
+					process.env.PG_CHRONICLE_S3_ENDPOINT || 'http://localhost:9000',
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID || 'root',
 				secretAccessKey:
-					process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY || 'password',
-				region: process.env.PG_HISTORY_S3_REGION || 'us-west-1',
+					process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY || 'password',
+				region: process.env.PG_CHRONICLE_S3_REGION || 'us-west-1',
 			},
 			retention: { default: 1 }, // 1 day for demo purposes
 			gracePeriod: 0,

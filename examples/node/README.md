@@ -1,14 +1,14 @@
 # Node.js consumer example
 
-Installs the built `pg-history` tarball into a plain Node.js project and exercises
+Installs the built `pg-chronicle` tarball into a plain Node.js project and exercises
 every published entrypoint, so a broken `bun run build` fails here instead of in a
 user's app.
 
 What it checks:
 
-1. ESM `import` of `pg-history` and `pg-history/next`
-2. CommonJS `require('pg-history')` (the `exports.require` branch)
-3. The `pg-history` CLI bin runs under Node (shebang + `--help`)
+1. ESM `import` of `pg-chronicle` and `pg-chronicle/next`
+2. CommonJS `require('pg-chronicle')` (the `exports.require` branch)
+3. The `pg-chronicle` CLI bin runs under Node (shebang + `--help`)
 4. A live audit-trail round trip: setup, INSERT/UPDATE/DELETE, history query, teardown
 
 ## Run

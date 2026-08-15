@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { PgHistory } from '../src'
+import { PgChronicle } from '../src'
 import { getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()
 
-describe('PgHistory.search', () => {
+describe('PgChronicle.search', () => {
 	beforeEach(async () => {
 		const pool = await getTestConnection()
 		await pool.query(`
@@ -25,7 +25,7 @@ describe('PgHistory.search', () => {
 
 	test('should search across JSONB data', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users', 'orders'] })
+		const audit = new PgChronicle({ pool, tables: ['users', 'orders'] })
 		await audit.setup()
 
 		await pool.query(
@@ -46,7 +46,7 @@ describe('PgHistory.search', () => {
 
 	test('should search across multiple tables', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users', 'orders'] })
+		const audit = new PgChronicle({ pool, tables: ['users', 'orders'] })
 		await audit.setup()
 
 		await pool.query(
@@ -64,7 +64,7 @@ describe('PgHistory.search', () => {
 
 	test('should filter by operation', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		await pool.query(
@@ -86,7 +86,7 @@ describe('PgHistory.search', () => {
 
 	test('should filter by date range', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		const now = new Date()
@@ -108,7 +108,7 @@ describe('PgHistory.search', () => {
 
 	test('should support pagination', async () => {
 		const pool = await getTestConnection()
-		const audit = new PgHistory({ pool, tables: ['users'] })
+		const audit = new PgChronicle({ pool, tables: ['users'] })
 		await audit.setup()
 
 		// Create multiple entries

@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Pool } from 'pg'
-import { PgHistory } from '../src/PgHistory'
+import { PgChronicle } from '../src/PgChronicle'
 import { cleanDatabase, getTestConnection, setupTestDatabase } from './helpers'
 
 setupTestDatabase()
 
-describe('PgHistory security - validation', () => {
+describe('PgChronicle security - validation', () => {
 	test('should reject invalid table names', () => {
 		expect(() => {
-			new PgHistory({
+			new PgChronicle({
 				connection: 'postgres://localhost/test',
 				tables: ['users; DROP TABLE audit_log; --'],
 			})
@@ -17,7 +17,7 @@ describe('PgHistory security - validation', () => {
 
 	test('should reject table names with special characters', () => {
 		expect(() => {
-			new PgHistory({
+			new PgChronicle({
 				connection: 'postgres://localhost/test',
 				tables: ['users$table'],
 			})
@@ -26,7 +26,7 @@ describe('PgHistory security - validation', () => {
 
 	test('should reject table names starting with numbers', () => {
 		expect(() => {
-			new PgHistory({
+			new PgChronicle({
 				connection: 'postgres://localhost/test',
 				tables: ['1users'],
 			})
@@ -36,7 +36,7 @@ describe('PgHistory security - validation', () => {
 	test('should reject table names exceeding 63 characters', () => {
 		const longName = 'a'.repeat(64)
 		expect(() => {
-			new PgHistory({
+			new PgChronicle({
 				connection: 'postgres://localhost/test',
 				tables: [longName],
 			})
@@ -45,7 +45,7 @@ describe('PgHistory security - validation', () => {
 
 	test('should accept valid table names', () => {
 		expect(() => {
-			new PgHistory({
+			new PgChronicle({
 				connection: 'postgres://localhost/test',
 				tables: ['users', 'user_accounts', '_private_table', 'Table123'],
 			})
@@ -53,9 +53,9 @@ describe('PgHistory security - validation', () => {
 	})
 })
 
-describe('PgHistory security - database operations', () => {
+describe('PgChronicle security - database operations', () => {
 	let pool: Pool
-	let audit: PgHistory
+	let audit: PgChronicle
 
 	beforeEach(async () => {
 		pool = await getTestConnection()
@@ -79,7 +79,7 @@ describe('PgHistory security - database operations', () => {
 			)
 		`)
 
-		audit = new PgHistory({
+		audit = new PgChronicle({
 			pool,
 			tables: ['malicious_table'],
 		})

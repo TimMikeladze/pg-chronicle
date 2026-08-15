@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { PgHistory } from '../src/PgHistory'
+import { PgChronicle } from '../src/PgChronicle'
 import { createServer } from '../src/server'
 import { cleanDatabase, getTestConnection, setupTestDatabase } from './helpers'
 
@@ -21,7 +21,7 @@ describe('excludeColumns config', () => {
 			)
 		`)
 
-		const history = new PgHistory({
+		const history = new PgChronicle({
 			tables: ['users'],
 			excludeColumns: { users: ['password_hash'] },
 			pool,
@@ -48,7 +48,7 @@ describe('excludeColumns config', () => {
 		const pool = new (require('pg').Pool)()
 		expect(
 			() =>
-				new PgHistory({
+				new PgChronicle({
 					tables: ['users'],
 					excludeColumns: { posts: ['secret'] },
 					pool,
@@ -66,7 +66,7 @@ describe('excludeColumns config', () => {
 			)
 		`)
 
-		const history = new PgHistory({
+		const history = new PgChronicle({
 			tables: ['users'],
 			excludeColumns: { users: ['id'] },
 			pool,
@@ -86,7 +86,7 @@ describe('idempotent UPDATE skip', () => {
 		const pool = await getTestConnection()
 		await pool.query(`CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)`)
 
-		const history = new PgHistory({ tables: ['users'], pool })
+		const history = new PgChronicle({ tables: ['users'], pool })
 		await history.setup()
 
 		await pool.query(`INSERT INTO users (id, name) VALUES (1, 'alice')`)
@@ -142,8 +142,8 @@ describe('archivalRetry config validation', () => {
 describe('JWT alg env validation', () => {
 	test('rejects unsupported algorithm', async () => {
 		const pool = await getTestConnection()
-		process.env.PG_HISTORY_JWT_SECRET = 'test-secret'
-		process.env.PG_HISTORY_JWT_ALG = 'NONE'
+		process.env.PG_CHRONICLE_JWT_SECRET = 'test-secret'
+		process.env.PG_CHRONICLE_JWT_ALG = 'NONE'
 		try {
 			await expect(
 				createServer({
@@ -154,8 +154,8 @@ describe('JWT alg env validation', () => {
 				}),
 			).rejects.toThrow(/not supported/)
 		} finally {
-			delete process.env.PG_HISTORY_JWT_SECRET
-			delete process.env.PG_HISTORY_JWT_ALG
+			delete process.env.PG_CHRONICLE_JWT_SECRET
+			delete process.env.PG_CHRONICLE_JWT_ALG
 		}
 	})
 
@@ -163,8 +163,8 @@ describe('JWT alg env validation', () => {
 		const pool = await getTestConnection()
 		await cleanDatabase()
 		await pool.query(`CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)`)
-		process.env.PG_HISTORY_JWT_SECRET = 'test-public-key'
-		process.env.PG_HISTORY_JWT_ALG = 'RS256'
+		process.env.PG_CHRONICLE_JWT_SECRET = 'test-public-key'
+		process.env.PG_CHRONICLE_JWT_ALG = 'RS256'
 		try {
 			const { app } = await createServer({
 				pool,
@@ -174,8 +174,8 @@ describe('JWT alg env validation', () => {
 			})
 			expect(app).toBeDefined()
 		} finally {
-			delete process.env.PG_HISTORY_JWT_SECRET
-			delete process.env.PG_HISTORY_JWT_ALG
+			delete process.env.PG_CHRONICLE_JWT_SECRET
+			delete process.env.PG_CHRONICLE_JWT_ALG
 		}
 	})
 })
@@ -293,7 +293,7 @@ describe('CORS preflight bypasses JWT', () => {
 		await cleanDatabase()
 		await pool.query(`CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)`)
 
-		process.env.PG_HISTORY_JWT_SECRET = 'preflight-secret'
+		process.env.PG_CHRONICLE_JWT_SECRET = 'preflight-secret'
 		try {
 			const { app } = await createServer({
 				pool,
@@ -312,7 +312,7 @@ describe('CORS preflight bypasses JWT', () => {
 			})
 			expect(res.status).toBeLessThan(300)
 		} finally {
-			delete process.env.PG_HISTORY_JWT_SECRET
+			delete process.env.PG_CHRONICLE_JWT_SECRET
 		}
 	})
 })

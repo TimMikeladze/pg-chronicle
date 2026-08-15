@@ -5,7 +5,7 @@ import { RecordTimeline } from '@/components/record-timeline'
 import { Callout } from '@/components/status'
 import { Button } from '@/components/ui/button'
 import { readConfig } from '@/lib/config'
-import { ApiError, getRecordHistory } from '@/lib/pg-history-server'
+import { ApiError, getRecordHistory } from '@/lib/pg-chronicle-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,7 +34,7 @@ export default async function RecordPage({
 				<p className="text-muted-foreground text-[13px] leading-relaxed">
 					<span className="text-foreground font-mono">{table}</span> is not in{' '}
 					<code className="text-foreground font-mono text-xs">
-						PG_HISTORY_TABLES
+						PG_CHRONICLE_TABLES
 					</code>
 					. Currently audited:{' '}
 					<span className="text-foreground font-mono">

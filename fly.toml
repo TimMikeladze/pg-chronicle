@@ -1,4 +1,4 @@
-app = 'pg-history'
+app = 'pg-chronicle'
 primary_region = 'sjc'
 
 [build]

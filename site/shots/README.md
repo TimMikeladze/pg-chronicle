@@ -19,13 +19,13 @@ Everything is scripted, so the shots can be reproduced rather than restored:
 
 ```bash
 # 1. A throwaway database, seeded with a history worth photographing.
-createdb pg_history_shots
-bun run site/shots/seed.ts 'postgres://postgres:postgres@localhost:5432/pg_history_shots'
+createdb pg_chronicle_shots
+bun run site/shots/seed.ts 'postgres://postgres:postgres@localhost:5432/pg_chronicle_shots'
 
 # 2. The dashboard, pointed at it. Leave this running.
 cd dashboard
-PG_HISTORY_DATABASE_URL='postgres://postgres:postgres@localhost:5432/pg_history_shots' \
-PG_HISTORY_TABLES='users,orders,invoices,api_keys' \
+PG_CHRONICLE_DATABASE_URL='postgres://postgres:postgres@localhost:5432/pg_chronicle_shots' \
+PG_CHRONICLE_TABLES='users,orders,invoices,api_keys' \
   bun run dev --port 3111
 
 # 3. The captures, straight into site/public/shots/.
@@ -48,7 +48,7 @@ mush on the page.
 `seed.ts` is not filler. It is one account's history — a signup, a support
 correction, an upgrade, a nightly job suspending the account, a human putting it
 back — because the shots have to show a trail that reads like something that
-really happened. It writes through the library with `pg_history.actor` set in
+really happened. It writes through the library with `pg_chronicle.actor` set in
 each transaction, exactly as an application would, then backdates the entries so
 the relative times down the page differ.
 

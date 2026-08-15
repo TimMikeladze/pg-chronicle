@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import type { Pool } from 'pg'
-import { PgHistoryArchiver } from '../../src/PgHistoryArchiver'
+import { PgChronicleArchiver } from '../../src/PgChronicleArchiver'
 import { setupArchiverSchema } from '../../src/schema'
 import { cleanupTestData, getTestConnection, setupTestData } from './helpers/db'
 import { ensureTestBucket, isS3Configured } from './helpers/s3'
 
-describe('PgHistoryArchiver - Batch Query', () => {
+describe('PgChronicleArchiver - Batch Query', () => {
 	let pool: Pool
-	let archiver: PgHistoryArchiver
+	let archiver: PgChronicleArchiver
 
 	beforeEach(async () => {
 		pool = await getTestConnection()
@@ -19,14 +19,14 @@ describe('PgHistoryArchiver - Batch Query', () => {
 			await ensureTestBucket('test-bucket')
 		}
 
-		archiver = new PgHistoryArchiver({
+		archiver = new PgChronicleArchiver({
 			pool,
 			s3: {
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-				region: process.env.PG_HISTORY_S3_REGION,
+				endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_CHRONICLE_S3_REGION,
 			},
 			retention: {
 				default: 90,
@@ -139,9 +139,9 @@ describe('PgHistoryArchiver - Batch Query', () => {
 	})
 })
 
-describe('PgHistoryArchiver - Batch Processing', () => {
+describe('PgChronicleArchiver - Batch Processing', () => {
 	let pool: Pool
-	let archiver: PgHistoryArchiver
+	let archiver: PgChronicleArchiver
 
 	beforeEach(async () => {
 		pool = await getTestConnection()
@@ -153,14 +153,14 @@ describe('PgHistoryArchiver - Batch Processing', () => {
 			await ensureTestBucket('test-bucket')
 		}
 
-		archiver = new PgHistoryArchiver({
+		archiver = new PgChronicleArchiver({
 			pool,
 			s3: {
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-				region: process.env.PG_HISTORY_S3_REGION,
+				endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_CHRONICLE_S3_REGION,
 			},
 			retention: {
 				default: 90,
@@ -245,14 +245,14 @@ describe('PgHistoryArchiver - Batch Processing', () => {
 
 	test('should rollback on S3 upload failure', async () => {
 		// Create archiver with invalid S3 config to force failure
-		const badArchiver = new PgHistoryArchiver({
+		const badArchiver = new PgChronicleArchiver({
 			pool,
 			s3: {
 				bucket: 'invalid-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-				region: process.env.PG_HISTORY_S3_REGION,
+				endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_CHRONICLE_S3_REGION,
 			},
 			retention: { default: 90 },
 			gracePeriod: 7,
@@ -277,14 +277,14 @@ describe('PgHistoryArchiver - Batch Processing', () => {
 	})
 
 	test('should release claim_id when S3 upload fails so rows are reclaimable', async () => {
-		const badArchiver = new PgHistoryArchiver({
+		const badArchiver = new PgChronicleArchiver({
 			pool,
 			s3: {
 				bucket: 'invalid-bucket-claim-test',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-				region: process.env.PG_HISTORY_S3_REGION,
+				endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_CHRONICLE_S3_REGION,
 			},
 			retention: { default: 90 },
 			gracePeriod: 7,
@@ -309,23 +309,23 @@ describe('PgHistoryArchiver - Batch Processing', () => {
 	})
 })
 
-describe('PgHistoryArchiver - reapStaleClaims', () => {
+describe('PgChronicleArchiver - reapStaleClaims', () => {
 	let pool: Pool
-	let archiver: PgHistoryArchiver
+	let archiver: PgChronicleArchiver
 
 	beforeEach(async () => {
 		pool = await getTestConnection()
 		await setupTestData(pool)
 		await setupArchiverSchema(pool)
 
-		archiver = new PgHistoryArchiver({
+		archiver = new PgChronicleArchiver({
 			pool,
 			s3: {
 				bucket: 'test-bucket',
-				endpoint: process.env.PG_HISTORY_S3_ENDPOINT,
-				accessKeyId: process.env.PG_HISTORY_S3_ACCESS_KEY_ID,
-				secretAccessKey: process.env.PG_HISTORY_S3_SECRET_ACCESS_KEY,
-				region: process.env.PG_HISTORY_S3_REGION,
+				endpoint: process.env.PG_CHRONICLE_S3_ENDPOINT,
+				accessKeyId: process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID,
+				secretAccessKey: process.env.PG_CHRONICLE_S3_SECRET_ACCESS_KEY,
+				region: process.env.PG_CHRONICLE_S3_REGION,
 			},
 			retention: { default: 90 },
 			gracePeriod: 7,
