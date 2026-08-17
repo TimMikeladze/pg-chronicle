@@ -522,9 +522,9 @@ describe('Review Fix #28: PgChronicle.ts is split into focused modules', () => {
 		const lines = source.split('\n').length
 		// Bumped 800 → 850 → 950 as audit-integrity features landed (actor mapping,
 		// search-concurrency limiter, TRUNCATE trigger, setup advisory lock,
-		// teardown cache invalidation). 950 → 960 is cosmetic only: renaming
-		// PgHistory → PgChronicle widened call sites enough for the formatter to
-		// wrap two extra lines. Still a focused-module guardrail.
+		// teardown cache invalidation). 950 → 960 is cosmetic only: the class
+		// rename widened call sites enough for the formatter to wrap two extra
+		// lines. Still a focused-module guardrail.
 		expect(lines).toBeLessThanOrEqual(960)
 	})
 
