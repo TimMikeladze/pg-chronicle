@@ -6,26 +6,91 @@ Thank you for your interest in contributing to our project! This guide will help
 
 ### Prerequisites
 
-- Bun installed on your system
+- **Bun**
+- **Docker.** The tests run against a real PostgreSQL and a real MinIO rather
+  than mocks — the whole library is triggers and SQL, so anything else would
+  test a fiction. `docker-compose.yml` starts both.
 
-### Getting Started
+### Getting started
 
-1. Fork the repository
-2. Clone your fork: `git clone https://github.com/TimMikeladze/pg-chronicle.git`
-3. Navigate to the project directory: `cd pg-chronicle`
-4. Install dependencies: `bun install`
-5. Start development: `bun run dev`
+```bash
+git clone https://github.com/TimMikeladze/pg-chronicle.git
+cd pg-chronicle
+bun install
+docker compose up -d   # PostgreSQL on :5432, MinIO on :9000
+bun run check          # lint, typecheck, test
+```
+
+That is the whole loop — no `.env` is needed to run the tests. Compose brings up
+`postgres:16-alpine` as `postgres`/`postgres` and MinIO as `root`/`password`,
+which is exactly what the test helpers and CI expect: the helpers default to
+`postgres://postgres:postgres@localhost:5432`, and
+`test/archiver/globalSetup.ts` fills in every `PG_CHRONICLE_S3_*` variable and
+creates the `test-bucket` bucket before the suite starts.
+
+Already have something on those ports? `PG_CHRONICLE_TEST_URL` points the suite
+at a different PostgreSQL server (base URL, no database name — each suite
+appends its own), and the S3 variables can be exported to reach a different
+MinIO.
+
+`bun run check` is the same command the pre-commit hook runs. Locally it fixes
+what it can (`lint:fix`); in CI it only reports and additionally enforces the
+coverage floor in `bunfig.toml`.
+
+### Running the REST server
+
+`.env` is gitignored, so a fresh clone has none and `bun run dev` exits with
+`PG_CHRONICLE_DATABASE_URL environment variable is required`. Create one first:
+
+```bash
+cp .env.template .env   # set PG_CHRONICLE_DATABASE_URL and PG_CHRONICLE_TABLES
+bun run dev             # http://localhost:3001
+```
+
+Without `PG_CHRONICLE_TABLES` the server starts but serves only `/health` —
+that variable is what turns the history API on. Setting
+`PG_CHRONICLE_S3_BUCKET` additionally registers the archival routes and starts
+the background archiver.
+
+### Running the dashboard
+
+`dashboard/` is a separate app with its own install and its own env file; see
+[its README](dashboard/README.md) for how it resolves the library and what each
+screen does. The short version:
+
+```bash
+cd dashboard
+cp .env.example .env.local   # DATABASE_URL, TABLES, JWT_SECRET, DASHBOARD_PASSWORD
+bun install
+ln -sfn ../.. node_modules/pg-chronicle   # develop against the repo, not npm
+bun run dev                  # http://localhost:3000
+```
+
+The symlink is what makes the app consume the library you are editing. `bun
+install` replaces it with the published package, so re-run it after installing.
+
+A fresh database renders an empty dashboard, which is a poor thing to develop
+against. The screenshot seed fills one with a history worth reading:
+
+```bash
+docker compose exec postgres createdb -U postgres pg_chronicle_demo
+bun run site/shots/seed.ts 'postgres://postgres:postgres@localhost:5432/pg_chronicle_demo'
+```
+
+It drops and recreates its four tables (`users`, `orders`, `invoices`,
+`api_keys`) on every run, so point it at a scratch database and never at
+anything real. Then set `PG_CHRONICLE_DATABASE_URL` to that database and
+`PG_CHRONICLE_TABLES=users,orders,invoices,api_keys` in `dashboard/.env.local`.
 
 ## Development Workflow
 
 1. Create a new branch: `git checkout -b feature/your-feature-name`
 2. Make your changes
-3. Check and fix code style and formatting issues: `bun run lint:fix`
-4. Run tests: `bun run test`
-5. Build the project: `bun run build`
-6. Commit your changes using the conventions below
-7. Push your branch to your fork
-8. Open a pull request
+3. Run `bun run check` — formats and lints, typechecks, then runs the tests
+4. Build the project: `bun run build`
+5. Commit your changes using the conventions below
+6. Push your branch to your fork
+7. Open a pull request
 
 ## The Landing Page
 

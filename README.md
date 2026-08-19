@@ -60,6 +60,7 @@ Detail in [How It Works](#how-it-works) and [Architecture](#architecture).
 - [Production Caveats](#production-caveats)
 - [Error Handling](#error-handling)
 - [Limitations](#limitations)
+- [Contributing](#contributing)
 
 ## Quick Start
 
@@ -1009,6 +1010,10 @@ try {
 - **Text search (ILIKE) is slow on large tables.** Use JSON containment queries (`{"key": "value"}`) for indexed search. Text search has a 5-second timeout, and concurrent searches are capped (`maxConcurrentSearches`).
 - **Append-only enforcement is opt-in** (`appendOnly: true`, PostgreSQL 14+) and is tamper-resistance, not cryptographic tamper-evidence: any role that can reach the database can set the bypass GUC — see [Production Caveats](#tamper-resistance--append-only).
 - **Archived history leaves the read API.** Once the archiver soft-deletes a row, `getHistory` and `search` no longer return it; read it back with `listArchives` / `readArchive`.
+
+## Contributing
+
+Everything above installs the published package. To work on the library itself — the local PostgreSQL and MinIO the tests need, the dashboard, the landing page — see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
