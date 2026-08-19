@@ -9,6 +9,7 @@ import vitesseLight from '@shikijs/themes/vitesse-light'
 import { Marked } from 'marked'
 import { createHighlighterCore } from 'shiki/core'
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
+import { VERCEL_DEPLOY_URL } from './deploy'
 
 /**
  * The dashboard screens shown in the hero. Each is a real screenshot captured
@@ -45,57 +46,15 @@ const SHOTS = [
 const REPO = 'https://github.com/TimMikeladze/pg-chronicle'
 const NPM = 'https://www.npmjs.com/package/pg-chronicle'
 
-/**
- * One-click deploy. The button clones `dashboard/` on its own — the UI plus
- * the REST API it is built on, with archival driven by Vercel Cron.
- *
- * Every listed variable is a required field in the clone form, so only the
- * ones with a sensible non-secret default are prefilled through `envDefaults`;
- * the connection string, the table list, the JWT secret and the dashboard
- * password are left to the user — a default for any of those would end up in
- * the clone URL, and from there in browser history. Keep this list in step
- * with the README's Deployment section.
- */
-const DEPLOY_ENV_DEFAULTS = {
-	PG_CHRONICLE_JWT_ALG: 'HS256',
-	PG_CHRONICLE_POOL_MAX: '3',
-	PG_CHRONICLE_STATEMENT_TIMEOUT_MS: '30000',
-	PG_CHRONICLE_DASHBOARD_ACTOR: 'dashboard',
-	PG_CHRONICLE_RETENTION_DAYS: '90',
-	PG_CHRONICLE_GRACE_PERIOD_DAYS: '7',
-	PG_CHRONICLE_BATCH_SIZE: '10000',
-} as const
-
-const VERCEL_DEPLOY = `https://vercel.com/new/clone?${new URLSearchParams({
-	'repository-url': `${REPO}/tree/main/dashboard`,
-	'project-name': 'pg-chronicle-dashboard',
-	'repository-name': 'pg-chronicle-dashboard',
-	env: [
-		'PG_CHRONICLE_DATABASE_URL',
-		'PG_CHRONICLE_TABLES',
-		'PG_CHRONICLE_JWT_SECRET',
-		// Without this the deployed dashboard refuses to serve any page in
-		// production — reaching one grants full audit read plus revert, so the
-		// gate fails closed. Omitting it here would ship a one-click deploy that
-		// 503s on first visit.
-		'PG_CHRONICLE_DASHBOARD_PASSWORD',
-		...Object.keys(DEPLOY_ENV_DEFAULTS),
-	].join(','),
-	envDefaults: JSON.stringify(DEPLOY_ENV_DEFAULTS),
-	envDescription:
-		'Only the first four need a value: a Postgres connection string, the tables to audit, a JWT signing secret, and a password for the dashboard UI (it can read and revert every audited record). The rest arrive prefilled with the library defaults.',
-	envLink: `${REPO}#environment-variables`,
-}).toString()}`
-
 /** Vercel's triangle. Shared by the hero button and the deploy card below. */
 const VERCEL_MARK = '<path fill="currentColor" d="M8 1.5 15 14H1L8 1.5Z"/>'
 
 const DEPLOY_TARGETS = [
 	{
-		href: VERCEL_DEPLOY,
+		href: VERCEL_DEPLOY_URL,
 		name: 'Vercel',
 		blurb:
-			'The dashboard and the REST API it runs on, as one project — archival on Vercel Cron, and seven of the eleven environment variables already filled in.',
+			'The dashboard and the REST API it runs on, as one project — archival on Vercel Cron, eight of the sixteen environment variables prefilled, and four more safe to leave blank.',
 		icon: VERCEL_MARK,
 	},
 ] as const
@@ -485,7 +444,7 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 							  dashboard. Same URL as the deploy card below, from one
 							  constant, so the two never drift apart.
 							-->
-							<a class="btn btn-primary" href="${VERCEL_DEPLOY}">
+							<a class="btn btn-primary" href="${VERCEL_DEPLOY_URL}">
 								<svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">${VERCEL_MARK}</svg>
 								Deploy the dashboard
 							</a>
