@@ -9,10 +9,7 @@ PostgreSQL audit trails with automated S3 archival.
 bun add pg-chronicle
 ```
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/timeline-dark.png">
-  <img alt="The pg-chronicle dashboard showing one row's full change timeline: each entry's before/after diff, the actor and IP behind it, and a revert button." src="https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/timeline-light.png">
-</picture>
+![The pg-chronicle dashboard showing one row's full change timeline: each entry's before/after diff, the actor and IP behind it, and a revert button.](https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/timeline-light.png)
 
 *One record's timeline in the bundled [dashboard](#dashboard) — what each change set, who made it, and a revert for any entry. Screens are real captures, not mockups.*
 
@@ -567,17 +564,11 @@ It reads the same environment variables the server does — `PG_CHRONICLE_TABLES
 | `/health` | Public liveness probe, added by the dashboard because the catch-all only serves `/api/**` |
 | `/login` | The password gate |
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/explore-dark.png">
-  <img alt="The Explore screen: a JSONB containment query across four audited tables, with operation and date-range filters and a result row per change." src="https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/explore-light.png">
-</picture>
+![The Explore screen: a JSONB containment query across four audited tables, with operation and date-range filters and a result row per change.](https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/explore-light.png)
 
 *`/search` — one query across every audited table, colour-coded by operation, with the changed columns on each row.*
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/tables-dark.png">
-  <img alt="The Tables screen: every audited table with its last change, the actor behind it, and its pending archive and purge counts." src="https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/tables-light.png">
-</picture>
+![The Tables screen: every audited table with its last change, the actor behind it, and its pending archive and purge counts.](https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/tables-light.png)
 
 *`/tables` — what is audited, when each table last changed, and how much history is queued for archival.*
 

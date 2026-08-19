@@ -87,13 +87,16 @@ const VERCEL_DEPLOY = `https://vercel.com/new/clone?${new URLSearchParams({
 	envLink: `${REPO}#environment-variables`,
 }).toString()}`
 
+/** Vercel's triangle. Shared by the hero button and the deploy card below. */
+const VERCEL_MARK = '<path fill="currentColor" d="M8 1.5 15 14H1L8 1.5Z"/>'
+
 const DEPLOY_TARGETS = [
 	{
 		href: VERCEL_DEPLOY,
 		name: 'Vercel',
 		blurb:
 			'The dashboard and the REST API it runs on, as one project — archival on Vercel Cron, and seven of the eleven environment variables already filled in.',
-		icon: '<path fill="currentColor" d="M8 1.5 15 14H1L8 1.5Z"/>',
+		icon: VERCEL_MARK,
 	},
 ] as const
 
@@ -334,6 +337,16 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 	const body = (marked.parse(prepareBody(readme)) as string)
 		.replace(/<table>/g, '<div class="table-wrap"><table>')
 		.replace(/<\/table>/g, '</table></div>')
+		// The README embeds the light screenshots only, because GitHub and npm
+		// should show one predictable image. This page has both themes, and a
+		// light shot dropped into the dark one glares — so pair each with its
+		// dark capture and let the theme pick, the way the hero already does.
+		.replace(
+			/<img src="([^"]+)-light\.png" alt="([^"]*)"\s*\/?>/g,
+			(_match, base, alt) =>
+				`<img class="shot-img--light" src="${base}-light.png" alt="${alt}" />` +
+				`<img class="shot-img--dark" src="${base}-dark.png" alt="${alt}" />`,
+		)
 
 	// The hero pitch continues below the fold: what the design guarantees, and
 	// the smallest complete program that uses it. Highlighted with the same
@@ -404,8 +417,18 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 							</button>
 						</div>
 						<div class="hero-links">
-							<a class="btn" href="#dashboard">Dashboard</a>
-							<a class="btn btn-primary" href="${REPO}">
+							<!--
+							  One action, not two: the dashboard link and the deploy link
+							  pointed at the same thing, so they are the same button. The
+							  install command above covers the library, this covers the
+							  dashboard. Same URL as the deploy card below, from one
+							  constant, so the two never drift apart.
+							-->
+							<a class="btn btn-primary" href="${VERCEL_DEPLOY}">
+								<svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">${VERCEL_MARK}</svg>
+								Deploy the dashboard
+							</a>
+							<a class="btn" href="${REPO}">
 								<svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
 									<path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
 								</svg>
