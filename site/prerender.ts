@@ -119,6 +119,43 @@ const PILLARS = [
 	},
 ] as const
 
+/**
+ * The alternatives a reader already has in mind, and the question each one
+ * actually answers. Every entry leads with what that tool is genuinely good
+ * at — a comparison that only lists the competition's flaws reads as a sales
+ * sheet, and this page is trying to be the opposite of one.
+ *
+ * Claims here must stay checkable: each `stop` is a property of how the tool
+ * works, not a verdict on it.
+ */
+const ALTERNATIVES = [
+	{
+		name: 'pgaudit',
+		good: 'Statement-level compliance logging, reads included — <code>SELECT</code> is visible to it, and triggers can never see one.',
+		stop: 'It records the statement that ran, not the row that changed. There is no before/after image to diff, nothing to query in SQL, and nothing to revert — the trail is log lines you grep, and it needs <code>shared_preload_libraries</code> and a restart to get them.',
+	},
+	{
+		name: 'Audit triggers you write yourself',
+		good: 'The same design as this one, and the right instinct: the database writes the trail, so nothing that touches the table can skip it.',
+		stop: 'The trigger is the easy tenth. You still own the JSONB shape, the indexes, the actor plumbing, the concurrency, the retention story and a table that grows forever. That is the other nine tenths of this library.',
+	},
+	{
+		name: 'Temporal tables',
+		good: 'Point-in-time row versions: what this record looked like on Tuesday, with a validity range to join on.',
+		stop: 'It stores versions, not events — no actor, no client IP, no operation, and a shadow table per audited table rather than one trail you can search across all of them. The extension also has to be installable on your host.',
+	},
+	{
+		name: 'CDC — Debezium, logical replication, wal2json',
+		good: 'Getting changes <em>out</em>: streaming every write into Kafka, a warehouse or another service.',
+		stop: 'It reads the WAL after the commit, so it is a second system to run and the history lands somewhere other than the database you are already querying. Application context has to be smuggled through the row, and a replication slot nobody drains pins WAL until the disk fills.',
+	},
+	{
+		name: 'ORM hooks — Prisma middleware, paper_trail',
+		good: 'The application knows who the user is, so the actor comes for free.',
+		stop: 'Anything not going through the ORM writes unobserved: a migration, a <code>psql</code> session, a background job, another service, a colleague fixing one row by hand. An audit trail with a documented way around it answers the wrong question at the worst moment.',
+	},
+] as const
+
 /** The setup snippet, verbatim from the README's Quick Start. */
 const SETUP_SNIPPET = `const history = new PgChronicle({ pool, tables: ['users'] })
 await history.setup()
@@ -148,6 +185,27 @@ function readHero(md: string) {
 }
 
 /**
+ * README sections this page already presents in a band of its own above the
+ * docs. Rendering them again in the prose would say the same thing twice on
+ * one page. They stay in the README — and therefore in llms.txt and on GitHub,
+ * which have no such band — this only skips them in the on-page docs dump.
+ */
+const SECTIONS_RENDERED_ABOVE = new Set(['why-not-pgaudit'])
+
+/** Drops every `##` section whose slug is listed, up to the next `##`. */
+function dropSections(md: string, slugs: ReadonlySet<string>) {
+	const kept: string[] = []
+	let dropping = false
+	for (const line of md.split(/\r?\n/)) {
+		if (line.startsWith('## ')) {
+			dropping = slugs.has(slugify(line.slice(3).trim()))
+		}
+		if (!dropping) kept.push(line)
+	}
+	return kept.join('\n')
+}
+
+/**
  * Drop the leading title/tagline/badges and the README's own Table of Contents
  * — the hero and the generated section grid cover those — and point
  * repo-relative links at GitHub so they resolve off-repo.
@@ -156,7 +214,10 @@ function prepareBody(md: string) {
 	const tocIndex = md.indexOf('## Table of Contents')
 	const afterToc = md.indexOf('\n## ', tocIndex + 1)
 	const body = tocIndex === -1 || afterToc === -1 ? md : md.slice(afterToc + 1)
-	return body.replace(/\]\(\.\/([^)]+)\)/g, `](${REPO}/blob/main/$1)`)
+	return dropSections(body, SECTIONS_RENDERED_ABOVE).replace(
+		/\]\(\.\/([^)]+)\)/g,
+		`](${REPO}/blob/main/$1)`,
+	)
 }
 
 /** The section list the README itself curates, in its order. */
@@ -490,6 +551,41 @@ export async function renderPage(siteDir: string): Promise<RenderedPage> {
 					</figcaption>
 					${setupHtml}
 				</figure>
+			</div>
+		</section>
+
+		<!--
+			  Same anchor as the README heading this replaces on the page, so a link
+			  to #why-not-pgaudit lands here rather than nowhere.
+			-->
+		<section class="alts" aria-labelledby="why-not-pgaudit">
+			<div class="alts-inner">
+				<div class="alts-intro">
+					<h2 class="alts-head" id="why-not-pgaudit">Why not pgaudit, or a trigger you write yourself?</h2>
+					<p class="alts-sub">PostgreSQL has no shortage of ways to watch a table. Most of them answer a different question than <em>what did this row look like before, who changed it, and can I put it back?</em></p>
+				</div>
+				<ul class="alt-list">
+					${ALTERNATIVES.map(
+						(alt) => `<li class="alt">
+						<h3 class="alt-name">${escapeHtml(alt.name)}</h3>
+						<p class="alt-cell">
+							<span class="alt-tag">Good at</span>
+							${alt.good}
+						</p>
+						<p class="alt-cell alt-cell--stop">
+							<span class="alt-tag">Stops at</span>
+							${alt.stop}
+						</p>
+					</li>`,
+					).join('')}
+				</ul>
+				<p class="alts-note">
+					<!--
+					  The honest half. A page that claims one tool wins every comparison
+					  is not one a reader trusts on the rest of its claims either.
+					-->
+					None of these are wrong tools — they are answers to other questions, and pg-chronicle runs happily beside all of them. It is the wrong pick if you need to audit reads (triggers cannot see a <code>SELECT</code>; pgaudit can), or if the point is to ship changes to another system rather than keep them where they happened.
+				</p>
 			</div>
 		</section>
 

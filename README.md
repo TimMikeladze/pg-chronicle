@@ -48,6 +48,7 @@ Detail in [How It Works](#how-it-works) and [Architecture](#architecture).
 - [Examples](#examples)
 - [How It Works](#how-it-works)
 - [Architecture](#architecture)
+- [Why Not pgaudit?](#why-not-pgaudit)
 - [API Reference](#api-reference)
 - [Server & REST API](#server--rest-api)
 - [Dashboard](#dashboard)
@@ -231,6 +232,18 @@ When the archiver is enabled, additional columns track lifecycle: `archived_at`,
 | Single column | PK value cast to text |
 | Composite | Each part joined with `chr(31)` (ASCII unit separator), full value — not truncated, so distinct keys can't collide. Build the same string client-side to look it up: `` `${customerId}\x1f${tag}` `` (see [multi-table-tracking.ts](./examples/multi-table-tracking.ts)) |
 | None | `md5(row_to_json(...)::text)` — the value changes on every UPDATE, so `getHistory` cannot correlate INSERT with later UPDATEs. A warning is logged at setup; pass `requirePrimaryKey: true` to reject PK-less tables outright. Use tables with a PK for full history. |
+
+## Why Not pgaudit?
+
+PostgreSQL has no shortage of ways to watch a table. Most of them answer a different question than "what did this row look like before, who changed it, and can I put it back?" Each entry below leads with what that tool is genuinely good at, because several of them belong beside this library rather than instead of it.
+
+- **pgaudit** logs statements, reads included — `SELECT` is visible to it, and a trigger can never see one. What it records is the statement that ran, not the row that changed: there is no before/after image to diff, nothing to query in SQL, and nothing to revert. The trail is log lines you grep, and getting them needs `shared_preload_libraries` and a restart.
+- **Audit triggers you write yourself** are the same design as this one, and the right instinct: the database writes the trail, so nothing that touches the table can skip it. The trigger is the easy tenth. You still own the JSONB shape, the indexes, the actor plumbing, the concurrency, the retention story and a table that grows forever — that is the other nine tenths of this library.
+- **Temporal tables** give point-in-time row versions with a validity range to join on. They store versions, not events: no actor, no client IP, no operation, and a shadow table per audited table rather than one trail you can search across all of them. The extension also has to be installable on your host.
+- **CDC — Debezium, logical replication, wal2json** is how you get changes *out*: streaming every write into Kafka, a warehouse or another service. It reads the WAL after the commit, so it is a second system to run and the history lands somewhere other than the database you are already querying. Application context has to be smuggled through the row, and a replication slot nobody drains pins WAL until the disk fills.
+- **ORM hooks — Prisma middleware, `paper_trail`** get the actor for free, because the application already knows who the user is. Anything not going through the ORM writes unobserved: a migration, a `psql` session, a background job, another service, a colleague fixing one row by hand. An audit trail with a documented way around it answers the wrong question at the worst moment.
+
+None of these are wrong tools, and pg-chronicle runs happily beside all of them. It is the wrong pick if you need to audit reads — triggers cannot see a `SELECT`, pgaudit can — or if the point is to ship changes to another system rather than keep them where they happened.
 
 ## API Reference
 
