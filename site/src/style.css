@@ -469,8 +469,10 @@ a:hover {
 	color: var(--on-accent);
 }
 
+/* Wraps rather than overflowing the narrow copy column on small screens. */
 .hero-links {
 	display: flex;
+	flex-wrap: wrap;
 	justify-content: center;
 	gap: 0.6rem;
 }
