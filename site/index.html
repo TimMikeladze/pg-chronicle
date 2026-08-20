@@ -35,6 +35,14 @@
 		<meta name="twitter:image" content="https://pg-chronicle.com/og.png" />
 
 		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
+		<!--
+		  Umami, filled in at build time from UMAMI_WEBSITE_ID (see analytics.ts).
+		  Without that variable the comment is replaced by nothing at all, so a
+		  fork or a local build ships no tracker.
+		-->
+		<!--analytics-->
+
 		<script>
 			// Apply the saved theme before first paint so there is no flash.
 			try {

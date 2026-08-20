@@ -104,6 +104,17 @@ The dashboard screenshots the hero and the card use are captures of the real das
 
 Both platforms cache a card per URL, so a freshly deployed image only shows up in new shares until the cache is cleared through [LinkedIn's Post Inspector](https://www.linkedin.com/post-inspector/) or [X's Card Validator](https://cards-dev.twitter.com/validator).
 
+### Analytics
+
+The page carries an optional [Umami](https://umami.is) tag, injected into `index.html` at build time by `site/analytics.ts`. It is driven entirely by the build environment:
+
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `UMAMI_WEBSITE_ID` | no | The site's Umami UUID. Unset or blank means no tag is emitted at all. |
+| `UMAMI_SCRIPT_URL` | no | Absolute `https` URL of the tracker script, for a self-hosted Umami elsewhere. Defaults to the instance the production site uses. |
+
+Neither is set locally, so `bun run dev` and a plain `bun run build` ship no tracker and make no request — a fork never reports into someone else's dashboard. A malformed id or a non-`https` URL fails the build rather than being skipped, because a silent skip looks exactly like "not configured" and the deploy would go out untracked.
+
 ## Commit Message Conventions
 
 We follow [Conventional Commits](https://www.conventionalcommits.org/) for clear and structured commit messages:

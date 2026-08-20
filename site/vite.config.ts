@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
+import { umamiScriptTag } from './analytics'
 import { renderCard } from './og/card'
 import { renderLlmsTxt, renderPage } from './prerender'
 
@@ -25,6 +26,7 @@ function prerenderReadme(): Plugin {
 		async transformIndexHtml(html) {
 			const page = await renderPage(siteDir)
 			return html
+				.replace('<!--analytics-->', umamiScriptTag(process.env))
 				.replace('<!--app-html-->', page.html)
 				.replace(/<title>.*?<\/title>/, `<title>${page.title}</title>`)
 				.replace(/(name="description" content=")[^"]*/, `$1${page.description}`)
