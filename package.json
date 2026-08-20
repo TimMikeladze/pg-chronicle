@@ -1,7 +1,7 @@
 {
 	"name": "pg-chronicle",
 	"description": "PostgreSQL audit trails with automated S3 archival. Trigger-based change tracking with search, revert, a REST API and a dashboard.",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"author": {
 		"name": "Tim Mikeladze",
 		"email": "tim.mikeladze@gmail.com"
