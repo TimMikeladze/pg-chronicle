@@ -245,6 +245,12 @@ jobs:
       - name: Link library into dashboard node_modules
         run: ln -sfn ../.. dashboard/node_modules/pg-chronicle
 
+      # `@types/pg` is pinned to one exact version in BOTH package.json files,
+      # and the two must stay equal. The dashboard installs into its own
+      # node_modules (it deploys standalone), so a floating range gives it a
+      # different copy of the types than the library resolves — and the `Pool`
+      # the dashboard hands to `createServer` then fails to typecheck against
+      # the `Pool` in the library's own .d.ts, however identical they look.
       - name: Typecheck
         run: bun run tsc
         working-directory: dashboard
