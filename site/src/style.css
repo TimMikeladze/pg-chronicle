@@ -329,6 +329,14 @@ a:hover {
 	font-weight: 600;
 	letter-spacing: -0.055em;
 	line-height: 1;
+	/*
+	 * background-clip: text paints the gradient only inside this box, so any
+	 * ink outside it is simply not painted. Geist's descenders reach about
+	 * 0.065em below a line-height: 1 box, which sliced the tails off the "p"
+	 * and "g" — the padding gives the gradient somewhere to paint them. Keep
+	 * it whenever the line-height stays below ~1.13.
+	 */
+	padding-bottom: 0.12em;
 	color: var(--text-bright);
 	background: linear-gradient(
 		168deg,
