@@ -332,7 +332,11 @@ describe('Fix #6: JWT authentication warning', () => {
 		).toBe(true)
 
 		warnSpy.mockRestore()
-		process.env.PG_CHRONICLE_JWT_SECRET = originalJwt
+		// Restore, don't assign: `process.env.X = undefined` stores the literal
+		// string "undefined", which the server reads as a real JWT secret and
+		// every later suite starts 401ing.
+		if (originalJwt === undefined) delete process.env.PG_CHRONICLE_JWT_SECRET
+		else process.env.PG_CHRONICLE_JWT_SECRET = originalJwt
 		if (originalSilent !== undefined) {
 			process.env.PG_CHRONICLE_SILENT_LOGS = originalSilent
 		}
@@ -365,7 +369,11 @@ describe('Fix #6: JWT authentication warning', () => {
 		).toBe(false)
 
 		warnSpy.mockRestore()
-		process.env.PG_CHRONICLE_JWT_SECRET = originalJwt
+		// Restore, don't assign: `process.env.X = undefined` stores the literal
+		// string "undefined", which the server reads as a real JWT secret and
+		// every later suite starts 401ing.
+		if (originalJwt === undefined) delete process.env.PG_CHRONICLE_JWT_SECRET
+		else process.env.PG_CHRONICLE_JWT_SECRET = originalJwt
 	})
 
 	test('does not warn when history is not enabled', async () => {
@@ -389,7 +397,11 @@ describe('Fix #6: JWT authentication warning', () => {
 		).toBe(false)
 
 		warnSpy.mockRestore()
-		process.env.PG_CHRONICLE_JWT_SECRET = originalJwt
+		// Restore, don't assign: `process.env.X = undefined` stores the literal
+		// string "undefined", which the server reads as a real JWT secret and
+		// every later suite starts 401ing.
+		if (originalJwt === undefined) delete process.env.PG_CHRONICLE_JWT_SECRET
+		else process.env.PG_CHRONICLE_JWT_SECRET = originalJwt
 	})
 })
 

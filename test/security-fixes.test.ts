@@ -91,7 +91,11 @@ describe('CRIT-2: /api/stats requires JWT when secret is set', () => {
 		const res = await app.request('/api/stats')
 		expect(res.status).toBe(401)
 
-		process.env.PG_CHRONICLE_JWT_SECRET = original
+		// Restore, don't assign: `process.env.X = undefined` stores the literal
+		// string "undefined", which the server reads as a real JWT secret and
+		// every later suite starts 401ing.
+		if (original === undefined) delete process.env.PG_CHRONICLE_JWT_SECRET
+		else process.env.PG_CHRONICLE_JWT_SECRET = original
 	})
 })
 
