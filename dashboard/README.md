@@ -3,17 +3,57 @@
 A Next.js + shadcn/ui dashboard for browsing, searching, and reverting the
 PostgreSQL audit trail, served by the pg-chronicle REST API.
 
-It is a **single deployment**: the same app mounts the real pg-chronicle API at
-`/api` and renders the UI. Nothing else needs to be running.
+It is a **single deployment** that manages **many databases**: the same app
+mounts a real pg-chronicle API per connection under `/api/db/<connection>` and
+renders the UI. Nothing else needs to be running.
 
 ```bash
-cp .env.example .env.local   # fill in DATABASE_URL, TABLES, JWT_SECRET, DASHBOARD_PASSWORD
+cp .env.example .env.local   # three variables — see below
 bun install
 ln -sfn ../.. node_modules/pg-chronicle   # develop against the repo, not npm
 bun run dev                  # builds the parent package, then starts Next
 ```
 
-Open <http://localhost:3000>.
+Open <http://localhost:3000> and add a connection.
+
+## Databases are added in the UI, not the environment
+
+The environment configures the dashboard. Everything about a *database being
+audited* — its connection string, which tables to track, whether it archives to
+S3 and on what retention — is entered at `/connections` and stored in the
+registry. Adding a database is a form, not a redeploy.
+
+| Variable | Why it cannot be a UI setting |
+|---|---|
+| `PG_CHRONICLE_DASHBOARD_DATABASE_URL` | It *is* where the UI's settings live. Any Postgres will do, including one you already audit; the dashboard creates a single `pg_chronicle_dashboard_connections` table there on first use. |
+| `PG_CHRONICLE_JWT_SECRET` | Signs the API tokens the dashboard mints, and derives the key that encrypts stored credentials. Storing it in the thing it protects would be circular. |
+| `PG_CHRONICLE_DASHBOARD_PASSWORD` | Gates the UI. A password you could change from behind the gate is not a gate. |
+
+The rest of `.env.example` is optional: `CRON_SECRET` for scheduled archival,
+and knobs for session lifetime, actor name, JWT algorithm and pool size.
+
+### Stored credentials are encrypted
+
+Connection strings and S3 secret keys are sealed with AES-256-GCM before they
+are written, under a key derived from `PG_CHRONICLE_JWT_SECRET` with domain
+separation, and are never rendered back into the page — the UI shows only
+`host:port/database`. A dump of the registry is therefore not a dump of every
+audited database's password.
+
+Each ciphertext carries an 8-character fingerprint of the key that sealed it.
+Rotating `PG_CHRONICLE_JWT_SECRET` is legible rather than mysterious: affected
+connections are listed as **sealed**, and their edit page asks for the
+credentials again instead of failing with a decrypt error.
+
+### Saving a connection installs the triggers
+
+The form connects and runs the same initialisation a request would — which is
+what installs the audit triggers on the tables listed — *before* writing
+anything to the registry. A wrong password, an unreachable host or a table that
+does not exist is reported on the form. Nothing half-configured is saved.
+
+Removing a connection unlinks it from the dashboard only. The triggers stay
+installed and every recorded change stays in the database.
 
 ## How it resolves `pg-chronicle`
 
@@ -30,7 +70,7 @@ re-run the `ln -sfn` above after installing (CI does exactly this).
 directory is self-contained: that is what makes the README's one-click Vercel
 button work, since the clone flow builds only this folder. `next.config.ts`
 picks the tracing root by looking for the parent package, and `vercel.json`
-registers the daily archival cron.
+registers the daily archival cron at `/api/cron/archive`.
 
 CI runs this app as its own job (`dashboard` in `.github/workflows/ci.yml`):
 typecheck plus a production build, with no database service, since every page
@@ -39,18 +79,60 @@ covered by the root job's repo-wide `biome check .`.
 
 ## Screens
 
+Every view of an audit trail is scoped to one connection and says so in its
+URL, so a pasted link always opens the database the sender was looking at.
+
 | Route | What it does |
 |---|---|
-| `/` | Health, archival backlog, recent activity across all tables, jump-to-record |
-| `/search` | JSONB containment or ILIKE text search with operation / date-range / table filters, cursor pagination, per-entry diff |
-| `/tables` | Every audited table with its last change, actor and archival backlog |
-| `/tables/[table]` | One table's recent activity |
-| `/history/[table]/[recordId]` | One record's full timeline, oldest/newest ordering, per-entry revert |
-| `/archival` | Archival status, backlog and on-demand runs (only when `PG_CHRONICLE_S3_BUCKET` is set) |
-| `/api/*` | The pg-chronicle REST API itself — for cron, scripts, and other services |
-| `/health` | The library's public probe (bounded `SELECT 1`, 503 when the DB is unreachable) |
-| `/openapi` | The API reference, rendered from the OpenAPI document with Scalar |
-| `/openapi.json` | The OpenAPI document itself, fetched with the dashboard's own token (the library JWT-gates it) — point a client generator at this |
+| `/` | Redirects to the only connection, or to the list when there are several |
+| `/connections` | Every managed database; add, edit, remove |
+| `/connections/new`, `/connections/[id]` | The connection form |
+| `/c/[conn]` | Recent activity across that connection's tables, jump-to-record |
+| `/c/[conn]/search` | JSONB containment or ILIKE text search with operation / date-range / table filters, cursor pagination, per-entry diff |
+| `/c/[conn]/tables` | Every audited table with its last change, actor and archival backlog |
+| `/c/[conn]/tables/[table]` | One table's recent activity |
+| `/c/[conn]/history/[table]/[recordId]` | One record's full timeline, oldest/newest ordering, per-entry revert |
+| `/c/[conn]/archival` | Archival status, backlog and on-demand runs (only when that connection has archival configured) |
+| `/c/[conn]/openapi` | The API reference, rendered from the OpenAPI document with Scalar |
+| `/c/[conn]/openapi.json` | The OpenAPI document itself, fetched with the dashboard's own token (the library JWT-gates it) — point a client generator at this |
+| `/api/db/[conn]/*` | The pg-chronicle REST API for one connection — for scripts and other services |
+| `/api/cron/archive` | Runs archival for every connection that has it configured; `Bearer $CRON_SECRET` |
+| `/health` | Registry reachability (bounded `SELECT 1`, 503 when it is unreachable) |
+
+### The REST API, per connection
+
+The library registers `/health` and `/openapi` at the root and everything else
+under `/api`; the mount drops that prefix so callers write the connection
+instead:
+
+```
+GET  /api/db/production/history/users/42
+POST /api/db/production/history/search
+POST /api/db/production/history/revert
+GET  /api/db/production/stats
+GET  /api/db/production/health/detailed
+POST /api/db/production/archive
+GET  /api/db/production/health
+GET  /api/db/production/openapi
+```
+
+Naming a connection in the path grants nothing — an unknown name is a 404 and a
+known one still needs the same JWT the library has always required.
+
+### Scheduled archival walks every connection
+
+`vercel.json` points a daily cron at `GET /api/cron/archive`, which reads the
+registry and runs archival for each connection that has it configured,
+sequentially — each run's memory ceiling is set per run, and running several at
+once would multiply a bound chosen to fit the instance. A connection that fails
+does not stop the rest, and the response is a 500 if any did, so a broken
+nightly archival cannot sit unnoticed in the cron log.
+
+The route is **fail-closed**: without `CRON_SECRET` it is disabled entirely and
+answers 503. Unlike the library's own `/api/archive` there is no JWT
+alternative — it deletes rows across every managed database, and a browser
+session is not a credential for that. Per-connection on-demand runs stay
+available from the Archival page.
 
 ### Search has two modes
 
@@ -82,10 +164,24 @@ states say so rather than implying the changes never happened.
 
 The dashboard never issues a token to the browser. Server components and server
 actions call `lib/pg-chronicle-server.ts`, which mints a 60-second HS256 JWT with
-`jose` and invokes the very same route handlers mounted at `/api` — in-process,
-with a synthetic `Request`. `hono/vercel`'s `handle()` is just `app.fetch(req)`,
-so this is a direct function call: no network hop, no CORS, one connection pool,
-and identical auth, validation, and error semantics to any external caller.
+`jose` and dispatches a synthetic `Request` into that connection's own Hono app
+— in-process, a direct function call: no network hop, no CORS, one connection
+pool per connection, and identical auth, validation, and error semantics to any
+external caller.
+
+`lib/connection-runtime.ts` builds one pg-chronicle server per connection with
+`createServer` (rather than the library's env-driven `pg-chronicle/next` entry
+point, which is exactly the single-database constraint this dashboard removes)
+and caches it. The cache is keyed by the registry row's contents, so editing a
+connection takes effect on the next request rather than the next cold start,
+and bounded at 8 with LRU eviction so a large registry cannot open unbounded
+pools on a warm instance.
+
+Every server action names the connection it acts on; there is no ambient
+"current database". The id is resolved against the registry server-side, and a
+request naming an unknown connection is refused rather than falling back to a
+default — on a tool whose most consequential action is `revert`, guessing is not
+an option.
 
 The JWT `sub` carries `PG_CHRONICLE_DASHBOARD_ACTOR`, which pg-chronicle logs as the
 actor on every revert — that log line is the only record of who used the
@@ -124,8 +220,8 @@ exchanging `PG_CHRONICLE_DASHBOARD_PASSWORD` at `/login`.
 Authentication is not authorization. The password says *someone* may come in; it
 says nothing about which rows they may touch. Past the gate the dashboard's
 self-minted token reaches every record of every configured table. For per-tenant
-scoping, mount the API with an `authorize` hook via `createHandlers` from
-`pg-chronicle/next` instead of re-exporting the default handlers.
+scoping, pass an `authorize` hook to the `createServer` call in
+`lib/connection-runtime.ts`.
 
 ## Two API behaviours worth knowing
 
@@ -134,12 +230,13 @@ paginates descending (`id < cursor`); `getHistory()` honours the requested
 order. Feeding one to the other returns a silently empty page. They carry
 distinct branded types in `lib/types.ts` and never share a variable.
 
-**`CRON_SECRET` and the dashboard's JWT coexist.** On `/api/archive`,
-`/api/stats` and `/api/health/detailed` the cron secret is an *alternative*
-credential: the scheduler presents `Bearer <CRON_SECRET>`, the dashboard
-presents its own token, and both are accepted. (Earlier versions demanded both
-at once, which made the route uncallable and greyed out the "Run archival"
-button whenever `CRON_SECRET` was set.)
+**`CRON_SECRET` and the dashboard's JWT coexist.** On a connection's
+`/archive`, `/stats` and `/health/detailed` the cron secret is an *alternative*
+credential: a caller presents `Bearer <CRON_SECRET>`, the dashboard presents its
+own token, and both are accepted. (Earlier versions demanded both at once, which
+made the route uncallable and greyed out the "Run archival" button whenever
+`CRON_SECRET` was set.) The dashboard's own `/api/cron/archive` is stricter and
+takes the cron secret only.
 
 ## Design
 
@@ -160,5 +257,6 @@ label text always keeps full foreground contrast.
   optional `zod/v4/core`.
 - Every page is `force-dynamic`. This is operational state; a build-time
   snapshot would be wrong.
-- The first request runs `setup()`, installing triggers and the partitioned
-  `audit_log` — the same behaviour as `examples/next`.
+- Saving a connection runs `setup()` on its database, installing triggers and
+  the partitioned `audit_log` — the same behaviour as `examples/next`, moved
+  from the first request to the moment the operator is watching.

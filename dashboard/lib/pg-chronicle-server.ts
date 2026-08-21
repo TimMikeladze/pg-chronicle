@@ -1,12 +1,9 @@
 import 'server-only'
 
 import { SignJWT } from 'jose'
-import {
-	GET as pgChronicleGET,
-	POST as pgChroniclePOST,
-} from 'pg-chronicle/next'
 
-import { readConfig } from './config'
+import { connectionApp } from './connection-runtime'
+import type { Connection } from './registry'
 import type {
 	ApiErrorCode,
 	ArchivalStatsRow,
@@ -18,17 +15,25 @@ import type {
 } from './types'
 
 /**
- * The dashboard talks to pg-chronicle by invoking the very same route handlers it
- * mounts at /api — in-process, with a synthetic Request. `hono/vercel`'s
- * `handle()` is just `app.fetch(req)`, so this is a direct function call: no
+ * The dashboard talks to pg-chronicle by dispatching a synthetic Request into
+ * the connection's own Hono app — in-process, a direct function call. No
  * network hop, no CORS, no second connection pool, and identical auth /
  * validation / error semantics to an external caller.
  *
  * The consequence that matters: the signing secret never leaves the server, and
  * the browser is never issued a token.
+ *
+ * Every function here takes the {@link Connection} to act on. There is no
+ * ambient "current database" — the deployment manages several, and an audit
+ * tool that could act on the wrong one is worse than no tool.
  */
 
 const TOKEN_TTL_SECONDS = 60
+
+/** Identity written into the JWT `sub`, which pg-chronicle logs on every revert. */
+export function dashboardActor(): string {
+	return process.env.PG_CHRONICLE_DASHBOARD_ACTOR?.trim() || 'dashboard'
+}
 
 /**
  * The API accepts asymmetric algorithms too, but this dashboard signs its own
@@ -45,7 +50,7 @@ function assertSymmetricAlg(): void {
 	}
 }
 
-async function mintToken(): Promise<string> {
+export async function mintToken(): Promise<string> {
 	const secret = process.env.PG_CHRONICLE_JWT_SECRET
 	if (!secret) {
 		throw new Error(
@@ -61,7 +66,7 @@ async function mintToken(): Promise<string> {
 		new SignJWT({})
 			// pg-chronicle logs `sub` as the actor on every revert — that audit line is
 			// the only record of who used the dashboard, so it must be meaningful.
-			.setSubject(readConfig().actor)
+			.setSubject(dashboardActor())
 			.setProtectedHeader({ alg })
 			.setIssuedAt(now)
 			.setExpirationTime(now + TOKEN_TTL_SECONDS)
@@ -86,25 +91,32 @@ export class ApiError extends Error {
  */
 const INTERNAL_ORIGIN = 'http://pg-chronicle.internal'
 
+export async function dispatch(
+	connection: Connection,
+	request: Request,
+): Promise<Response> {
+	const app = await connectionApp(connection)
+	return app.fetch(request)
+}
+
 async function call<T>(
+	connection: Connection,
 	method: 'GET' | 'POST',
 	path: string,
 	body?: unknown,
 ): Promise<T> {
 	const token = await mintToken()
-	const request = new Request(`${INTERNAL_ORIGIN}${path}`, {
-		method,
-		headers: {
-			authorization: `Bearer ${token}`,
-			...(body === undefined ? {} : { 'content-type': 'application/json' }),
-		},
-		...(body === undefined ? {} : { body: JSON.stringify(body) }),
-	})
-
-	const response =
-		method === 'GET'
-			? await pgChronicleGET(request)
-			: await pgChroniclePOST(request)
+	const response = await dispatch(
+		connection,
+		new Request(`${INTERNAL_ORIGIN}${path}`, {
+			method,
+			headers: {
+				authorization: `Bearer ${token}`,
+				...(body === undefined ? {} : { 'content-type': 'application/json' }),
+			},
+			...(body === undefined ? {} : { body: JSON.stringify(body) }),
+		}),
+	)
 
 	// 204 has no body; every other pg-chronicle response is JSON.
 	const text = await response.text()
@@ -124,6 +136,7 @@ async function call<T>(
 }
 
 export function getRecordHistory(
+	connection: Connection,
 	table: string,
 	recordId: string,
 	options: {
@@ -142,31 +155,36 @@ export function getRecordHistory(
 	// key can't reshape the route.
 	const path = `/api/history/${encodeURIComponent(table)}/${encodeURIComponent(recordId)}${query ? `?${query}` : ''}`
 
-	return call<PaginatedWire<AuditEntryWire>>('GET', path)
+	return call<PaginatedWire<AuditEntryWire>>(connection, 'GET', path)
 }
 
 export function searchHistory(
+	connection: Connection,
 	params: SearchParams,
 ): Promise<PaginatedWire<AuditEntryWire>> {
 	return call<PaginatedWire<AuditEntryWire>>(
+		connection,
 		'POST',
 		'/api/history/search',
 		params,
 	)
 }
 
-export function revertEntry(input: {
-	table: string
-	recordId: string
-	auditEntryId: string
-	/**
-	 * Skip audit rows for the revert itself. Requires SUPERUSER or the
-	 * `pg_replication` role (PostgreSQL 16+); omitted rather than sent as
-	 * `false` so the request body matches what a default caller would send.
-	 */
-	suppressAuditTriggers?: boolean
-}): Promise<{ success: true }> {
-	return call<{ success: true }>('POST', '/api/history/revert', {
+export function revertEntry(
+	connection: Connection,
+	input: {
+		table: string
+		recordId: string
+		auditEntryId: string
+		/**
+		 * Skip audit rows for the revert itself. Requires SUPERUSER or the
+		 * `pg_replication` role (PostgreSQL 16+); omitted rather than sent as
+		 * `false` so the request body matches what a default caller would send.
+		 */
+		suppressAuditTriggers?: boolean
+	},
+): Promise<{ success: true }> {
+	return call<{ success: true }>(connection, 'POST', '/api/history/revert', {
 		table: input.table,
 		recordId: input.recordId,
 		auditEntryId: input.auditEntryId,
@@ -174,19 +192,24 @@ export function revertEntry(input: {
 	})
 }
 
-export function getStats(): Promise<{ stats: ArchivalStatsRow[] }> {
-	return call<{ stats: ArchivalStatsRow[] }>('GET', '/api/stats')
+export function getStats(
+	connection: Connection,
+): Promise<{ stats: ArchivalStatsRow[] }> {
+	return call<{ stats: ArchivalStatsRow[] }>(connection, 'GET', '/api/stats')
 }
 
-export function getDetailedHealth(): Promise<DetailedHealth> {
-	return call<DetailedHealth>('GET', '/api/health/detailed')
+export function getDetailedHealth(
+	connection: Connection,
+): Promise<DetailedHealth> {
+	return call<DetailedHealth>(connection, 'GET', '/api/health/detailed')
 }
 
-export function runArchival(): Promise<{
+export function runArchival(connection: Connection): Promise<{
 	success: boolean
 	archival: DetailedHealth['archival']
 }> {
 	return call<{ success: boolean; archival: DetailedHealth['archival'] }>(
+		connection,
 		'POST',
 		'/api/archive',
 	)
@@ -198,18 +221,23 @@ export function runArchival(): Promise<{
  * directly would get a 401. Fetching it here with the minted token is what
  * makes the spec reachable at all.
  */
-export function getOpenApiSpec(): Promise<Record<string, unknown>> {
-	return call<Record<string, unknown>>('GET', '/openapi')
+export function getOpenApiSpec(
+	connection: Connection,
+): Promise<Record<string, unknown>> {
+	return call<Record<string, unknown>>(connection, 'GET', '/openapi')
 }
 
 /**
- * The public probe. It lives outside `/api`, so it is not reachable through the
- * catch-all route the dashboard mounts — we call the handler directly for the
- * same reason we do everywhere else.
+ * The public probe for one connection. It lives outside `/api`, so it is not
+ * reachable through the catch-all the dashboard mounts — we dispatch to the
+ * handler directly for the same reason we do everywhere else.
  */
-export async function getHealth(): Promise<{ status: string } | null> {
+export async function getHealth(
+	connection: Connection,
+): Promise<{ status: string } | null> {
 	try {
-		const response = await pgChronicleGET(
+		const response = await dispatch(
+			connection,
 			new Request(`${INTERNAL_ORIGIN}/health`),
 		)
 		return (await response.json()) as { status: string }

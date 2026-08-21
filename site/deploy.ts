@@ -13,59 +13,53 @@
 const REPO = 'https://github.com/TimMikeladze/pg-chronicle'
 
 /**
- * The four the clone form cannot fill in for anyone: a connection string, the
- * tables to audit, a JWT signing secret and the dashboard password. A default
- * for any of these would end up in the deploy URL, and from there in browser
- * history — the same reason Vercel refuses values in the `env` parameter.
+ * The three the clone form cannot fill in for anyone: a Postgres URL for the
+ * dashboard's own registry, a signing secret and the dashboard password. A
+ * default for any of these would end up in the deploy URL, and from there in
+ * browser history — the same reason Vercel refuses values in the `env`
+ * parameter.
  *
- * `PG_CHRONICLE_DASHBOARD_PASSWORD` is here rather than under the optional
- * group because without it the deployed dashboard refuses to serve any page in
- * production — reaching one grants full audit read plus revert, so the gate
- * fails closed.
+ * Note what is NOT here: the database being audited, its tables, and its S3
+ * settings. Those are added from the dashboard UI and stored in the registry,
+ * so a second database no longer means a second deploy.
+ *
+ * `PG_CHRONICLE_DASHBOARD_PASSWORD` is required rather than optional because
+ * without it the deployed dashboard refuses to serve any page in production —
+ * reaching one grants full audit read plus revert, so the gate fails closed.
  */
 export const DEPLOY_ENV_REQUIRED = [
-	'PG_CHRONICLE_DATABASE_URL',
-	'PG_CHRONICLE_TABLES',
+	'PG_CHRONICLE_DASHBOARD_DATABASE_URL',
 	'PG_CHRONICLE_JWT_SECRET',
 	'PG_CHRONICLE_DASHBOARD_PASSWORD',
 ] as const
 
 /**
- * S3 archival and its cron trigger. Every one of these is safe to leave blank:
- * the library reads them for truthiness (`enableArchiver: !!PG_CHRONICLE_S3_BUCKET`,
- * `CRON_SECRET?.trim() || undefined`), so an empty value is the same as an
- * unset one — the dashboard deploys without the archival panels and the daily
- * cron in `dashboard/vercel.json` finds no `/api/archive` to call.
+ * The cron trigger for scheduled archival. Safe to leave blank: without it
+ * `GET /api/cron/archive` answers 503 and the daily cron in
+ * `dashboard/vercel.json` finds a disabled route — archival can still be run
+ * per connection from the dashboard.
  *
- * They are listed anyway because the alternative is a cloned project whose
- * shipped cron entry can never work until someone reads the README, and adding
- * them later means a second deploy.
+ * It is listed anyway because the alternative is a cloned project whose shipped
+ * cron entry can never work until someone reads the README, and adding it later
+ * means a second deploy.
  */
-export const DEPLOY_ENV_OPTIONAL = [
-	'PG_CHRONICLE_S3_BUCKET',
-	'PG_CHRONICLE_S3_ACCESS_KEY_ID',
-	'PG_CHRONICLE_S3_SECRET_ACCESS_KEY',
-	'CRON_SECRET',
-] as const
+export const DEPLOY_ENV_OPTIONAL = ['CRON_SECRET'] as const
 
 /**
  * The library defaults, prefilled so the form is a review rather than a
  * lookup. Non-secret every one of them — Vercel stores `envDefaults` in the
  * URL, so anything here is public.
  *
- * `PG_CHRONICLE_S3_REGION` sits with the defaults rather than the optional
- * group: it is prefilled like the rest, and idle until a bucket is set. Keep
- * this list in step with the README's Environment Variables table.
+ * The archival knobs that used to live here (retention, grace period, batch
+ * size, S3 region) are now per-connection settings in the UI, which is where
+ * their defaults are shown. Keep this list in step with the README's
+ * Environment Variables table.
  */
 export const DEPLOY_ENV_DEFAULTS = {
-	PG_CHRONICLE_S3_REGION: 'us-east-1',
 	PG_CHRONICLE_JWT_ALG: 'HS256',
 	PG_CHRONICLE_POOL_MAX: '3',
 	PG_CHRONICLE_STATEMENT_TIMEOUT_MS: '30000',
 	PG_CHRONICLE_DASHBOARD_ACTOR: 'dashboard',
-	PG_CHRONICLE_RETENTION_DAYS: '90',
-	PG_CHRONICLE_GRACE_PERIOD_DAYS: '7',
-	PG_CHRONICLE_BATCH_SIZE: '10000',
 } as const
 
 /**
@@ -74,11 +68,11 @@ export const DEPLOY_ENV_DEFAULTS = {
  * same way.
  */
 const ENV_DESCRIPTION = [
-	'Four need a value: PG_CHRONICLE_DATABASE_URL, PG_CHRONICLE_TABLES, PG_CHRONICLE_JWT_SECRET,',
-	'and PG_CHRONICLE_DASHBOARD_PASSWORD (the UI can read and revert every audited record).',
-	'Optional — leave blank to deploy without S3 archival: PG_CHRONICLE_S3_BUCKET,',
-	'PG_CHRONICLE_S3_ACCESS_KEY_ID, PG_CHRONICLE_S3_SECRET_ACCESS_KEY, CRON_SECRET.',
-	'Everything else arrives prefilled with the library defaults and can be left as is.',
+	'Three need a value: PG_CHRONICLE_DASHBOARD_DATABASE_URL (any Postgres — the dashboard keeps its',
+	'connection list there), PG_CHRONICLE_JWT_SECRET, and PG_CHRONICLE_DASHBOARD_PASSWORD (the UI can',
+	'read and revert every audited record). The databases you actually audit are added from the',
+	'dashboard itself, not here. Optional — leave blank to deploy without scheduled archival:',
+	'CRON_SECRET. Everything else arrives prefilled with the library defaults and can be left as is.',
 ].join(' ')
 
 /** Every key the clone form shows, in the order it shows them. */

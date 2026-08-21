@@ -3,6 +3,7 @@
 import { ArrowRightIcon } from 'lucide-react'
 import Link from 'next/link'
 
+import { useConnectionPath } from '@/components/connection-context'
 import { EntryDiff } from '@/components/entry-diff'
 import { RelativeTime } from '@/components/relative-time'
 import { RevertButton } from '@/components/revert-button'
@@ -85,6 +86,10 @@ export function EntryInspector({
 	onOpenChange: (open: boolean) => void
 	showTimelineLink?: boolean
 }) {
+	// Read before the early return: `entry` is null while the dialog is closed,
+	// and a hook that only runs when it is open is not a hook.
+	const prefix = useConnectionPath()
+
 	if (!entry) return null
 
 	const meta = OPERATION_META[entry.operation]
@@ -117,7 +122,7 @@ export function EntryInspector({
 					{showTimelineLink ? (
 						<Button asChild variant="ghost" size="sm">
 							<Link
-								href={`/history/${encodeURIComponent(entry.tableName)}/${encodeURIComponent(entry.recordId)}`}
+								href={`${prefix}/history/${encodeURIComponent(entry.tableName)}/${encodeURIComponent(entry.recordId)}`}
 							>
 								Full timeline
 								<ArrowRightIcon />

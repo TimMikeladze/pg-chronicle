@@ -8,10 +8,11 @@ import { EmptyState, Panel, PanelFooter, Section } from '@/components/section'
 import { StatRow, StatTile } from '@/components/stat-tile'
 import { Callout } from '@/components/status'
 import { Button } from '@/components/ui/button'
-import { readConfig } from '@/lib/config'
+import { currentConnection } from '@/lib/current-connection'
 import { exactNumber } from '@/lib/format'
 import { ApiError, getStats, searchHistory } from '@/lib/pg-chronicle-server'
 import { cachedProbe } from '@/lib/probe-cache'
+import type { Connection } from '@/lib/registry'
 import type { ArchivalStatsRow, AuditEntryWire, Operation } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -29,16 +30,19 @@ const PROBE_TTL_MS = 5_000
  * global total — there is no count endpoint, and labelling a sample as a total
  * would be a lie the UI cannot back up.
  */
-function loadFeed(table: string): Promise<{
+function loadFeed(
+	connection: Connection,
+	table: string,
+): Promise<{
 	entries: AuditEntryWire[]
 	error: string | null
 }> {
 	return cachedProbe(
-		`feed:${table}`,
+		`feed:${connection.id}:${table}`,
 		PROBE_TTL_MS,
 		async () => {
 			try {
-				const result = await searchHistory({
+				const result = await searchHistory(connection, {
 					tables: [table],
 					limit: FEED_LIMIT,
 				})
@@ -60,44 +64,52 @@ function loadFeed(table: string): Promise<{
 export default async function TablePage({
 	params,
 }: {
-	params: Promise<{ table: string }>
+	params: Promise<{ conn: string; table: string }>
 }) {
-	const { table } = await params
-	const config = readConfig()
+	const { conn, table } = await params
+	const connection = await currentConnection(conn)
+	const prefix = `/c/${encodeURIComponent(connection.id)}`
+	const archiverEnabled = Boolean(connection.archiver)
 
 	// The API answers an unconfigured table with INVALID_TABLE; naming the
 	// configured set here is a far more useful dead end than an error banner.
-	if (!config.tables.includes(table)) {
+	if (!connection.tables.includes(table)) {
 		return (
 			<div className="mx-auto flex max-w-2xl flex-col gap-4 py-10">
 				<h1 className="text-ink text-lg font-semibold tracking-tight">
 					Table not audited
 				</h1>
 				<p className="text-muted-foreground text-[13px] leading-relaxed">
-					<span className="text-foreground font-mono">{table}</span> is not in{' '}
-					<code className="text-foreground font-mono text-xs">
-						PG_CHRONICLE_TABLES
-					</code>
-					. Currently audited:{' '}
+					<span className="text-foreground font-mono">{table}</span> is not one
+					of the tables{' '}
+					<span className="text-foreground">{connection.name}</span> audits.
+					Currently audited:{' '}
 					<span className="text-foreground font-mono">
-						{config.tables.join(', ') || 'none'}
+						{connection.tables.join(', ') || 'none'}
 					</span>
 					.
 				</p>
-				<Button asChild variant="outline" className="self-start">
-					<Link href="/tables">
-						<ArrowLeftIcon />
-						All tables
-					</Link>
-				</Button>
+				<div className="flex flex-wrap gap-2">
+					<Button asChild variant="outline">
+						<Link href={`${prefix}/tables`}>
+							<ArrowLeftIcon />
+							All tables
+						</Link>
+					</Button>
+					<Button asChild variant="ghost">
+						<Link href={`/connections/${encodeURIComponent(connection.id)}`}>
+							Add it to this connection
+						</Link>
+					</Button>
+				</div>
 			</div>
 		)
 	}
 
 	const [feed, archival] = await Promise.all([
-		loadFeed(table),
-		config.archiverEnabled
-			? getStats()
+		loadFeed(connection, table),
+		archiverEnabled
+			? getStats(connection)
 					.then((s) => s.stats.find((row) => row.tableName === table) ?? null)
 					.catch((): ArchivalStatsRow | null => null)
 			: Promise.resolve<ArchivalStatsRow | null>(null),
@@ -121,14 +133,14 @@ export default async function TablePage({
 					</p>
 				</div>
 				<Button asChild variant="outline" size="sm">
-					<Link href={`/search?table=${encodeURIComponent(table)}`}>
+					<Link href={`${prefix}/search?table=${encodeURIComponent(table)}`}>
 						<SearchIcon />
 						Search this table
 					</Link>
 				</Button>
 			</div>
 
-			<StatRow columns={config.archiverEnabled ? 4 : 2}>
+			<StatRow columns={archiverEnabled ? 4 : 2}>
 				<StatTile
 					label="Recent entries"
 					value={exactNumber(feed.entries.length)}
@@ -159,7 +171,7 @@ export default async function TablePage({
 							: 'No entries recorded yet'
 					}
 				/>
-				{config.archiverEnabled ? (
+				{archiverEnabled ? (
 					<>
 						<StatTile
 							label="Pending archive"
@@ -227,7 +239,7 @@ export default async function TablePage({
 				title="Open a record"
 				description="Every change to one row, with the values that moved."
 			>
-				<RecordJump tables={config.tables} fixedTable={table} />
+				<RecordJump tables={connection.tables} fixedTable={table} />
 			</Section>
 
 			<Section
@@ -240,10 +252,9 @@ export default async function TablePage({
 					</Callout>
 				) : feed.entries.length === 0 ? (
 					<EmptyState title="No entries for this table">
-						Triggers capture writes from the moment{' '}
-						<code className="text-foreground font-mono text-xs">setup()</code>{' '}
-						ran. Rows written before that have no history, and archived entries
-						are filtered out of every read.
+						Triggers capture writes from the moment this connection was saved.
+						Rows written before that have no history, and archived entries are
+						filtered out of every read.
 					</EmptyState>
 				) : (
 					<Panel>
@@ -255,7 +266,9 @@ export default async function TablePage({
 								{feed.entries.length === 1 ? 'entry' : 'entries'}
 							</span>
 							<Button asChild variant="ghost" size="sm">
-								<Link href={`/search?table=${encodeURIComponent(table)}`}>
+								<Link
+									href={`${prefix}/search?table=${encodeURIComponent(table)}`}
+								>
 									Search all entries
 								</Link>
 							</Button>

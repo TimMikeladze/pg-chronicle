@@ -1,0 +1,4 @@
+[test]
+# See lib/test-setup.ts: `server-only` throws outside a Next build, which would
+# make every server module here untestable.
+preload = ["./lib/test-setup.ts"]

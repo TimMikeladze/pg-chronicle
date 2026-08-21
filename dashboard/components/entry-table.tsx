@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 
+import { useConnectionPath } from '@/components/connection-context'
 import { ChangeSummary } from '@/components/entry-diff'
 import { RelativeTime } from '@/components/relative-time'
 import { OperationBadge } from '@/components/status'
@@ -68,6 +69,7 @@ export function EntryTable({
 	 */
 	onInspect?: (entry: AuditEntryWire) => void
 }) {
+	const prefix = useConnectionPath()
 	const show = {
 		table: columns.table ?? true,
 		changes: columns.changes ?? true,
@@ -129,7 +131,7 @@ export function EntryTable({
 						{show.table ? (
 							<TableCell className="font-mono text-xs whitespace-nowrap">
 								<Link
-									href={`/tables/${encodeURIComponent(entry.tableName)}`}
+									href={`${prefix}/tables/${encodeURIComponent(entry.tableName)}`}
 									className="decoration-border underline underline-offset-4 transition-colors hover:decoration-current"
 									onClick={(event) => event.stopPropagation()}
 								>
@@ -142,7 +144,7 @@ export function EntryTable({
 								truncate(entry.recordId, 28)
 							) : (
 								<Link
-									href={`/history/${encodeURIComponent(entry.tableName)}/${encodeURIComponent(entry.recordId)}`}
+									href={`${prefix}/history/${encodeURIComponent(entry.tableName)}/${encodeURIComponent(entry.recordId)}`}
 									className="decoration-border underline underline-offset-4 transition-colors hover:decoration-current"
 								>
 									{truncate(entry.recordId, 28)}

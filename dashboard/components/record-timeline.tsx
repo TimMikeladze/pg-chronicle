@@ -4,6 +4,7 @@ import { ArrowDownUpIcon, ChevronRightIcon } from 'lucide-react'
 import { useCallback, useState, useTransition } from 'react'
 
 import { loadHistoryPageAction } from '@/app/actions'
+import { useConnectionId } from '@/components/connection-context'
 import { ChangeSummary, EntryDiff } from '@/components/entry-diff'
 import { RelativeTime } from '@/components/relative-time'
 import { RevertButton } from '@/components/revert-button'
@@ -128,11 +129,13 @@ export function RecordTimeline({
 	const [hasMore, setHasMore] = useState(initialHasMore)
 	const [error, setError] = useState<string | null>(null)
 	const [pending, startTransition] = useTransition()
+	const connectionId = useConnectionId()
 
 	const load = useCallback(
 		(nextOrder: 'asc' | 'desc', nextCursor: string | undefined) => {
 			startTransition(async () => {
 				const result = await loadHistoryPageAction({
+					connectionId,
 					table,
 					recordId,
 					order: nextOrder,
@@ -151,7 +154,7 @@ export function RecordTimeline({
 				}
 			})
 		},
-		[table, recordId],
+		[connectionId, table, recordId],
 	)
 
 	function toggleOrder() {

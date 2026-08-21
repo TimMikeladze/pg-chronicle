@@ -1,16 +1,17 @@
-import { NotConfigured } from '@/components/not-configured'
 import { SearchExplorer } from '@/components/search-explorer'
-import { readConfig } from '@/lib/config'
+import { currentConnection } from '@/lib/current-connection'
 
 export const dynamic = 'force-dynamic'
 
 export default async function SearchPage({
+	params,
 	searchParams,
 }: {
+	params: Promise<{ conn: string }>
 	searchParams: Promise<{ table?: string }>
 }) {
-	const config = readConfig()
-	if (config.tables.length === 0) return <NotConfigured />
+	const { conn } = await params
+	const connection = await currentConnection(conn)
 
 	// Arriving from a table's page preselects it, so "Search this table" lands
 	// scoped rather than dumping the reader back into every table at once.
@@ -23,11 +24,13 @@ export default async function SearchPage({
 					Explore
 				</h1>
 				<p className="text-muted-foreground max-w-2xl text-[13px] leading-relaxed">
-					Query every audited change across tables. Select a row to inspect the
-					full before/after diff, its provenance, and to revert it.
+					Query every audited change across{' '}
+					<span className="text-foreground">{connection.name}</span>. Select a
+					row to inspect the full before/after diff, its provenance, and to
+					revert it.
 				</p>
 			</div>
-			<SearchExplorer tables={config.tables} initialTable={table} />
+			<SearchExplorer tables={connection.tables} initialTable={table} />
 		</div>
 	)
 }

@@ -13,7 +13,7 @@ bun add pg-chronicle
 
 *One record's timeline in the bundled [dashboard](#dashboard) — what each change set, who made it, and a revert for any entry. Screens are real captures, not mockups.*
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%2Ftree%2Fmain%2Fdashboard&project-name=pg-chronicle-dashboard&repository-name=pg-chronicle-dashboard&env=PG_CHRONICLE_DATABASE_URL%2CPG_CHRONICLE_TABLES%2CPG_CHRONICLE_JWT_SECRET%2CPG_CHRONICLE_DASHBOARD_PASSWORD%2CPG_CHRONICLE_S3_BUCKET%2CPG_CHRONICLE_S3_ACCESS_KEY_ID%2CPG_CHRONICLE_S3_SECRET_ACCESS_KEY%2CCRON_SECRET%2CPG_CHRONICLE_S3_REGION%2CPG_CHRONICLE_JWT_ALG%2CPG_CHRONICLE_POOL_MAX%2CPG_CHRONICLE_STATEMENT_TIMEOUT_MS%2CPG_CHRONICLE_DASHBOARD_ACTOR%2CPG_CHRONICLE_RETENTION_DAYS%2CPG_CHRONICLE_GRACE_PERIOD_DAYS%2CPG_CHRONICLE_BATCH_SIZE&envDefaults=%7B%22PG_CHRONICLE_S3_REGION%22%3A%22us-east-1%22%2C%22PG_CHRONICLE_JWT_ALG%22%3A%22HS256%22%2C%22PG_CHRONICLE_POOL_MAX%22%3A%223%22%2C%22PG_CHRONICLE_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_CHRONICLE_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_CHRONICLE_RETENTION_DAYS%22%3A%2290%22%2C%22PG_CHRONICLE_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_CHRONICLE_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Four+need+a+value%3A+PG_CHRONICLE_DATABASE_URL%2C+PG_CHRONICLE_TABLES%2C+PG_CHRONICLE_JWT_SECRET%2C+and+PG_CHRONICLE_DASHBOARD_PASSWORD+%28the+UI+can+read+and+revert+every+audited+record%29.+Optional+%E2%80%94+leave+blank+to+deploy+without+S3+archival%3A+PG_CHRONICLE_S3_BUCKET%2C+PG_CHRONICLE_S3_ACCESS_KEY_ID%2C+PG_CHRONICLE_S3_SECRET_ACCESS_KEY%2C+CRON_SECRET.+Everything+else+arrives+prefilled+with+the+library+defaults+and+can+be+left+as+is.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%23environment-variables)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%2Ftree%2Fmain%2Fdashboard&project-name=pg-chronicle-dashboard&repository-name=pg-chronicle-dashboard&env=PG_CHRONICLE_DASHBOARD_DATABASE_URL%2CPG_CHRONICLE_JWT_SECRET%2CPG_CHRONICLE_DASHBOARD_PASSWORD%2CCRON_SECRET%2CPG_CHRONICLE_JWT_ALG%2CPG_CHRONICLE_POOL_MAX%2CPG_CHRONICLE_STATEMENT_TIMEOUT_MS%2CPG_CHRONICLE_DASHBOARD_ACTOR&envDefaults=%7B%22PG_CHRONICLE_JWT_ALG%22%3A%22HS256%22%2C%22PG_CHRONICLE_POOL_MAX%22%3A%223%22%2C%22PG_CHRONICLE_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_CHRONICLE_DASHBOARD_ACTOR%22%3A%22dashboard%22%7D&envDescription=Three+need+a+value%3A+PG_CHRONICLE_DASHBOARD_DATABASE_URL+%28any+Postgres+%E2%80%94+the+dashboard+keeps+its+connection+list+there%29%2C+PG_CHRONICLE_JWT_SECRET%2C+and+PG_CHRONICLE_DASHBOARD_PASSWORD+%28the+UI+can+read+and+revert+every+audited+record%29.+The+databases+you+actually+audit+are+added+from+the+dashboard+itself%2C+not+here.+Optional+%E2%80%94+leave+blank+to+deploy+without+scheduled+archival%3A+CRON_SECRET.+Everything+else+arrives+prefilled+with+the+library+defaults+and+can+be+left+as+is.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%23environment-variables)
 
 **The short version.** `setup()` installs a trigger on each table you name. From then on PostgreSQL does the auditing itself: every `INSERT`, `UPDATE` and `DELETE` writes a JSONB before/after snapshot — plus who made the change and when — into an `audit_log` table, in the *same transaction* as the change. Both commit or neither does, so no write slips through unrecorded.
 
@@ -120,9 +120,9 @@ new PgChronicle({ pool, tables: ['users'], logger: pino() })
 
 Nothing above needs a server — the triggers live in PostgreSQL. This deploys the parts that do: the REST API, the dashboard and cron archival, as one Vercel project. Full details in [Deployment](#deployment).
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%2Ftree%2Fmain%2Fdashboard&project-name=pg-chronicle-dashboard&repository-name=pg-chronicle-dashboard&env=PG_CHRONICLE_DATABASE_URL%2CPG_CHRONICLE_TABLES%2CPG_CHRONICLE_JWT_SECRET%2CPG_CHRONICLE_DASHBOARD_PASSWORD%2CPG_CHRONICLE_S3_BUCKET%2CPG_CHRONICLE_S3_ACCESS_KEY_ID%2CPG_CHRONICLE_S3_SECRET_ACCESS_KEY%2CCRON_SECRET%2CPG_CHRONICLE_S3_REGION%2CPG_CHRONICLE_JWT_ALG%2CPG_CHRONICLE_POOL_MAX%2CPG_CHRONICLE_STATEMENT_TIMEOUT_MS%2CPG_CHRONICLE_DASHBOARD_ACTOR%2CPG_CHRONICLE_RETENTION_DAYS%2CPG_CHRONICLE_GRACE_PERIOD_DAYS%2CPG_CHRONICLE_BATCH_SIZE&envDefaults=%7B%22PG_CHRONICLE_S3_REGION%22%3A%22us-east-1%22%2C%22PG_CHRONICLE_JWT_ALG%22%3A%22HS256%22%2C%22PG_CHRONICLE_POOL_MAX%22%3A%223%22%2C%22PG_CHRONICLE_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_CHRONICLE_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_CHRONICLE_RETENTION_DAYS%22%3A%2290%22%2C%22PG_CHRONICLE_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_CHRONICLE_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Four+need+a+value%3A+PG_CHRONICLE_DATABASE_URL%2C+PG_CHRONICLE_TABLES%2C+PG_CHRONICLE_JWT_SECRET%2C+and+PG_CHRONICLE_DASHBOARD_PASSWORD+%28the+UI+can+read+and+revert+every+audited+record%29.+Optional+%E2%80%94+leave+blank+to+deploy+without+S3+archival%3A+PG_CHRONICLE_S3_BUCKET%2C+PG_CHRONICLE_S3_ACCESS_KEY_ID%2C+PG_CHRONICLE_S3_SECRET_ACCESS_KEY%2C+CRON_SECRET.+Everything+else+arrives+prefilled+with+the+library+defaults+and+can+be+left+as+is.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%23environment-variables)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%2Ftree%2Fmain%2Fdashboard&project-name=pg-chronicle-dashboard&repository-name=pg-chronicle-dashboard&env=PG_CHRONICLE_DASHBOARD_DATABASE_URL%2CPG_CHRONICLE_JWT_SECRET%2CPG_CHRONICLE_DASHBOARD_PASSWORD%2CCRON_SECRET%2CPG_CHRONICLE_JWT_ALG%2CPG_CHRONICLE_POOL_MAX%2CPG_CHRONICLE_STATEMENT_TIMEOUT_MS%2CPG_CHRONICLE_DASHBOARD_ACTOR&envDefaults=%7B%22PG_CHRONICLE_JWT_ALG%22%3A%22HS256%22%2C%22PG_CHRONICLE_POOL_MAX%22%3A%223%22%2C%22PG_CHRONICLE_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_CHRONICLE_DASHBOARD_ACTOR%22%3A%22dashboard%22%7D&envDescription=Three+need+a+value%3A+PG_CHRONICLE_DASHBOARD_DATABASE_URL+%28any+Postgres+%E2%80%94+the+dashboard+keeps+its+connection+list+there%29%2C+PG_CHRONICLE_JWT_SECRET%2C+and+PG_CHRONICLE_DASHBOARD_PASSWORD+%28the+UI+can+read+and+revert+every+audited+record%29.+The+databases+you+actually+audit+are+added+from+the+dashboard+itself%2C+not+here.+Optional+%E2%80%94+leave+blank+to+deploy+without+scheduled+archival%3A+CRON_SECRET.+Everything+else+arrives+prefilled+with+the+library+defaults+and+can+be+left+as+is.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%23environment-variables)
 
-The button clones [`dashboard/`](./dashboard) — the UI *and* the REST API it is built on, mounted at `/api`. Sixteen environment variables come up in the clone form: eight arrive prefilled with the library defaults, four are the archival ones you can leave blank, and only `PG_CHRONICLE_DATABASE_URL`, `PG_CHRONICLE_TABLES`, `PG_CHRONICLE_JWT_SECRET` and `PG_CHRONICLE_DASHBOARD_PASSWORD` need you.
+The button clones [`dashboard/`](./dashboard) — the UI *and* the REST API it is built on. Eight environment variables come up in the clone form: four arrive prefilled, `CRON_SECRET` can be left blank, and only `PG_CHRONICLE_DASHBOARD_DATABASE_URL`, `PG_CHRONICLE_JWT_SECRET` and `PG_CHRONICLE_DASHBOARD_PASSWORD` need you. The databases you audit are added from the dashboard itself, so a second database is a form, not a second deploy.
 
 ## Installation
 
@@ -550,31 +550,37 @@ bun run src/main.ts
 
 ## Dashboard
 
-A ready-to-deploy Next.js UI for browsing, searching and reverting the audit trail. It lives in [`dashboard/`](./dashboard) and is a single deployment: the same app mounts the real pg-chronicle REST API at `/api` and renders the screens on top of it, so nothing else has to be running.
+A ready-to-deploy Next.js UI for browsing, searching and reverting the audit trail. It lives in [`dashboard/`](./dashboard) and is a single deployment that manages **many databases**: the same app mounts a real pg-chronicle REST API per connection under `/api/db/<connection>` and renders the screens on top of it, so nothing else has to be running.
 
 ```bash
 cd dashboard
-cp .env.example .env.local   # PG_CHRONICLE_DATABASE_URL, PG_CHRONICLE_TABLES, PG_CHRONICLE_JWT_SECRET
+cp .env.example .env.local   # three variables, none of them a database you audit
 bun install
 bun run dev                  # builds the root package, then starts Next on :3000
 ```
 
-It reads the same environment variables the server does — `PG_CHRONICLE_TABLES` is what enables the history screens, and setting `PG_CHRONICLE_S3_BUCKET` turns on the archival panels. See [`dashboard/README.md`](./dashboard/README.md) for the full walkthrough.
+**Databases are added in the UI, not the environment.** The environment configures the dashboard itself: `PG_CHRONICLE_DASHBOARD_DATABASE_URL` (any Postgres — it keeps its connection list there, creating one table on first use), `PG_CHRONICLE_JWT_SECRET` and `PG_CHRONICLE_DASHBOARD_PASSWORD`. Everything about a database *being audited* — connection string, tables, S3 archival and retention — is entered at `/connections`.
+
+Saving a connection connects and installs the audit triggers before anything is written, so a wrong password or a missing table is reported on the form rather than saved and discovered later. Connection strings and S3 keys are sealed with AES-256-GCM under a key derived from `PG_CHRONICLE_JWT_SECRET` and are never rendered back into the page — the UI shows only `host:port/database`. See [`dashboard/README.md`](./dashboard/README.md) for the full walkthrough.
 
 ### Screens
 
+Every view of an audit trail is scoped to one connection and says so in its URL, so a pasted link always opens the database the sender was looking at.
+
 | Route | What it does |
 |-------|--------------|
-| `/` | Health, archival backlog, recent activity across all tables, jump-to-record |
-| `/search` | JSONB containment or ILIKE search with operation / date-range / table filters, cursor pagination, per-entry diff |
-| `/tables` | Every audited table with its last change, actor and archival backlog |
-| `/tables/[table]` | One table: operation mix, recent changes, jump-to-record |
-| `/history/[table]/[recordId]` | One record's full timeline, oldest/newest ordering, per-entry revert |
-| `/archival` | Archival status and on-demand runs |
-| `/openapi` | The API reference, rendered from the OpenAPI document |
-| `/openapi.json` | That document itself |
-| `/api/*` | The pg-chronicle REST API itself — for cron, scripts and other services |
-| `/health` | Public liveness probe, added by the dashboard because the catch-all only serves `/api/**` |
+| `/connections` | Every managed database; add, edit, remove |
+| `/c/[conn]` | Recent activity across that connection's tables, jump-to-record |
+| `/c/[conn]/search` | JSONB containment or ILIKE search with operation / date-range / table filters, cursor pagination, per-entry diff |
+| `/c/[conn]/tables` | Every audited table with its last change, actor and archival backlog |
+| `/c/[conn]/tables/[table]` | One table: operation mix, recent changes, jump-to-record |
+| `/c/[conn]/history/[table]/[recordId]` | One record's full timeline, oldest/newest ordering, per-entry revert |
+| `/c/[conn]/archival` | Archival status and on-demand runs |
+| `/c/[conn]/openapi` | The API reference, rendered from the OpenAPI document |
+| `/c/[conn]/openapi.json` | That document itself |
+| `/api/db/[conn]/*` | The pg-chronicle REST API for one connection — for scripts and other services |
+| `/api/cron/archive` | Runs archival for every connection that has it configured; `Bearer $CRON_SECRET` |
+| `/health` | Liveness probe — registry reachability |
 | `/login` | The password gate |
 
 ![The Explore screen: a JSONB containment query across four audited tables, with operation and date-range filters and a result row per change.](https://raw.githubusercontent.com/TimMikeladze/pg-chronicle/main/site/public/shots/explore-light.png)
@@ -595,9 +601,11 @@ Failed logins are throttled — escalating delay for everyone, plus a 15-minute 
 
 `/api/*` is deliberately outside the cookie gate: it is the real REST API with its own JWT (and cron secret), and schedulers call it.
 
-**It never issues a token to the browser.** Server components and server actions mint a 60-second HS256 JWT with `jose` and invoke the very same route handlers mounted at `/api`, in-process with a synthetic `Request`. No network hop, no CORS, one connection pool, and identical auth, validation and error semantics to any external caller. The JWT `sub` carries `PG_CHRONICLE_DASHBOARD_ACTOR`, which pg-chronicle logs on every revert — set it to something identifiable per deployment.
+**It never issues a token to the browser.** Server components and server actions mint a 60-second HS256 JWT with `jose` and dispatch a synthetic `Request` into that connection's own Hono app, in-process. No network hop, no CORS, and identical auth, validation and error semantics to any external caller. The JWT `sub` carries `PG_CHRONICLE_DASHBOARD_ACTOR`, which pg-chronicle logs on every revert — set it to something identifiable per deployment.
 
-**Authentication is not authorization.** Past the gate, the dashboard's self-minted token has blanket access to every record of every configured table. For per-tenant scoping, mount the API with an `authorize` hook via `createHandlers` (see [Next.js](#nextjs-serverless)) — the shared password says *someone* is allowed in, not *which rows* they may touch.
+**Stored credentials are encrypted.** Connection strings and S3 secret keys are sealed with AES-256-GCM under a key derived from `PG_CHRONICLE_JWT_SECRET`, and are never rendered back into the page — the UI shows only `host:port/database`. A dump of the registry is not a dump of every audited database's password.
+
+**Authentication is not authorization.** Past the gate, the dashboard's self-minted token has blanket access to every record of every table on every managed connection. For per-tenant scoping, pass an `authorize` hook to the `createServer` call in `dashboard/lib/connection-runtime.ts` — the shared password says *someone* is allowed in, not *which rows* they may touch.
 
 One behaviour worth knowing: archived history disappears from reads. Both `getHistory` and `search` filter out soft-deleted rows, so once the archiver has run, that history lives in S3 — reachable through `listArchives` / `readArchive`, not through these screens.
 
@@ -607,33 +615,29 @@ Click the button below to get the dashboard and the REST API as one Vercel proje
 
 ### One click: the dashboard on Vercel
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%2Ftree%2Fmain%2Fdashboard&project-name=pg-chronicle-dashboard&repository-name=pg-chronicle-dashboard&env=PG_CHRONICLE_DATABASE_URL%2CPG_CHRONICLE_TABLES%2CPG_CHRONICLE_JWT_SECRET%2CPG_CHRONICLE_DASHBOARD_PASSWORD%2CPG_CHRONICLE_S3_BUCKET%2CPG_CHRONICLE_S3_ACCESS_KEY_ID%2CPG_CHRONICLE_S3_SECRET_ACCESS_KEY%2CCRON_SECRET%2CPG_CHRONICLE_S3_REGION%2CPG_CHRONICLE_JWT_ALG%2CPG_CHRONICLE_POOL_MAX%2CPG_CHRONICLE_STATEMENT_TIMEOUT_MS%2CPG_CHRONICLE_DASHBOARD_ACTOR%2CPG_CHRONICLE_RETENTION_DAYS%2CPG_CHRONICLE_GRACE_PERIOD_DAYS%2CPG_CHRONICLE_BATCH_SIZE&envDefaults=%7B%22PG_CHRONICLE_S3_REGION%22%3A%22us-east-1%22%2C%22PG_CHRONICLE_JWT_ALG%22%3A%22HS256%22%2C%22PG_CHRONICLE_POOL_MAX%22%3A%223%22%2C%22PG_CHRONICLE_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_CHRONICLE_DASHBOARD_ACTOR%22%3A%22dashboard%22%2C%22PG_CHRONICLE_RETENTION_DAYS%22%3A%2290%22%2C%22PG_CHRONICLE_GRACE_PERIOD_DAYS%22%3A%227%22%2C%22PG_CHRONICLE_BATCH_SIZE%22%3A%2210000%22%7D&envDescription=Four+need+a+value%3A+PG_CHRONICLE_DATABASE_URL%2C+PG_CHRONICLE_TABLES%2C+PG_CHRONICLE_JWT_SECRET%2C+and+PG_CHRONICLE_DASHBOARD_PASSWORD+%28the+UI+can+read+and+revert+every+audited+record%29.+Optional+%E2%80%94+leave+blank+to+deploy+without+S3+archival%3A+PG_CHRONICLE_S3_BUCKET%2C+PG_CHRONICLE_S3_ACCESS_KEY_ID%2C+PG_CHRONICLE_S3_SECRET_ACCESS_KEY%2C+CRON_SECRET.+Everything+else+arrives+prefilled+with+the+library+defaults+and+can+be+left+as+is.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%23environment-variables)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%2Ftree%2Fmain%2Fdashboard&project-name=pg-chronicle-dashboard&repository-name=pg-chronicle-dashboard&env=PG_CHRONICLE_DASHBOARD_DATABASE_URL%2CPG_CHRONICLE_JWT_SECRET%2CPG_CHRONICLE_DASHBOARD_PASSWORD%2CCRON_SECRET%2CPG_CHRONICLE_JWT_ALG%2CPG_CHRONICLE_POOL_MAX%2CPG_CHRONICLE_STATEMENT_TIMEOUT_MS%2CPG_CHRONICLE_DASHBOARD_ACTOR&envDefaults=%7B%22PG_CHRONICLE_JWT_ALG%22%3A%22HS256%22%2C%22PG_CHRONICLE_POOL_MAX%22%3A%223%22%2C%22PG_CHRONICLE_STATEMENT_TIMEOUT_MS%22%3A%2230000%22%2C%22PG_CHRONICLE_DASHBOARD_ACTOR%22%3A%22dashboard%22%7D&envDescription=Three+need+a+value%3A+PG_CHRONICLE_DASHBOARD_DATABASE_URL+%28any+Postgres+%E2%80%94+the+dashboard+keeps+its+connection+list+there%29%2C+PG_CHRONICLE_JWT_SECRET%2C+and+PG_CHRONICLE_DASHBOARD_PASSWORD+%28the+UI+can+read+and+revert+every+audited+record%29.+The+databases+you+actually+audit+are+added+from+the+dashboard+itself%2C+not+here.+Optional+%E2%80%94+leave+blank+to+deploy+without+scheduled+archival%3A+CRON_SECRET.+Everything+else+arrives+prefilled+with+the+library+defaults+and+can+be+left+as+is.&envLink=https%3A%2F%2Fgithub.com%2FTimMikeladze%2Fpg-chronicle%23environment-variables)
 
 The button clones [`dashboard/`](./dashboard) on its own — the [Dashboard](#dashboard) UI and the REST API it runs on, in one project, with `dashboard/vercel.json` registering the archival cron. The clone consumes `pg-chronicle` from npm, so nothing else in this repo has to build for it to deploy — Vercel's Root Directory cannot reach a parent directory, which is what makes the published package the dependency here.
 
-**What you fill in.** Four variables:
+**None of the databases you audit are configured here.** The clone form configures the dashboard; the databases it manages are added from the running UI at `/connections` and stored in the registry. That is the difference between a second database being a form and being a redeploy.
+
+**What you fill in.** Three variables:
 
 | Variable | Value |
 |----------|-------|
-| `PG_CHRONICLE_DATABASE_URL` | Postgres connection string. Point it at a pooled endpoint (Neon, Supabase, PgBouncer) — every invocation opens its own pool |
-| `PG_CHRONICLE_TABLES` | Comma-separated tables to audit, e.g. `users,orders`. They must already exist: the app installs triggers on them at first request |
-| `PG_CHRONICLE_JWT_SECRET` | Long random string. The dashboard signs its own short-lived tokens with it and it never reaches the browser |
+| `PG_CHRONICLE_DASHBOARD_DATABASE_URL` | Postgres connection string for the dashboard's own registry — where it keeps the list of managed connections. Any database will do, including one you already audit; it creates a single `pg_chronicle_dashboard_connections` table on first use. Point it at a pooled endpoint (Neon, Supabase, PgBouncer) |
+| `PG_CHRONICLE_JWT_SECRET` | Long random string. The dashboard signs its own short-lived API tokens with it (it never reaches the browser) and derives the key that encrypts stored credentials from it. Rotating it means re-entering every connection's credentials — the UI says so explicitly rather than failing obscurely |
 | `PG_CHRONICLE_DASHBOARD_PASSWORD` | Long random string. The password for the UI itself — without it the deployed dashboard refuses to serve pages, because reaching one means being able to read and revert every audited record |
 
-**What you can leave blank.** The archival stack comes up in the same form, and every field of it is optional — the library reads each for truthiness, so blank is identical to unset:
+**What you can leave blank.**
 
 | Variable | Leave blank if |
 |----------|----------------|
-| `PG_CHRONICLE_S3_BUCKET` | You do not want S3 archival. This is the switch: without it there is no `/api/archive` route and no archival UI, and the cron entry in `dashboard/vercel.json` gets a `404` — inert, not broken |
-| `PG_CHRONICLE_S3_ACCESS_KEY_ID` | Your bucket is reachable through the default AWS credential chain (IAM role, instance profile) rather than an explicit key |
-| `PG_CHRONICLE_S3_SECRET_ACCESS_KEY` | Same as above — the two key fields go together |
-| `CRON_SECRET` | You are not scheduling archival. Without it the nightly cron gets a `401`, and `/api/stats` and `/api/health/detailed` accept only a JWT |
+| `CRON_SECRET` | You are not scheduling archival. It is the *only* credential `GET /api/cron/archive` accepts, and without it that route is disabled and answers `503` — the nightly cron becomes inert, not broken. Per-connection runs stay available from the dashboard's Archival page |
 
-Filling the bucket and `CRON_SECRET` here is what makes the shipped cron work on the first deploy; adding them later in the project settings works too, and costs a redeploy.
+**What arrives prefilled**, straight from the library's defaults, so the form is a click-through: `PG_CHRONICLE_JWT_ALG=HS256`, `PG_CHRONICLE_POOL_MAX=3`, `PG_CHRONICLE_STATEMENT_TIMEOUT_MS=30000`, `PG_CHRONICLE_DASHBOARD_ACTOR=dashboard`. Defaults are only ever passed for non-secret values — the clone URL ends up in browser history, which is why the three above arrive blank (the registry URL carries a password).
 
-**What arrives prefilled**, straight from the library's defaults, so the form is a click-through: `PG_CHRONICLE_S3_REGION=us-east-1`, `PG_CHRONICLE_JWT_ALG=HS256`, `PG_CHRONICLE_POOL_MAX=3`, `PG_CHRONICLE_STATEMENT_TIMEOUT_MS=30000`, `PG_CHRONICLE_DASHBOARD_ACTOR=dashboard`, `PG_CHRONICLE_RETENTION_DAYS=90`, `PG_CHRONICLE_GRACE_PERIOD_DAYS=7`, `PG_CHRONICLE_BATCH_SIZE=10000`. Defaults are only ever passed for non-secret values — the clone URL ends up in browser history, which is why the secrets above arrive blank (as does the connection string, which carries a password).
-
-**A non-AWS bucket** (R2, MinIO, Spaces) needs one more variable the form does not carry: add `PG_CHRONICLE_S3_ENDPOINT` in the project settings, which also switches the client to path-style addressing. See [Cron Archival](#cron-archival-vercel-cron) for what the scheduled run does.
+**S3 archival**, including a non-AWS bucket (R2, MinIO, Spaces) and its endpoint, is configured per connection in the UI rather than by environment variable — see [Cron Archival](#cron-archival-vercel-cron) for what the scheduled run does.
 
 Past the password gate the dashboard has blanket access to every audited row by design — the password is a lock on the door, not per-user authorization. Put it behind SSO or a network boundary too before pointing it at production, and supply an `authorize` hook for per-tenant scoping — see [Access control](#access-control).
 
@@ -708,7 +712,7 @@ The `pg-chronicle/next` entry point automatically enables `serverless: true`, wh
 
 #### Cron Archival (Vercel Cron)
 
-Serverless has no persistent process, so archival needs an external trigger. Add `vercel.json` next to the Option B route handler above, plus the S3 and `CRON_SECRET` variables from [Environment Variables](#environment-variables). Working example: [`examples/next/`](./examples/next). The one-click dashboard already ships this file.
+Serverless has no persistent process, so archival needs an external trigger. Add `vercel.json` next to the Option B route handler above, plus the S3 and `CRON_SECRET` variables from [Environment Variables](#environment-variables). Working example: [`examples/next/`](./examples/next). The one-click dashboard already ships this file, pointed at its own `/api/cron/archive`, which walks every connection that has archival configured instead of a single `/api/archive`.
 
 ```json
 {
@@ -922,14 +926,21 @@ To run archival on your own schedule instead of the server's, drive [`Orchestrat
 
 ### Dashboard-only
 
-Read by [`dashboard/`](./dashboard), not by the library. It also reads every variable above — `PG_CHRONICLE_TABLES` enables the history screens and `PG_CHRONICLE_S3_BUCKET` turns on the archival panels. One narrowing: `PG_CHRONICLE_JWT_ALG` must be symmetric here (`HS256/384/512`), because the dashboard both signs and verifies with the same secret; it refuses to start on an `RS*`/`ES*` value.
+Read by [`dashboard/`](./dashboard), not by the library.
+
+The dashboard does **not** read the audited-database variables above. `PG_CHRONICLE_DATABASE_URL`, `PG_CHRONICLE_TABLES`, and the whole `PG_CHRONICLE_S3_*` / retention group are per-connection settings entered in its UI and stored in the registry — setting them in a dashboard deployment has no effect. It does honour `PG_CHRONICLE_JWT_SECRET`, `PG_CHRONICLE_JWT_ALG`, `PG_CHRONICLE_POOL_MAX`, `PG_CHRONICLE_STATEMENT_TIMEOUT_MS` and `CRON_SECRET`. One narrowing: `PG_CHRONICLE_JWT_ALG` must be symmetric here (`HS256/384/512`), because the dashboard both signs and verifies with the same secret; it refuses to start on an `RS*`/`ES*` value.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
+| `PG_CHRONICLE_DASHBOARD_DATABASE_URL` | Yes | Postgres connection string for the dashboard's own registry — the list of databases it manages, which tables in each are audited, and their archival settings. Any database will do; it creates a single `pg_chronicle_dashboard_connections` table there on first use. This is the only connection string in a dashboard's environment |
 | `PG_CHRONICLE_DASHBOARD_PASSWORD` | Production UI | Password for the UI. Without it (and without the opt-out below) the deployed dashboard refuses to render, because a page load is enough to read and revert every audited record. Development runs open |
 | `PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS` | No | Set `true` to serve the UI unauthenticated in production. Only correct behind an access proxy / SSO that authenticates every request |
 | `PG_CHRONICLE_DASHBOARD_SESSION_TTL_HOURS` | No | Lifetime of a dashboard sign-in cookie (default `12`) |
 | `PG_CHRONICLE_DASHBOARD_ACTOR` | No | Written to the `sub` of the token the dashboard mints for itself, which pg-chronicle logs as `app_actor` on every revert (default `dashboard`) |
+
+`PG_CHRONICLE_JWT_SECRET` carries a second job here: the key that encrypts stored connection strings and S3 secret keys (AES-256-GCM, domain-separated from the signing key) is derived from it. Rotating it therefore invalidates every session *and* seals every stored credential. Each ciphertext carries an 8-character fingerprint of the key that sealed it, so affected connections are listed as **sealed** and their edit page asks for the credentials again, rather than failing with a decrypt error.
+
+`CRON_SECRET` is stricter on the dashboard than on the library. It authenticates `GET /api/cron/archive`, which runs archival across every managed connection, and is the **only** credential that route accepts — no JWT alternative, and without it the route is disabled and answers `503`. On a connection's own `/api/db/<conn>/archive`, `/stats` and `/health/detailed` it behaves exactly as the library documents, as an alternative to a JWT.
 
 ## Production Caveats
 

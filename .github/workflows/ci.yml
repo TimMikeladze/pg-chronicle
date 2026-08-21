@@ -173,10 +173,10 @@ jobs:
     name: Dashboard
     runs-on: ubuntu-latest
     services:
-      # Needed only by the access-gate step below: `pg-chronicle/next` opens a
-      # pool on first request, so without a database every /api call fails to
-      # initialise and answers 500 — which would hide whether the JWT check
-      # (the thing under test) actually runs.
+      # Needed only by the access-gate step below. It is the dashboard's own
+      # registry — the list of databases it manages — and also stands in for a
+      # managed database, so the step can seed one connection and exercise the
+      # per-connection API mount.
       postgres:
         image: postgres:16-alpine
         env:
@@ -271,15 +271,17 @@ jobs:
         working-directory: dashboard
         env:
           NODE_ENV: production
-          PG_CHRONICLE_TABLES: users
           PG_CHRONICLE_JWT_SECRET: ci-jwt-secret-value-long-enough
-          PG_CHRONICLE_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-          # The job-wide S3 variables would switch the archiver on, and it
-          # extends an audit_log this throwaway database does not have. The gate
-          # is what is under test here, not archival.
-          PG_CHRONICLE_S3_BUCKET: ''
+          PG_CHRONICLE_DASHBOARD_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
         run: |
           set -euo pipefail
+
+          # Seed one connection so the per-connection API mount has something
+          # real to authenticate against. It goes through the registry's own
+          # writer, so the sealed-credential format under test cannot drift from
+          # what the application writes.
+          psql "$PG_CHRONICLE_DASHBOARD_DATABASE_URL" -c 'CREATE TABLE IF NOT EXISTS users (id serial PRIMARY KEY, name text)'
+          bun --preload ./lib/test-setup.ts scripts/seed-connection.ts CI users
 
           expect() { # expect <label> <actual> <wanted>
             if [ "$2" != "$3" ]; then
@@ -308,7 +310,7 @@ jobs:
           # 1. Production with no password must refuse to serve the UI at all.
           start 3300
           expect "no password -> UI refused" \
-            "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3300/tables)" 503
+            "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3300/connections)" 503
           stop 3300
 
           # 2. With a password: pages redirect to the login, the login itself is
@@ -317,11 +319,19 @@ jobs:
           export PG_CHRONICLE_DASHBOARD_PASSWORD=ci-dashboard-password
           start 3301
           expect "GET page -> redirect" \
-            "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3301/tables)" 307
+            "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3301/connections)" 307
           expect "login reachable" \
             "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3301/login)" 200
           expect "server action without session -> 401" \
-            "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3301/tables)" 401
+            "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3301/connections)" 401
           expect "api without token -> 401" \
-            "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3301/api/history/users/1)" 401
+            "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3301/api/db/ci/history/users/1)" 401
+          # Naming a connection in the path must not be a way in: an unknown one
+          # is a dead end, not a differently-authenticated route.
+          expect "api unknown connection -> 404" \
+            "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3301/api/db/nope/history/users/1)" 404
+          # Scheduled archival deletes rows across every managed database, so it
+          # is fail-closed: no CRON_SECRET configured means the route is off.
+          expect "cron archive without CRON_SECRET -> 503" \
+            "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3301/api/cron/archive)" 503
           stop 3301

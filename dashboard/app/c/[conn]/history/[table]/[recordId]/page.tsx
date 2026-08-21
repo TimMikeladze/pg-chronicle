@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { RecordTimeline } from '@/components/record-timeline'
 import { Callout } from '@/components/status'
 import { Button } from '@/components/ui/button'
-import { readConfig } from '@/lib/config'
+import { currentConnection } from '@/lib/current-connection'
 import { ApiError, getRecordHistory } from '@/lib/pg-chronicle-server'
 
 export const dynamic = 'force-dynamic'
@@ -14,36 +14,36 @@ const PAGE_SIZE = 25
 export default async function RecordPage({
 	params,
 }: {
-	params: Promise<{ table: string; recordId: string }>
+	params: Promise<{ conn: string; table: string; recordId: string }>
 }) {
 	// Next gives these already percent-decoded.
-	const { table, recordId } = await params
-	const config = readConfig()
+	const { conn, table, recordId } = await params
+	const connection = await currentConnection(conn)
+	const prefix = `/c/${encodeURIComponent(connection.id)}`
 
 	/*
 	 * Check the allowlist before calling: the API answers an unconfigured table
 	 * with INVALID_TABLE, but naming the configured tables here is a far more
 	 * useful dead end than an error banner.
 	 */
-	if (!config.tables.includes(table)) {
+	if (!connection.tables.includes(table)) {
 		return (
 			<div className="mx-auto flex max-w-2xl flex-col gap-4 py-10">
 				<h1 className="text-ink text-lg font-semibold tracking-tight">
 					Table not audited
 				</h1>
 				<p className="text-muted-foreground text-[13px] leading-relaxed">
-					<span className="text-foreground font-mono">{table}</span> is not in{' '}
-					<code className="text-foreground font-mono text-xs">
-						PG_CHRONICLE_TABLES
-					</code>
-					. Currently audited:{' '}
+					<span className="text-foreground font-mono">{table}</span> is not one
+					of the tables{' '}
+					<span className="text-foreground">{connection.name}</span> audits.
+					Currently audited:{' '}
 					<span className="text-foreground font-mono">
-						{config.tables.join(', ') || 'none'}
+						{connection.tables.join(', ') || 'none'}
 					</span>
 					.
 				</p>
 				<Button asChild variant="outline" className="self-start">
-					<Link href="/tables">
+					<Link href={`${prefix}/tables`}>
 						<ArrowLeftIcon />
 						All tables
 					</Link>
@@ -55,7 +55,7 @@ export default async function RecordPage({
 	let page: Awaited<ReturnType<typeof getRecordHistory>> | null = null
 	let error: string | null = null
 	try {
-		page = await getRecordHistory(table, recordId, {
+		page = await getRecordHistory(connection, table, recordId, {
 			limit: PAGE_SIZE,
 			order: 'desc',
 		})
@@ -73,7 +73,7 @@ export default async function RecordPage({
 			    fixed "back" target would lie about where the reader came from. */}
 			<nav className="text-muted-foreground flex flex-wrap items-center gap-2 font-mono text-xs">
 				<Link
-					href="/tables"
+					href={`${prefix}/tables`}
 					className="hover:text-foreground transition-colors"
 				>
 					Tables
@@ -82,7 +82,7 @@ export default async function RecordPage({
 					/
 				</span>
 				<Link
-					href={`/tables/${encodeURIComponent(table)}`}
+					href={`${prefix}/tables/${encodeURIComponent(table)}`}
 					className="hover:text-foreground transition-colors"
 				>
 					{table}

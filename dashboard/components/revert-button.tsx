@@ -6,6 +6,7 @@ import { useState, useTransition } from 'react'
 import { toast } from 'sonner'
 
 import { revertAction } from '@/app/actions'
+import { useConnectionId } from '@/components/connection-context'
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -32,6 +33,7 @@ export function RevertButton({
 	const [suppress, setSuppress] = useState(false)
 	const [pending, startTransition] = useTransition()
 	const router = useRouter()
+	const connectionId = useConnectionId()
 
 	const outcome = revertOutcome(entry.operation)
 
@@ -47,6 +49,7 @@ export function RevertButton({
 	function confirm() {
 		startTransition(async () => {
 			const result = await revertAction({
+				connectionId,
 				table: entry.tableName,
 				recordId: entry.recordId,
 				auditEntryId: entry.id,

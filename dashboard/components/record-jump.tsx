@@ -4,6 +4,7 @@ import { ArrowRightIcon } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
+import { useConnectionPath } from '@/components/connection-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -33,6 +34,7 @@ export function RecordJump({
 	fixedTable?: string
 }) {
 	const router = useRouter()
+	const prefix = useConnectionPath()
 	const [table, setTable] = useState(fixedTable ?? tables[0] ?? '')
 	const [recordId, setRecordId] = useState('')
 
@@ -46,7 +48,7 @@ export function RecordJump({
 				event.preventDefault()
 				if (!canGo) return
 				router.push(
-					`/history/${encodeURIComponent(effectiveTable)}/${encodeURIComponent(recordId.trim())}`,
+					`${prefix}/history/${encodeURIComponent(effectiveTable)}/${encodeURIComponent(recordId.trim())}`,
 				)
 			}}
 		>

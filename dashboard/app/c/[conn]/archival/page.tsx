@@ -1,4 +1,5 @@
-import { NotConfigured } from '@/components/not-configured'
+import Link from 'next/link'
+
 import { RelativeTime } from '@/components/relative-time'
 import { RunArchivalButton } from '@/components/run-archival-button'
 import { Panel, PanelFooter, Section } from '@/components/section'
@@ -12,9 +13,10 @@ import {
 	TableHeader,
 	TableRow,
 } from '@/components/ui/table'
-import { readConfig } from '@/lib/config'
+import { currentConnection } from '@/lib/current-connection'
 import { compactNumber, exactNumber } from '@/lib/format'
 import { getDetailedHealth, getStats } from '@/lib/pg-chronicle-server'
+import type { Connection } from '@/lib/registry'
 import type { ArchivalStatsRow, DetailedHealth } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -25,14 +27,17 @@ export const dynamic = 'force-dynamic'
  * not care about. It also covers the two endpoints nothing else surfaces:
  * /api/stats per table and /api/health/detailed.
  */
-async function load(enabled: boolean): Promise<{
+async function load(connection: Connection): Promise<{
 	stats: ArchivalStatsRow[]
 	health: DetailedHealth | null
 	error: string | null
 }> {
-	if (!enabled) return { stats: [], health: null, error: null }
+	if (!connection.archiver) return { stats: [], health: null, error: null }
 	try {
-		const [stats, health] = await Promise.all([getStats(), getDetailedHealth()])
+		const [stats, health] = await Promise.all([
+			getStats(connection),
+			getDetailedHealth(connection),
+		])
 		return { stats: stats.stats, health, error: null }
 	} catch (error) {
 		return {
@@ -43,11 +48,14 @@ async function load(enabled: boolean): Promise<{
 	}
 }
 
-export default async function ArchivalPage() {
-	const config = readConfig()
-	if (config.tables.length === 0) return <NotConfigured />
-
-	const { stats, health, error } = await load(config.archiverEnabled)
+export default async function ArchivalPage({
+	params,
+}: {
+	params: Promise<{ conn: string }>
+}) {
+	const { conn } = await params
+	const connection = await currentConnection(conn)
+	const { stats, health, error } = await load(connection)
 
 	const totals = stats.reduce(
 		(acc, row) => ({
@@ -77,14 +85,19 @@ export default async function ArchivalPage() {
 				</p>
 			</div>
 
-			{!config.archiverEnabled ? (
+			{!connection.archiver ? (
 				<Callout tone="neutral" title="Archival is not configured">
-					Set{' '}
-					<code className="text-foreground font-mono text-xs">
-						PG_CHRONICLE_S3_BUCKET
-					</code>{' '}
-					to enable it. Without it the audit log grows unbounded, and the stats,
-					detailed-health, and archive endpoints are not registered at all.
+					Without it the audit log for{' '}
+					<span className="text-foreground">{connection.name}</span> grows
+					unbounded, and the stats, detailed-health and archive endpoints are
+					not registered at all.{' '}
+					<Link
+						href={`/connections/${encodeURIComponent(connection.id)}`}
+						className="text-foreground underline underline-offset-4"
+					>
+						Enable archival on this connection
+					</Link>{' '}
+					to turn them on.
 				</Callout>
 			) : (
 				<>

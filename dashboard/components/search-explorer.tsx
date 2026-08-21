@@ -4,6 +4,7 @@ import { BracesIcon, GaugeIcon, SearchIcon, TypeIcon } from 'lucide-react'
 import { useCallback, useMemo, useState, useTransition } from 'react'
 
 import { searchAction, searchNextPageAction } from '@/app/actions'
+import { useConnectionId } from '@/components/connection-context'
 import { EntryInspector } from '@/components/entry-inspector'
 import { EntryTable } from '@/components/entry-table'
 import { EmptyState, Panel, PanelFooter } from '@/components/section'
@@ -138,6 +139,7 @@ export function SearchExplorer({
 	const [pending, startTransition] = useTransition()
 
 	const [inspected, setInspected] = useState<AuditEntryWire | null>(null)
+	const connectionId = useConnectionId()
 
 	/*
 	 * `query` has two server-side modes, chosen by the same shape test used in
@@ -205,7 +207,7 @@ export function SearchExplorer({
 
 	const runSearch = useCallback(() => {
 		startTransition(async () => {
-			const result = await searchAction(params)
+			const result = await searchAction(connectionId, params)
 			if (result.ok) {
 				setResults(result.value.data)
 				setCursor(result.value.nextCursor)
@@ -220,14 +222,14 @@ export function SearchExplorer({
 				setResults(null)
 			}
 		})
-	}, [params])
+	}, [connectionId, params])
 
 	const loadMore = useCallback(() => {
 		if (!cursor) return
 		startTransition(async () => {
 			// The cursor came from search(), which paginates descending — it is not
 			// interchangeable with a getHistory() cursor.
-			const result = await searchNextPageAction(params, cursor)
+			const result = await searchNextPageAction(connectionId, params, cursor)
 			if (result.ok) {
 				setResults((prev) => [...(prev ?? []), ...result.value.data])
 				setCursor(result.value.nextCursor)
@@ -236,7 +238,7 @@ export function SearchExplorer({
 				setError(result.message)
 			}
 		})
-	}, [cursor, params])
+	}, [connectionId, cursor, params])
 
 	const mode = MODE_META[queryMode]
 	const ModeIcon = mode.icon
