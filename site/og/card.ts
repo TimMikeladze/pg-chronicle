@@ -9,20 +9,14 @@
  * to a PNG, but the deploy has no browser, and a committed PNG would go stale
  * the first time the README changed.
  *
- * See vite.config.ts, which emits this at /og.png in dev and in the bundle.
+ * See vite.config.ts, which emits it and writes its URL into index.html.
  */
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { initWasm, Resvg } from '@resvg/resvg-wasm'
 import satori from 'satori'
-
-/**
- * 1200x630 is the size both LinkedIn and X document, and the one every other
- * unfurler falls back to. Declared in index.html too — the platforms drop cards
- * whose declared dimensions disagree with the file.
- */
-export const CARD_WIDTH = 1200
-export const CARD_HEIGHT = 630
+import { CARD_HEIGHT, CARD_WIDTH } from './meta'
 
 /**
  * The screen the card shows, from the same set as the hero — the record
@@ -107,7 +101,7 @@ function op(label: string, color: string) {
 				marginRight: 8,
 				fontFamily: 'Geist Mono',
 				fontWeight: 500,
-				fontSize: 20,
+				fontSize: 22,
 				color,
 			},
 		},
@@ -164,7 +158,7 @@ function card(tagline: string, shot: string): Node {
 				style: {
 					position: 'absolute',
 					top: 104,
-					left: 660,
+					left: 630,
 					width: 700,
 					height: 526,
 					display: 'flex',
@@ -175,16 +169,20 @@ function card(tagline: string, shot: string): Node {
 					background: BG,
 				},
 			},
-			// The capture is 1400x900 in CSS pixels. Only 540 of this window's
-			// 700px sit on the canvas — the rest hangs off the right edge — so
-			// the scale is set by what has to survive that crop: both columns
-			// of the before/after diff, which is the whole reason this screen
-			// is the one on the card.
+			// The capture is 1400x900 in CSS pixels, and the window is a crop of
+			// it rather than the whole thing shrunk to fit. Two things set the
+			// crop. The offsets skip the global nav and the tab bar, which are
+			// chrome every dashboard has and say nothing about this one — the
+			// window opens on the record heading instead, and the first entry
+			// sits whole inside it. The scale is then the largest that still
+			// fits both columns of the before/after diff across the 540 of
+			// this window's 700px that sit on the canvas, because that diff is
+			// the whole reason this screen is the one on the card.
 			el('img', {
 				src: shot,
-				width: 850,
-				height: 546,
-				style: { marginLeft: -6 },
+				width: 952,
+				height: 612,
+				style: { marginLeft: -12, marginTop: -88 },
 			}),
 		),
 		// Keeps the copy readable where the window would otherwise crowd it.
@@ -232,7 +230,7 @@ function card(tagline: string, shot: string): Node {
 							marginLeft: 11,
 							fontFamily: 'Geist Mono',
 							fontWeight: 500,
-							fontSize: 23,
+							fontSize: 25,
 							letterSpacing: '-0.01em',
 							color: '#ffffff',
 						},
@@ -257,7 +255,7 @@ function card(tagline: string, shot: string): Node {
 					{
 						style: {
 							fontFamily: 'Geist Mono',
-							fontSize: 14,
+							fontSize: 15,
 							letterSpacing: '0.09em',
 							color: DIM,
 						},
@@ -310,7 +308,7 @@ function card(tagline: string, shot: string): Node {
 						color: '#b5b5b5',
 					},
 				},
-				'recorded in the same transaction as the write. Browse, search and revert it from the dashboard.',
+				'recorded in the same transaction as the write.',
 			),
 			el(
 				'div',
@@ -338,6 +336,33 @@ function card(tagline: string, shot: string): Node {
 
 /** resvg's wasm module is global and initialises once per process. */
 let wasmReady: Promise<unknown> | undefined
+
+/**
+ * The card, rendered once per process. Both of vite.config.ts's hooks want it —
+ * one for the URL to write into the meta tags, the other for the bytes to put
+ * in the bundle — and satori plus resvg is the slowest step in the build.
+ */
+let cardOnce: Promise<{ png: Buffer; fileName: string }> | undefined
+
+/**
+ * The card and the path it is served from, which is named after its own bytes.
+ *
+ * X and LinkedIn cache a card against its image URL and re-fetch on a schedule
+ * of their own — X's card validator, the one button that used to force a
+ * refresh, is gone. A card crawled once while its image was missing or wrong
+ * therefore stays wrong in every feed for as long as that cache lives, which is
+ * how this site came to unfurl on X as a bare summary with no image at all.
+ * Hashing the bytes into the filename makes any change to the card a URL no
+ * unfurler can already hold a stale answer for, while an unchanged card keeps
+ * its URL and its cache.
+ */
+export function socialCard(siteDir: string) {
+	cardOnce ??= renderCard(siteDir).then((png) => ({
+		png,
+		fileName: `og-${createHash('sha256').update(png).digest('hex').slice(0, 10)}.png`,
+	}))
+	return cardOnce
+}
 
 /** Renders the card to PNG bytes. */
 export async function renderCard(siteDir: string): Promise<Buffer> {

@@ -8,31 +8,55 @@
 		<link rel="canonical" href="https://pg-chronicle.com/" />
 
 		<!--
-		  Title and description are filled in from the README at build time (see
-		  vite.config.ts); everything below is constant.
+		  Titles, descriptions and the card URL are filled in at build time (see
+		  vite.config.ts); everything else here is constant.
 
-		  The card image is site/public/og.png, regenerated with `bun run og`.
-		  It must stay 1200x630 and absolute: LinkedIn ignores relative URLs, and
-		  both it and X drop cards whose declared dimensions do not match.
+		  The card is drawn by site/og/card.ts and emitted into the bundle —
+		  nothing about it is committed. `bun run og` writes a copy to
+		  site/og-preview.png to look at. Every og.png below is rewritten to the
+		  card's content-hashed name by site/og/meta.ts during the build, which
+		  is what stops X and LinkedIn serving a card they cached before the
+		  image was right.
+
+		  It must stay 1200x630 and its URL absolute: LinkedIn ignores relative
+		  URLs, and both it and X drop cards whose declared dimensions do not
+		  match the file.
 		-->
 		<meta property="og:type" content="website" />
 		<meta property="og:site_name" content="pg-chronicle" />
+		<meta property="og:locale" content="en_US" />
 		<meta property="og:url" content="https://pg-chronicle.com/" />
 		<meta property="og:title" content="pg-chronicle" />
 		<meta property="og:description" content="" />
 		<meta property="og:image" content="https://pg-chronicle.com/og.png" />
+		<meta
+			property="og:image:secure_url"
+			content="https://pg-chronicle.com/og.png"
+		/>
 		<meta property="og:image:type" content="image/png" />
 		<meta property="og:image:width" content="1200" />
 		<meta property="og:image:height" content="630" />
 		<meta
 			property="og:image:alt"
-			content="pg-chronicle — PostgreSQL audit trails with automated S3 archival, beside the dashboard's Explore screen listing audited INSERT and UPDATE entries."
+			content="pg-chronicle — PostgreSQL audit trails with automated S3 archival, beside the dashboard's timeline for one record: an UPDATE that took plan from pro to enterprise, seats from 12 to 40 and status from suspended to active, with a revert button."
 		/>
 
+		<!--
+		  X reads og:* when the twitter:* twin is missing, but only after the
+		  card type has already been decided, and a card whose image it failed
+		  to fetch once is cached as a small summary for days. Spelling all four
+		  out is what keeps that decision from depending on a fallback.
+		-->
 		<meta name="twitter:card" content="summary_large_image" />
 		<meta name="twitter:site" content="@linesofcode" />
 		<meta name="twitter:creator" content="@linesofcode" />
+		<meta name="twitter:title" content="pg-chronicle" />
+		<meta name="twitter:description" content="" />
 		<meta name="twitter:image" content="https://pg-chronicle.com/og.png" />
+		<meta
+			name="twitter:image:alt"
+			content="pg-chronicle — PostgreSQL audit trails with automated S3 archival, beside the dashboard's timeline for one record: an UPDATE that took plan from pro to enterprise, seats from 12 to 40 and status from suspended to active, with a revert button."
+		/>
 
 		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 

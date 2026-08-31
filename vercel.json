@@ -3,5 +3,16 @@
 	"framework": null,
 	"installCommand": "cd site && bun install --frozen-lockfile",
 	"buildCommand": "cd site && bun run build",
-	"outputDirectory": "site/dist"
+	"outputDirectory": "site/dist",
+	"headers": [
+		{
+			"source": "/og-:hash.png",
+			"headers": [
+				{
+					"key": "Cache-Control",
+					"value": "public, max-age=31536000, immutable"
+				}
+			]
+		}
+	]
 }
