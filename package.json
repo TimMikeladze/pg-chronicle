@@ -48,7 +48,7 @@
 		"test": "bun test ./test",
 		"test:watch": "bun test --watch ./test",
 		"test:coverage": "bun test --coverage ./test",
-		"release": "bun run build && bumpp --commit --push --tag && bunx changelogithub && bun publish --access public --no-git-checks",
+		"release": "bun run build && bumpp --commit --push --tag && bunx changelogithub && bun publish --access public",
 		"prepare": "bun simple-git-hooks",
 		"check": "if [ \"$CI\" = \"true\" ]; then bun run lint && bun run tsc && bun run test:coverage; else bun run lint:fix && bun run tsc && bun run test; fi"
 	},
