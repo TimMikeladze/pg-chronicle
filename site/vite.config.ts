@@ -1,9 +1,9 @@
 import path from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
-import { umamiScriptTag } from './analytics'
-import { renderCard, socialCard } from './og/card'
-import { withPageMeta } from './og/meta'
-import { renderLlmsTxt, renderPage } from './prerender'
+import { umamiScriptTag } from './analytics.ts'
+import { renderCard, socialCard } from './og/card.ts'
+import { withPageMeta } from './og/meta.ts'
+import { renderLlmsTxt, renderPage } from './prerender.ts'
 
 const siteDir = import.meta.dirname
 const repoRoot = path.resolve(siteDir, '..')

@@ -12,10 +12,10 @@ import {
 /**
  * Whether the current request may see the application chrome.
  *
- * Kept out of `lib/auth.ts` because that module also runs in middleware on the
- * Edge runtime, where `next/headers` is not available.
+ * Kept out of `lib/auth.ts` because that module also runs in `proxy.ts`, where
+ * `next/headers` is not available.
  *
- * The middleware is what actually enforces access; this is for rendering
+ * The proxy is what actually enforces access; this is for rendering
  * decisions — chiefly not printing the audited table names into the nav of a
  * page a signed-out visitor can reach.
  */

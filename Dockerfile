@@ -1,6 +1,6 @@
 # Use official Bun image, pinned to a minor version for reproducible builds
 # (a mutable :latest can silently change Bun/OpenSSL/glibc under a running deploy).
-FROM oven/bun:1.3 AS base
+FROM oven/bun:1.4 AS base
 WORKDIR /app
 
 # Install dependencies into temp directory

@@ -9,7 +9,7 @@ import vitesseLight from '@shikijs/themes/vitesse-light'
 import { Marked } from 'marked'
 import { createHighlighterCore } from 'shiki/core'
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
-import { VERCEL_DEPLOY_URL } from './deploy'
+import { VERCEL_DEPLOY_URL } from './deploy.ts'
 
 /**
  * The dashboard screens shown in the hero. Each is a real screenshot captured

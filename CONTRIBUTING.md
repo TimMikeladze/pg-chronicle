@@ -6,7 +6,9 @@ Thank you for your interest in contributing to our project! This guide will help
 
 ### Prerequisites
 
-- **Bun**
+- **Bun 1.4.4**, the version CI and the Dockerfile use. Bun 1.4 renames shared
+  exports in split ESM chunks (`PgChronicle2`); `scripts/keep-export-names.ts`
+  restores their `.name` after `bun run build`, and `examples/node` checks it.
 - **Docker.** The tests run against a real PostgreSQL and a real MinIO rather
   than mocks — the whole library is triggers and SQL, so anything else would
   test a fiction. `docker-compose.yml` starts both.

@@ -24,22 +24,22 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-            # Pin to the same major the project targets (docker-compose uses
-            # postgres:16-alpine). An unpinned `postgres` could run a newer major
-            # and mask version-specific SQL behavior.
-            image: postgres:16-alpine
-            env:
-              POSTGRES_USER: postgres
-              POSTGRES_PASSWORD: postgres
-              POSTGRES_DB: postgres
-            options: >-
-                  --health-cmd pg_isready
-                  --health-interval 10s
-                  --health-timeout 5s
-                  --health-retries 5
-            ports:
-                  # Maps tcp port 5432 on service container to the host
-                  - 5432:5432
+        # Pin to the same major the project targets (docker-compose uses
+        # postgres:16-alpine). An unpinned `postgres` could run a newer major
+        # and mask version-specific SQL behavior.
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          # Maps tcp port 5432 on service container to the host
+          - 5432:5432
 
     steps:
       - name: Setup Minio
@@ -59,7 +59,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           # Pinned (not latest) so CI runs against a fixed Bun version.
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -80,7 +80,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Install dependencies
         working-directory: site
@@ -122,18 +122,18 @@ jobs:
         node: [20, 22, 24]
     services:
       postgres:
-            image: postgres:16-alpine
-            env:
-              POSTGRES_USER: postgres
-              POSTGRES_PASSWORD: postgres
-              POSTGRES_DB: postgres
-            options: >-
-                  --health-cmd pg_isready
-                  --health-interval 10s
-                  --health-timeout 5s
-                  --health-retries 5
-            ports:
-                  - 5432:5432
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
 
     steps:
       - name: Checkout code
@@ -142,7 +142,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -168,6 +168,100 @@ jobs:
         working-directory: examples/node
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
+  next-consumer:
+    name: Next.js consumer
+    runs-on: ubuntu-latest
+    # Installs the packed library into examples/next the way an app installs it
+    # from npm, builds it with Turbopack (the Next 16 default) and webpack, then
+    # calls the route handler. Catches a build that only works through the
+    # dashboard's symlink, and runtime breakage that only shows up under Next's
+    # own Request object.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install library dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build and pack the library
+        run: |
+          bun run build
+          mkdir -p "$RUNNER_TEMP/pkg"
+          bun pm pack --destination "$RUNNER_TEMP/pkg"
+
+      - name: Install the packed library into examples/next
+        working-directory: examples/next
+        run: bun add "$(ls "$RUNNER_TEMP"/pkg/pg-chronicle-*.tgz)"
+
+      - name: Build with webpack
+        working-directory: examples/next
+        run: bunx next build --webpack
+
+      - name: Build with Turbopack
+        working-directory: examples/next
+        run: bunx next build
+
+      - name: Call the route handler
+        working-directory: examples/next
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+          PG_CHRONICLE_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+          PG_CHRONICLE_TABLES: users
+          PG_CHRONICLE_JWT_SECRET: ci-next-consumer-secret-long-enough
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -c 'CREATE TABLE IF NOT EXISTS users (id serial PRIMARY KEY, name text)'
+
+          bunx next start --port 3400 > "$RUNNER_TEMP/next.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -s -o /dev/null http://127.0.0.1:3400/api/history/users/1 && break
+            sleep 1
+          done
+
+          token=$(cd ../.. && bun -e "import { sign } from 'hono/jwt'; console.log(await sign({ sub: 'ci', exp: Math.floor(Date.now() / 1000) + 600 }, process.env.PG_CHRONICLE_JWT_SECRET, 'HS256'))")
+          psql "$DATABASE_URL" -c "INSERT INTO users (name) VALUES ('Ann')"
+
+          expect() { # expect <label> <actual> <wanted>
+            if [ "$2" != "$3" ]; then
+              echo "::error::$1 - expected $3, got $2"
+              cat "$RUNNER_TEMP/next.log"
+              exit 1
+            fi
+            echo "ok: $1 ($2)"
+          }
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          url=http://127.0.0.1:3400/api/history
+
+          expect "GET without token" "$(code "$url/users/1")" 401
+          expect "GET with token" "$(code -H "Authorization: Bearer $token" "$url/users/1")" 200
+          expect "POST search" "$(code -X POST -H "Authorization: Bearer $token" -H 'content-type: application/json' -d '{"tables":["users"],"query":"{}"}' "$url/search")" 200
+          # A body without content-length is buffered by the body-size limit and
+          # the request rebuilt; under Next that used to fail with a 500.
+          expect "POST search, chunked" "$(printf '{"tables":["users"],"query":"{}"}' | code -X POST -H "Authorization: Bearer $token" -H 'content-type: application/json' -H 'Transfer-Encoding: chunked' --data-binary @- "$url/search")" 200
+          # Next attaches a body stream to OPTIONS too. No cors is configured
+          # here, so Hono answers 404, not 500.
+          expect "OPTIONS" "$(code -X OPTIONS "$url/search")" 404
 
   dashboard:
     name: Dashboard
@@ -202,7 +296,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
 
       # The dashboard resolves `pg-chronicle` / `pg-chronicle/next` through the
       # symlink created below, which reads the library's own exports map and

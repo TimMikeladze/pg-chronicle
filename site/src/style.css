@@ -879,13 +879,6 @@ a:hover {
 	tab-size: 2;
 }
 
-.setup pre.shiki code {
-	display: block;
-	width: fit-content;
-	min-width: 100%;
-	font-family: var(--mono);
-}
-
 @media (min-width: 48rem) {
 	.pillars {
 		grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1416,6 +1409,9 @@ a:hover {
 	tab-size: 2;
 }
 
+/* Kept below the inline-code rules (.alt code, .prose code, ...) so selector
+   specificity never descends through the file. */
+.setup pre.shiki code,
 .code-block pre.shiki code {
 	display: block;
 	width: fit-content;

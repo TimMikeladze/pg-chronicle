@@ -1,0 +1,4 @@
+.next/
+next-env.d.ts
+bun.lock
+tsconfig.tsbuildinfo

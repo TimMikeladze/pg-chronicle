@@ -337,6 +337,77 @@ describe('request hardening', () => {
 		expect(res.status).toBe(413)
 	})
 
+	const streamed = (text: string) =>
+		new Request('http://localhost/api/history/search', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: new Blob([text]).stream(),
+			// @ts-expect-error duplex is required for stream bodies but missing from lib.dom
+			duplex: 'half',
+		})
+
+	test('a streamed body without content-length still reaches the handler', async () => {
+		const pool = await getTestConnection()
+		const { app } = await createServer({
+			pool,
+			allowUnauthenticated: true,
+			enableHistory: true,
+			historyConfig: { tables: ['users'] },
+		})
+
+		const req = streamed(JSON.stringify({ tables: ['users'], query: '{}' }))
+		expect(req.headers.has('content-length')).toBe(false)
+		const res = await app.fetch(req)
+		expect(res.status).toBe(200)
+	})
+
+	test('an oversized streamed body is rejected with 413', async () => {
+		const pool = await getTestConnection()
+		const { app } = await createServer({ pool, allowUnauthenticated: true })
+
+		const res = await app.fetch(streamed('x'.repeat(1024 * 1024 + 1)))
+		expect(res.status).toBe(413)
+	})
+
+	test('a buffered body is rebuilt from the URL, not the original request', async () => {
+		// Next.js hands route handlers a request object that Node's undici refuses
+		// as `new Request(raw, init)` input ("Failed to parse URL from [object
+		// Request]"); hono/body-limit makes exactly that call. Bun is more
+		// lenient, so a Request that only takes a URL stands in for undici here.
+		const { limitBody } = await import('../src/body-limit')
+		const NativeRequest = globalThis.Request
+		class UrlOnlyRequest extends NativeRequest {
+			constructor(input: RequestInfo | URL, init?: RequestInit) {
+				if (typeof input !== 'string' && !(input instanceof URL)) {
+					throw new TypeError('Failed to parse URL from [object Request]')
+				}
+				super(input, init)
+			}
+		}
+		const raw = new NativeRequest('http://localhost/api/history/search', {
+			method: 'OPTIONS',
+			body: new Blob(['{}']).stream(),
+			// @ts-expect-error duplex is required for stream bodies but missing from lib.dom
+			duplex: 'half',
+		})
+		const c = { req: { raw } } as unknown as Parameters<
+			ReturnType<typeof limitBody>
+		>[0]
+
+		let reached = false
+		globalThis.Request = UrlOnlyRequest
+		try {
+			await limitBody(1024)(c, async () => {
+				reached = true
+			})
+		} finally {
+			globalThis.Request = NativeRequest
+		}
+		expect(reached).toBe(true)
+		expect(c.req.raw.method).toBe('OPTIONS')
+		expect(c.req.raw.url).toBe('http://localhost/api/history/search')
+	})
+
 	test('every response carries the sniffing and framing headers', async () => {
 		const pool = await getTestConnection()
 		const { app } = await createServer({ pool, allowUnauthenticated: true })

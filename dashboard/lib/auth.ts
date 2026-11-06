@@ -14,8 +14,8 @@
  * leave it unset in an environment your proxy already protects and accept the
  * startup warning.
  *
- * Edge-safe: middleware runs on the Edge runtime, so this module uses only Web
- * Crypto and `jose`, no Node built-ins.
+ * Uses only Web Crypto and `jose`, no Node built-ins, so it runs unchanged in
+ * `proxy.ts` and in server components.
  */
 
 import { jwtVerify, SignJWT } from 'jose'

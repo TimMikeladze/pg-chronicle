@@ -12,14 +12,14 @@ import {
  * Gate every dashboard page behind the shared password.
  *
  * Reaching a page means full audit read plus revert — the dashboard signs its
- * own API token, so there is no second checkpoint further in. This middleware
+ * own API token, so there is no second checkpoint further in. This proxy
  * is the only thing standing between a public URL and an anonymous revert
  * button, which is why it fails closed in production.
  *
  * Not gated: `/api/*` (the real REST API, already behind its own JWT / cron
  * secret and called by schedulers), `/health`, `/login`, and static assets.
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
 	const { pathname, search } = request.nextUrl
 
 	if (isPublicPath(pathname)) return NextResponse.next()
@@ -69,7 +69,7 @@ export async function middleware(request: NextRequest) {
 export const config = {
 	/*
 	 * Everything except Next's own asset routes. `/api` is excluded inside the
-	 * middleware rather than here so the reasoning lives next to the rule.
+	 * proxy rather than here so the reasoning lives next to the rule.
 	 */
 	matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg).*)'],
 }

@@ -3,7 +3,7 @@
  * anonymous revert button, and until now nothing tested it — the CI job for
  * this app only typechecks and builds.
  *
- * These cover the primitives the middleware is built from. The wiring itself
+ * These cover the primitives the proxy (`proxy.ts`) is built from. The wiring itself
  * (redirect vs 401, the 503 in production) is exercised by hand against a real
  * server; what is pinned here is the logic that decides who gets in.
  */

@@ -4,7 +4,7 @@
  */
 import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { renderCard } from './card'
+import { renderCard } from './card.ts'
 
 const siteDir = path.resolve(import.meta.dirname, '..')
 const out = path.join(siteDir, 'og-preview.png')

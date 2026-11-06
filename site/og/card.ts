@@ -16,7 +16,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { initWasm, Resvg } from '@resvg/resvg-wasm'
 import satori from 'satori'
-import { CARD_HEIGHT, CARD_WIDTH } from './meta'
+import { CARD_HEIGHT, CARD_WIDTH } from './meta.ts'
 
 /**
  * The screen the card shows, from the same set as the hero — the record
@@ -182,7 +182,15 @@ function card(tagline: string, shot: string): Node {
 				src: shot,
 				width: 952,
 				height: 612,
-				style: { marginLeft: -12, marginTop: -88 },
+				// Satori 0.63 lets flex shrink an image that is wider than its
+				// container, which rescales the crop. Pin the size.
+				style: {
+					width: 952,
+					height: 612,
+					flexShrink: 0,
+					marginLeft: -12,
+					marginTop: -88,
+				},
 			}),
 		),
 		// Keeps the copy readable where the window would otherwise crowd it.

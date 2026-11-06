@@ -1,11 +1,10 @@
 import { timingSafeEqual } from 'node:crypto'
 import { type Context, Hono } from 'hono'
-import { bodyLimit } from 'hono/body-limit'
 import { cors } from 'hono/cors'
 import type { JwtVariables } from 'hono/jwt'
 import { jwt } from 'hono/jwt'
-import { openAPIRouteHandler } from 'hono-openapi'
 import { createErrorResponse } from './api-helpers'
+import { limitBody } from './body-limit'
 import {
 	AuditEntryNotFoundError,
 	AuthorizationError,
@@ -130,7 +129,7 @@ export async function createServer(config: ServerConfig): Promise<{
 	}
 
 	// Limit request body size to 1MB to prevent memory exhaustion
-	app.use('/api/*', bodyLimit({ maxSize: 1024 * 1024 }))
+	app.use('/api/*', limitBody(1024 * 1024))
 
 	// Track in-flight requests so graceful shutdown can drain
 	app.use('*', async (_c, next) => {
@@ -1138,30 +1137,33 @@ export async function createServer(config: ServerConfig): Promise<{
 		)
 	}
 	if (exposeOpenApi) {
-		app.get(
-			'/openapi',
-			openAPIRouteHandler(app, {
-				documentation: {
-					info: {
-						title: 'pg-chronicle Archiver API',
-						version: '1.0.0',
-						description: 'API for managing audit log archival',
-					},
-					servers: [
-						{
-							// Prefer an explicit baseUrl, then Vercel deployment URL,
-							// then fall back to localhost for local dev.
-							url:
-								config.baseUrl ||
-								(process.env.VERCEL_URL
-									? `https://${process.env.VERCEL_URL}`
-									: `http://localhost:${config.port || 3001}`),
-							description: 'API Server',
-						},
-					],
+		// Built by hand rather than with hono-openapi: no route declares a schema,
+		// so the generator only ever produced this static document, and its
+		// optional `zod-openapi` import broke `next build` (Turbopack) in any app
+		// that imported pg-chronicle without listing it in serverExternalPackages.
+		const openApiDocument = {
+			openapi: '3.1.0',
+			info: {
+				title: 'pg-chronicle Archiver API',
+				description: 'API for managing audit log archival',
+				version: '1.0.0',
+			},
+			servers: [
+				{
+					// Prefer an explicit baseUrl, then Vercel deployment URL,
+					// then fall back to localhost for local dev.
+					url:
+						config.baseUrl ||
+						(process.env.VERCEL_URL
+							? `https://${process.env.VERCEL_URL}`
+							: `http://localhost:${config.port || 3001}`),
+					description: 'API Server',
 				},
-			}),
-		)
+			],
+			components: {},
+			paths: {},
+		}
+		app.get('/openapi', (c) => c.json(openApiDocument))
 	}
 
 	/**

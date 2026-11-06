@@ -191,10 +191,10 @@ dashboard, so set it to something identifiable.
 
 Loading a page here means being able to read every audited record and revert
 any of them, and the app authenticates itself to the API — so the gate has to be
-in front of the pages. `middleware.ts` requires a session cookie, minted by
+in front of the pages. `proxy.ts` requires a session cookie, minted by
 exchanging `PG_CHRONICLE_DASHBOARD_PASSWORD` at `/login`.
 
-- **Production fails closed.** With no password set, the middleware serves a 503
+- **Production fails closed.** With no password set, `proxy.ts` serves a 503
   explaining what to configure instead of rendering the UI.
 - **Development runs open**, so local work needs no ceremony.
 - **`PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS=true`** is the explicit opt-out for a
@@ -251,10 +251,10 @@ label text always keeps full foreground contrast.
 
 ## Notes
 
-- `next.config.ts` marks `pg-chronicle` as a server external. `serverExternalPackages`
-  alone misses it because the `file:..` link resolves outside `node_modules`,
-  and webpack would otherwise walk into `hono-openapi` and report a missing
-  optional `zod/v4/core`.
+- `next.config.ts` lists `pg-chronicle` in `serverExternalPackages` and sets
+  `turbopack.root` to the repo root in-repo. The symlinked library resolves
+  outside `node_modules`, so Turbopack bundles it there anyway; the root has to
+  contain it.
 - Every page is `force-dynamic`. This is operational state; a build-time
   snapshot would be wrong.
 - Saving a connection runs `setup()` on its database, installing triggers and

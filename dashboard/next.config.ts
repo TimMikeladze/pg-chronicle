@@ -36,34 +36,10 @@ const nextConfig: NextConfig = {
 	outputFileTracingRoot: inRepo ? repoRoot : import.meta.dirname,
 
 	/*
-	 * `serverExternalPackages` alone does not catch pg-chronicle here: it is a
-	 * symlink out of node_modules, so Next's "is this a package?" heuristic
-	 * misses it. Webpack then walks into
-	 * hono-openapi and reports a missing `zod/v4/core` — an optional adapter that
-	 * is never reached at runtime, but a "Module not found" line in every build.
-	 *
-	 * Marking it external keeps the whole library (including the S3 and Parquet
-	 * archiver) in Node's own require graph, where it belongs.
+	 * Turbopack's project root has to contain every file it compiles, and
+	 * in-repo that includes the symlinked library one level up.
 	 */
-	webpack: (config, { isServer }) => {
-		if (isServer) {
-			config.externals = [
-				...(Array.isArray(config.externals) ? config.externals : []),
-				({ request }: { request?: string }, callback: ExternalCallback) => {
-					if (
-						request === 'pg-chronicle' ||
-						request?.startsWith('pg-chronicle/')
-					) {
-						return callback(undefined, `module ${request}`)
-					}
-					callback()
-				},
-			]
-		}
-		return config
-	},
+	turbopack: { root: inRepo ? repoRoot : import.meta.dirname },
 }
-
-type ExternalCallback = (error?: unknown, result?: string) => void
 
 export default nextConfig

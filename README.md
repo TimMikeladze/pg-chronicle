@@ -154,7 +154,7 @@ Examples assert their own output, so they exit non-zero if the behavior they doc
 | [cron-archival.ts](./examples/cron-archival.ts) | POST /api/archive endpoint, cron secret auth, health status |
 | [archival-lifecycle.ts](./examples/archival-lifecycle.ts) | Full S3 archival pipeline: archive, soft delete, hard delete |
 | [error-handling.ts](./examples/error-handling.ts) | Typed error classes, catching specific errors |
-| [next/](./examples/next) | Files to copy into a Next.js app: catch-all route handler, `vercel.json` cron, plus `test-locally.ts` that exercises the serverless setup against Docker |
+| [next/](./examples/next) | A Next.js app with the catch-all route handler and `vercel.json` cron (copy `app/` into yours), plus `test-locally.ts` that exercises the serverless setup against Docker. CI installs the packed library into it and builds it with Turbopack and webpack |
 | [node/](./examples/node) | Plain Node.js consumer of the built package — ESM import, CommonJS `require`, the `pg-chronicle` bin, and a live audit round trip, so a broken build fails here and not in a user's app |
 
 ## How It Works
@@ -595,7 +595,7 @@ Every shot above is a real capture of this repo's dashboard against a seeded dat
 
 ### Access control
 
-**The UI is password-gated.** Set `PG_CHRONICLE_DASHBOARD_PASSWORD`; visitors exchange it for a signed, httpOnly session cookie (12 hours by default — `PG_CHRONICLE_DASHBOARD_SESSION_TTL_HOURS`). In production the middleware **refuses to serve the UI** until a password is set, because a page load is enough to read and revert every audited record. Development runs open. If an access proxy or SSO already authenticates every request, acknowledge that with `PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS=true` instead of leaving it accidental.
+**The UI is password-gated.** Set `PG_CHRONICLE_DASHBOARD_PASSWORD`; visitors exchange it for a signed, httpOnly session cookie (12 hours by default — `PG_CHRONICLE_DASHBOARD_SESSION_TTL_HOURS`). In production the dashboard **refuses to serve the UI** until a password is set, because a page load is enough to read and revert every audited record. Development runs open. If an access proxy or SSO already authenticates every request, acknowledge that with `PG_CHRONICLE_DASHBOARD_ALLOW_ANONYMOUS=true` instead of leaving it accidental.
 
 Failed logins are throttled — escalating delay for everyone, plus a 15-minute lockout for clients the platform can identify (an unidentifiable client is never locked out, or an attacker could lock *you* out by failing five times). Rotating the password invalidates every session, and it is the only revocation there is: one shared password means no individual sessions to revoke, so treat the cookie as a 12-hour bearer token.
 
@@ -644,6 +644,8 @@ Past the password gate the dashboard has blanket access to every audited row by 
 ### Next.js (Serverless)
 
 Auditing itself is runtime-independent — the triggers live in PostgreSQL. The `pg-chronicle/next` entry point is a Next.js App Router route handler and runs anywhere Next.js runs; only the *cron scheduling* below is Vercel-specific.
+
+No `next.config` changes are needed: Next 16 bundles `pg-chronicle` with Turbopack (the default) or `--webpack`.
 
 **Option A: Use the library directly in your API routes**
 
