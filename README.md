@@ -143,7 +143,7 @@ docker compose up -d
 bun examples/basic-audit-trail.ts
 ```
 
-Examples assert their own output, so they exit non-zero if the behavior they document ever changes. `bun test` runs all of them (see [`test/examples.test.ts`](./test/examples.test.ts)); the archival examples are skipped when MinIO isn't reachable.
+Examples assert their own output, so they exit non-zero if the behavior they document ever changes. `bun test` runs all of them (see [`test/examples.test.ts`](./test/examples.test.ts)); the archival examples are skipped when the local S3 server isn't reachable.
 
 | Example | What it shows |
 |---------|---------------|
@@ -1041,7 +1041,7 @@ try {
 
 ## Contributing
 
-Everything above installs the published package. To work on the library itself — the local PostgreSQL and MinIO the tests need, the dashboard, the landing page — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+Everything above installs the published package. To work on the library itself — the local PostgreSQL and S3 server the tests need, the dashboard, the landing page — see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 

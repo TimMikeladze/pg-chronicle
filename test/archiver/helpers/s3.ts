@@ -23,7 +23,7 @@ export async function ensureTestBucket(bucketName: string): Promise<void> {
 			accessKeyId,
 			secretAccessKey,
 		},
-		forcePathStyle: true, // Required for MinIO
+		forcePathStyle: true, // Required for local S3 servers (RustFS)
 	})
 
 	try {
@@ -85,7 +85,7 @@ export async function putTestS3Object(
 }
 
 /**
- * Check if S3/MinIO is properly configured and accessible
+ * Check if S3 is properly configured and accessible
  */
 export async function isS3Configured(): Promise<boolean> {
 	// First check if env vars are set

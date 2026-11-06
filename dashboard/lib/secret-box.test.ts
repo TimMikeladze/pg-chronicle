@@ -39,9 +39,12 @@ describe('secret box', () => {
 	it('rejects a tampered ciphertext under the same key', () => {
 		const sealed = seal('postgres://host/db')
 		const parts = sealed.split(':')
-		// Flip the last character of the payload; GCM's tag must catch it.
-		const payload = parts[3] as string
-		parts[3] = payload.slice(0, -1) + (payload.endsWith('A') ? 'B' : 'A')
+		// Flip a bit in the decoded payload; GCM's tag must catch it. Editing the
+		// base64url text instead can land on padding bits that decode to the
+		// same bytes, which made this test fail one run in four.
+		const payload = Buffer.from(parts[3] as string, 'base64url')
+		payload[0] = (payload[0] as number) ^ 0x01
+		parts[3] = payload.toString('base64url')
 		expect(() => open(parts.join(':'))).toThrow('integrity check')
 	})
 

@@ -8,7 +8,7 @@ import { describe, expect, test } from 'bun:test'
  * output stops matching what it claims, the assertion throws and the process
  * exits non-zero.
  *
- * Requires Postgres (and MinIO for the archival examples) — same services as
+ * Requires Postgres (and the local S3 server for the archival examples) — same services as
  * the rest of the integration suite, see docker-compose.yml.
  */
 
@@ -22,7 +22,7 @@ const EXAMPLES = [
 	'archival-lifecycle.ts',
 ] as const
 
-// Examples that write Parquet files to S3 and need MinIO reachable.
+// Examples that write Parquet files to S3 and need the local S3 server reachable.
 const NEEDS_S3 = new Set(['archival-lifecycle.ts', 'cron-archival.ts'])
 
 const S3_ENDPOINT =
@@ -30,7 +30,7 @@ const S3_ENDPOINT =
 
 async function s3Reachable(): Promise<boolean> {
 	try {
-		await fetch(`${S3_ENDPOINT}/minio/health/live`, {
+		await fetch(`${S3_ENDPOINT}/`, {
 			signal: AbortSignal.timeout(2000),
 		})
 		return true

@@ -9,7 +9,7 @@ Thank you for your interest in contributing to our project! This guide will help
 - **Bun 1.4.4**, the version CI and the Dockerfile use. Bun 1.4 renames shared
   exports in split ESM chunks (`PgChronicle2`); `scripts/keep-export-names.ts`
   restores their `.name` after `bun run build`, and `examples/node` checks it.
-- **Docker.** The tests run against a real PostgreSQL and a real MinIO rather
+- **Docker.** The tests run against a real PostgreSQL and a real S3 server (RustFS) rather
   than mocks — the whole library is triggers and SQL, so anything else would
   test a fiction. `docker-compose.yml` starts both.
 
@@ -19,12 +19,12 @@ Thank you for your interest in contributing to our project! This guide will help
 git clone https://github.com/TimMikeladze/pg-chronicle.git
 cd pg-chronicle
 bun install
-docker compose up -d   # PostgreSQL on :5432, MinIO on :9000
+docker compose up -d   # PostgreSQL on :5432, RustFS (S3) on :9000
 bun run check          # lint, typecheck, test
 ```
 
 That is the whole loop — no `.env` is needed to run the tests. Compose brings up
-`postgres:16-alpine` as `postgres`/`postgres` and MinIO as `root`/`password`,
+`postgres:16-alpine` as `postgres`/`postgres` and RustFS as `root`/`password`,
 which is exactly what the test helpers and CI expect: the helpers default to
 `postgres://postgres:postgres@localhost:5432`, and
 `test/archiver/globalSetup.ts` fills in every `PG_CHRONICLE_S3_*` variable and
@@ -33,7 +33,7 @@ creates the `test-bucket` bucket before the suite starts.
 Already have something on those ports? `PG_CHRONICLE_TEST_URL` points the suite
 at a different PostgreSQL server (base URL, no database name — each suite
 appends its own), and the S3 variables can be exported to reach a different
-MinIO.
+S3 server.
 
 `bun run check` is the same command the pre-commit hook runs. Locally it fixes
 what it can (`lint:fix`); in CI it only reports and additionally enforces the

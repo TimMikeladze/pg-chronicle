@@ -5,7 +5,7 @@
  * Demonstrates: the full S3 archival pipeline using the Orchestrator
  * directly — archive old records to Parquet, soft delete, hard delete.
  *
- * Requires MinIO running (docker compose up -d).
+ * Requires the local S3 server running (docker compose up -d starts RustFS).
  *
  * Run:
  *   docker compose up -d

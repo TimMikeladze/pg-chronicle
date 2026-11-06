@@ -107,7 +107,7 @@ describe('PgChronicleArchiver - Batch Query', () => {
 			},
 		]
 
-		// Check if MinIO is available and properly configured
+		// Check if the local S3 server is available and properly configured
 		try {
 			const { s3Path, sha256 } = await archiver.uploadBatchToS3(
 				records,
@@ -130,7 +130,7 @@ describe('PgChronicleArchiver - Batch Query', () => {
 					error.code === 'ERR_S3_MISSING_CREDENTIALS')
 			) {
 				console.log(
-					'⚠️  Skipping S3 upload test - MinIO not configured with test bucket/credentials',
+					'⚠️  Skipping S3 upload test - local S3 server not configured with test bucket/credentials',
 				)
 				return
 			}
@@ -176,7 +176,7 @@ describe('PgChronicleArchiver - Batch Processing', () => {
 	})
 
 	test('should process batch with transaction', async () => {
-		// Check if MinIO is available
+		// Check if the local S3 server is available
 		try {
 			const cutoffDate = new Date()
 			cutoffDate.setDate(cutoffDate.getDate() - 100)
@@ -199,7 +199,7 @@ describe('PgChronicleArchiver - Batch Processing', () => {
 					error.code === 'ERR_S3_MISSING_CREDENTIALS')
 			) {
 				console.log(
-					'⚠️  Skipping batch processing test - MinIO not configured with test bucket/credentials',
+					'⚠️  Skipping batch processing test - local S3 server not configured with test bucket/credentials',
 				)
 				return
 			}
@@ -208,7 +208,7 @@ describe('PgChronicleArchiver - Batch Processing', () => {
 	})
 
 	test('should mark records as archived after successful upload', async () => {
-		// Check if MinIO is available
+		// Check if the local S3 server is available
 		try {
 			const cutoffDate = new Date()
 			cutoffDate.setDate(cutoffDate.getDate() - 100)
@@ -235,7 +235,7 @@ describe('PgChronicleArchiver - Batch Processing', () => {
 					error.code === 'ERR_S3_MISSING_CREDENTIALS')
 			) {
 				console.log(
-					'⚠️  Skipping mark archived test - MinIO not configured with test bucket/credentials',
+					'⚠️  Skipping mark archived test - local S3 server not configured with test bucket/credentials',
 				)
 				return
 			}

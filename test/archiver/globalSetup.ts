@@ -9,8 +9,8 @@ import { ensureTestBucket } from './helpers/s3'
 process.env.PG_CHRONICLE_SILENT_LOGS =
 	process.env.PG_CHRONICLE_SILENT_LOGS || '1'
 
-// Set up S3/MinIO environment variables for all tests
-// Using default MinIO test configuration
+// Set up S3 environment variables for all tests
+// Defaults match docker-compose.yml (RustFS on :9000, root/password)
 process.env.PG_CHRONICLE_S3_ENDPOINT =
 	process.env.PG_CHRONICLE_S3_ENDPOINT || 'http://localhost:9000'
 process.env.PG_CHRONICLE_S3_ACCESS_KEY_ID =
@@ -26,5 +26,5 @@ await createTestDatabase()
 await ensureTestBucket('test-bucket')
 
 console.log('✓ Test database created: pg_chronicle_archiver_test')
-console.log(`✓ S3/MinIO configured: ${process.env.PG_CHRONICLE_S3_ENDPOINT}`)
+console.log(`✓ S3 configured: ${process.env.PG_CHRONICLE_S3_ENDPOINT}`)
 console.log('✓ Test bucket ensured: test-bucket')
