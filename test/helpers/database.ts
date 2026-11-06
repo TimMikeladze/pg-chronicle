@@ -23,6 +23,27 @@ export function testDatabaseUrl(name: string): string {
 	return `${TEST_BASE_URL}/${name}`
 }
 
+/**
+ * `pg` rejects with an AggregateError whose message is empty when nothing is
+ * listening (one ECONNREFUSED per resolved address), so read the inner errors
+ * and the code, and point at docker compose for the refused case.
+ */
+function describeError(error: unknown): string {
+	if (!(error instanceof Error)) return String(error)
+	const inner = error instanceof AggregateError ? error.errors : []
+	const code =
+		(error as NodeJS.ErrnoException).code ??
+		(inner[0] as NodeJS.ErrnoException | undefined)?.code
+	const message =
+		error.message ||
+		inner.map((e) => (e instanceof Error ? e.message : String(e))).join('; ') ||
+		code ||
+		error.name
+	return code === 'ECONNREFUSED'
+		? `${message} (is Postgres running at ${TEST_BASE_URL}? Run \`docker compose up -d\`)`
+		: message
+}
+
 async function withAdminPool<T>(
 	fn: (pool: pkg.Pool) => Promise<T>,
 ): Promise<T> {
@@ -56,7 +77,7 @@ async function terminateConnections(
 	} catch (error) {
 		console.warn(
 			`Warning: Failed to terminate connections to ${name}:`,
-			error instanceof Error ? error.message : String(error),
+			describeError(error),
 		)
 	}
 }
@@ -70,7 +91,7 @@ export async function recreateDatabase(name: string): Promise<void> {
 			await adminPool.query(`DROP DATABASE IF EXISTS ${name}`)
 		} catch (error) {
 			throw new Error(
-				`Failed to drop test database ${name}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to drop test database ${name}: ${describeError(error)}`,
 			)
 		}
 
@@ -78,7 +99,7 @@ export async function recreateDatabase(name: string): Promise<void> {
 			await adminPool.query(`CREATE DATABASE ${name}`)
 		} catch (error) {
 			throw new Error(
-				`Failed to create test database ${name}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to create test database ${name}: ${describeError(error)}`,
 			)
 		}
 	})
@@ -92,7 +113,7 @@ export async function dropDatabase(name: string): Promise<void> {
 			await adminPool.query(`DROP DATABASE IF EXISTS ${name}`)
 		} catch (error) {
 			throw new Error(
-				`Failed to drop test database ${name}: ${error instanceof Error ? error.message : String(error)}`,
+				`Failed to drop test database ${name}: ${describeError(error)}`,
 			)
 		}
 	})
